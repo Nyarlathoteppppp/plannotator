@@ -49,8 +49,8 @@ test("a code file whose bytes are not text is refused, and nothing of the send i
   writeFileSync(join(w.project, "notes.md"), "# Notes\n");
   writeFileSync(join(w.project, "tool.sh"), new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x00, 0x00]));
   writeFileSync(join(w.project, "latin.py"), new Uint8Array([0x23, 0x20, 0xe9, 0x0a]));
-  expect(() => record(w, ["notes.md", "tool.sh"])).toThrow(/attachments\[1\]: tool\.sh: not a text file/);
-  expect(() => record(w, ["latin.py"])).toThrow(/latin\.py: not a text file/);
+  expect(() => record(w, ["notes.md", "tool.sh"])).toThrow(/attachments\[1\]: tool\.sh: not UTF-8 text/);
+  expect(() => record(w, ["latin.py"])).toThrow(/latin\.py: not UTF-8 text/);
   expect(existsSync(inboxBlobsDir(w.inbox)) ? readdirSync(inboxBlobsDir(w.inbox)) : []).toEqual([]);
 });
 
@@ -61,5 +61,9 @@ test(".env is refused by name and through a symlink with a code name; outside th
   writeFileSync(join(w.root, "outside.ts"), "export {};\n");
   expect(() => record(w, [".env"])).toThrow(/\.env files are never attached/);
   expect(() => record(w, ["load.sh"])).toThrow(/load\.sh resolves to \.env/);
+  writeFileSync(join(w.project, ".env.ts"), "export const KEY = 'secret';\n");
+  writeFileSync(join(w.project, ".env.example"), "KEY=\n");
+  expect(() => record(w, [".env.ts"])).toThrow(/\.env\.ts: \.env files are never attached/);
+  expect(record(w, [".env.example"])[0]?.kind).toBe("text");
   expect(() => record(w, [join(w.root, "outside.ts")])).toThrow(/outside the project/);
 });

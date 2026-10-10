@@ -19,6 +19,11 @@ describe('Inbox attachment names and kinds', () => {
 
   test('.env and unknown types stay refused', () => {
     expect(inboxAttachmentNameRefusal('/repo/.env')).toContain('.env');
+    // The dotenv family under a code name is refused too; the .env.example doc is not.
+    expect(inboxAttachmentNameRefusal('/repo/.env.ts')).toContain('never attached');
+    expect(inboxAttachmentNameRefusal('/repo/.env.local.sh')).toContain('never attached');
+    expect(inboxAttachmentNameRefusal('/repo/.ENV.Production.py')).toContain('never attached');
+    expect(inboxAttachmentNameRefusal('/repo/.env.example')).toBeNull();
     expect(inboxAttachmentNameRefusal('/repo/logo.png')).not.toBeNull();
     expect(inboxAttachmentNameRefusal('/repo/app.exe')).not.toBeNull();
   });

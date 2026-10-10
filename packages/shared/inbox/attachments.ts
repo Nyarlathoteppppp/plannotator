@@ -106,7 +106,7 @@ export function recordInboxAttachments(
       return refuse(`${named}: could not be read.`);
     }
     if (inboxAttachmentKind(real) === "code" && !isInboxTextBytes(bytes)) {
-      refuse(`${basename(named)}: not a text file (binary content is never attached).`);
+      refuse(`${basename(named)}: not UTF-8 text (binary or another encoding).`);
     }
     read.push({ named, real, bytes, mtime: stat.mtime.toISOString() });
   });

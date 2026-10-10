@@ -38,8 +38,17 @@ export function codeLanguageOf(name: string): string | undefined {
 }
 
 /**
+ * The largest code file highlighted. Shiki runs one synchronous pass over the
+ * whole text on the main thread (measured: 300 KB of JS 4 s, 1 MB 9.9 s, a
+ * 1.6 MB minified bundle 163 s), so a larger file is drawn as plain text: one
+ * text node, no language.
+ */
+export const CODE_HIGHLIGHT_MAX_CHARS = 100_000;
+
+/**
  * A code file as ONE read-only code block, never the markdown pipeline (a
- * shell or Python `#` comment would read as a heading).
+ * shell or Python `#` comment would read as a heading). Highlighted only up to
+ * CODE_HIGHLIGHT_MAX_CHARS.
  */
 export function codeDocumentBlocks(text: string, name: string): Block[] {
   return [
@@ -47,7 +56,7 @@ export function codeDocumentBlocks(text: string, name: string): Block[] {
       id: 'block-0',
       type: 'code',
       content: text.replace(/\n$/, ''),
-      language: codeLanguageOf(name),
+      language: text.length <= CODE_HIGHLIGHT_MAX_CHARS ? codeLanguageOf(name) : undefined,
       order: 1,
       startLine: 1,
     },

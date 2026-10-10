@@ -133,7 +133,7 @@ test("a script attaches as kind code: served as text/plain under the sandbox CSP
   const client = await agent(server);
   const refused = (await client.callTool({ name: "send_message", arguments: { project_path: project, body: "Binary.", attachments: ["tool.ts"] } })) as { isError?: boolean; content: { text: string }[] };
   expect(refused.isError).toBe(true);
-  expect(refused.content[0]!.text).toMatch(/^validation_error: .*tool\.ts: not a text file/);
+  expect(refused.content[0]!.text).toMatch(/^validation_error: .*tool\.ts: not UTF-8 text/);
   const sent = await send(client, { project_path: project, body: "The script I ran.", attachments: ["replay.sh"] });
   const attachment = sent.attachments[0] as { id: string; kind: string };
   expect(attachment.kind).toBe("code");

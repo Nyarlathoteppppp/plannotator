@@ -132,6 +132,8 @@ function isCodeName(name: string): boolean {
 export function inboxAttachmentNameRefusal(path: string): string | null {
   const name = baseName(path);
   if (name === ".env" || /^\.env$/i.test(name)) return ".env files are never attached (they hold secrets).";
+  // The dotenv family under a code or other name (`.env.ts`, `.env.local.sh`); `.env.example` is a doc and stays.
+  if (/^\.env\./i.test(name) && !isAnnotatableDocPath(name)) return ".env files are never attached (they hold secrets).";
   if (!isAnnotatableDocPath(name) && !isCodeName(name)) {
     return "not a file the Inbox can open (markdown, plain text, config and data files, Mermaid and Graphviz sources, HTML, source code and scripts).";
   }
