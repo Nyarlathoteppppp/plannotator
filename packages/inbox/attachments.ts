@@ -9,11 +9,49 @@ import type { InboxAnnotationRecord, InboxAttachmentKind, InboxAttachmentState }
 import type { Annotation, Block } from '@plannotator/ui/types';
 import { diagramDocumentBlocks, exportLinkedDocAnnotations, parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
 
-/** Plannotator's blocks for a file: one diagram block for a diagram source, the markdown pipeline for text, none for HTML. */
+/** Plannotator's blocks for a file: one diagram block for a diagram source, one code block for code, the markdown pipeline for text, none for HTML. */
 export function attachmentBlocks(kind: InboxAttachmentKind, text: string, name: string): Block[] {
   if (kind === 'html') return [];
   if (kind === 'mermaid' || kind === 'graphviz') return diagramDocumentBlocks(text, kind);
+  if (kind === 'code') return codeDocumentBlocks(text, name);
   return parseMarkdownToBlocks(text, shouldStripFrontmatter(name) ? undefined : { frontmatter: false });
+}
+
+/** Names without an extension that a highlighter grammar knows by another name. */
+const CODE_NAME_LANGUAGES: Record<string, string> = {
+  dockerfile: 'dockerfile',
+  makefile: 'make',
+  justfile: 'just',
+  rakefile: 'ruby',
+  gemfile: 'ruby',
+  vagrantfile: 'ruby',
+  brewfile: 'ruby',
+};
+/** Extensions a highlighter grammar knows by another name; any other extension is tried as is, and an unknown one stays plain. */
+const CODE_EXTENSION_LANGUAGES: Record<string, string> = { h: 'c', hpp: 'cpp', ex: 'elixir', exs: 'elixir', tf: 'hcl' };
+
+/** The highlighting language for a code file's name, or undefined (plain text). */
+export function codeLanguageOf(name: string): string | undefined {
+  const ext = /\.([A-Za-z0-9]+)$/.exec(name)?.[1]?.toLowerCase();
+  if (!ext) return CODE_NAME_LANGUAGES[name.toLowerCase()];
+  return CODE_EXTENSION_LANGUAGES[ext] ?? ext;
+}
+
+/**
+ * A code file as ONE read-only code block, never the markdown pipeline (a
+ * shell or Python `#` comment would read as a heading).
+ */
+export function codeDocumentBlocks(text: string, name: string): Block[] {
+  return [
+    {
+      id: 'block-0',
+      type: 'code',
+      content: text.replace(/\n$/, ''),
+      language: codeLanguageOf(name),
+      order: 1,
+      startLine: 1,
+    },
+  ];
 }
 
 export function annotationOf(record: InboxAnnotationRecord): Annotation {
