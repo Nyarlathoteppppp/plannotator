@@ -16,41 +16,61 @@ export interface AttachmentStep {
   /** "11:06 AM": when the message was sent. */
   sentAt: string;
   messageId: string;
+  /** An image the message's text shows (`inline_images`), not an attached file. */
+  inline: boolean;
 }
 
 /**
- * Every attachment of the thread in thread order: message by message, and in
- * each message in the order of its tiles. A file whose message is not in the
- * thread (it should not happen) goes last, so the count always matches.
+ * Everything the thread shows that opens in the viewer, in reading order
+ * (approval "inbox-image-viewer", 2026-10-15): message by message, the images
+ * its text shows in text order, then its attached files in the order of its
+ * tiles. A file whose message is not in the thread (it should not happen)
+ * goes last, so the count always matches. Guided reviews keep their reader.
  */
-export function attachmentSequence(messages: readonly InboxMessageWire[], attachments: readonly InboxAttachmentState[]): AttachmentStep[] {
+export function attachmentSequence(
+  messages: readonly InboxMessageWire[],
+  attachments: readonly InboxAttachmentState[],
+  inlineImages: readonly InboxAttachmentState[] = [],
+): AttachmentStep[] {
   const steps: AttachmentStep[] = [];
   const placed = new Set<string>();
+  const add = (attachment: InboxAttachmentState, message: InboxMessageWire, inline: boolean) => {
+    placed.add(attachment.id);
+    steps.push({ attachment, messageId: message.id, sender: agentName(message.author), sentAt: whenTime(message.created_at), inline });
+  };
   for (const message of messages) {
-    for (const attachment of attachments) {
-      if (attachment.message_id !== message.id || placed.has(attachment.id)) continue;
-      placed.add(attachment.id);
-      steps.push({ attachment, messageId: message.id, sender: agentName(message.author), sentAt: whenTime(message.created_at) });
-    }
+    for (const image of inlineImages) if (image.message_id === message.id && !placed.has(image.id)) add(image, message, true);
+    for (const attachment of attachments) if (attachment.message_id === message.id && !placed.has(attachment.id)) add(attachment, message, false);
   }
-  for (const attachment of attachments) {
-    if (placed.has(attachment.id)) continue;
-    steps.push({ attachment, messageId: attachment.message_id, sender: 'the agent', sentAt: whenTime(attachment.sent_at) });
+  for (const [list, inline] of [
+    [inlineImages, true],
+    [attachments, false],
+  ] as const) {
+    for (const attachment of list) {
+      if (placed.has(attachment.id)) continue;
+      placed.add(attachment.id);
+      steps.push({ attachment, messageId: attachment.message_id, sender: 'the agent', sentAt: whenTime(attachment.sent_at), inline });
+    }
   }
   return steps;
 }
 
-export const LAST_NOTE = 'Last attachment in this thread';
-export const FIRST_NOTE = 'First attachment in this thread';
+export const LAST_NOTE = 'Last file in this thread';
+export const FIRST_NOTE = 'First file in this thread';
 
-/** "4 of 5, checkout-mobile.png, PNG image, from Claude's 11:06 AM message": what a step says to a screen reader. */
+/**
+ * "3 of 9, checkout-c-drawer.png, PNG image, in Claude Code's 11:22 AM
+ * message" (an image in the text), "… attached to Claude's 11:31 AM message"
+ * (an attached file): what a step says to a screen reader.
+ */
 export function stepAnnouncement(steps: readonly AttachmentStep[], index: number): string {
   const step = steps[index];
   if (!step) return '';
   const { attachment } = step;
   const kind = inboxAttachmentKindLabel(attachment.kind, attachment.name, attachment.media_type);
-  const changed = attachment.changed_since_sent ? ', changed since it was sent' : '';
-  const from = step.sentAt ? `, from ${step.sender}'s ${step.sentAt} message` : `, from ${step.sender}`;
+  const changed = attachment.changed_since_sent ? (attachment.captured === 'on_open' ? ', changed since you first opened it' : ', changed since it was sent') : '';
+  const where = step.inline ? 'in' : 'attached to';
+  const from = step.sentAt ? `, ${where} ${step.sender}'s ${step.sentAt} message` : `, ${where} ${step.sender}'s message`;
   return `${index + 1} of ${steps.length}, ${attachment.name}, ${kind}${changed}${from}`;
 }
 

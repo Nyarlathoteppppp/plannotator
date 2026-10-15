@@ -574,17 +574,22 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
   const close = () => leave(null, props.onClose);
 
   const sentAt = whenTime(attachment.sent_at);
+  /** An image the message's text shows (approval "inbox-image-viewer"). */
+  const inline = attachment.ref !== undefined;
+  /** Its copy was taken the first time the thread was read (a message sent before capture), not when it was sent. */
+  const onOpen = attachment.captured === 'on_open';
+  const firstOpened = whenTime(attachment.captured_at ?? attachment.sent_at);
   let line: React.ReactNode = null;
   if (currentUnavailable) {
     line = (
       <>
-        {attachment.unavailable!.message} This is the version {props.agent} sent at {sentAt}.
+        {attachment.unavailable!.message} {onOpen ? `This is the copy taken when you first opened it, ${firstOpened}.` : `This is the version ${props.agent} sent at ${sentAt}.`}
       </>
     );
   } else if (effectiveVersion === 'sent') {
     line = (
       <>
-        The version {props.agent} sent at {sentAt}.
+        {onOpen ? `The copy taken when you first opened it, ${firstOpened}.` : `The version ${props.agent} sent at ${sentAt}.`}
         <button type="button" className="ib-vlink" onClick={() => chooseVersion('current')}>
           Open the file as it is now
         </button>
@@ -594,9 +599,10 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
     const current = (view?.attachment ?? attachment).current;
     line = (
       <>
-        Changed since {props.agent} sent it at {sentAt}.{current ? ` Edited ${whenTime(current.mtime)}.` : ''}
+        {onOpen ? 'Changed since you first opened it.' : `Changed since ${props.agent} sent it at ${sentAt}.`}
+        {current ? ` Edited ${whenTime(current.mtime)}.` : ''}
         <button type="button" className="ib-vlink" onClick={() => chooseVersion('sent')}>
-          Open the version it sent
+          {onOpen ? 'Open the version you first saw' : 'Open the version it sent'}
         </button>
       </>
     );
@@ -621,7 +627,7 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
       onPointerOver={titleIfClipped}
       tabIndex={-1}
       className={`ib-view${full ? ' ib-full' : ''}${phone ? ' ib-phone' : ''}${folded && !phone ? ' ib-fold' : ''}${hasPanel ? '' : ' ib-nopanel'}${folded && sheet ? ' ib-panel-open' : ''}`}
-      aria-label={multi ? `${attachment.name}, attachment ${index + 1} of ${steps.length}` : attachment.name}
+      aria-label={multi ? `${attachment.name}, file ${index + 1} of ${steps.length}` : attachment.name}
       data-attachment-pane={attachment.id}
       data-version={effectiveVersion}
     >
@@ -638,7 +644,14 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
             <FileName name={attachment.name} />
           </span>
         )}
-        <span className="ib-from">{isVideo && inboxVideoMeta(attachment) ? inboxVideoMeta(attachment) : `from ${props.agent} in ${props.projectName}`}</span>
+        <span className="ib-from" data-header-from="">
+          {isVideo && inboxVideoMeta(attachment)
+            ? inboxVideoMeta(attachment)
+            : // An image the message's text shows: whose message, and when (approval "inbox-image-viewer").
+              inline
+              ? `${props.agent} · ${sentAt}`
+              : `from ${props.agent} in ${props.projectName}`}
+        </span>
         <span className="ib-sp" />
         {isHtml && <HtmlSurfaceControls armed={armed} onToggleArmed={props.readOnly ? undefined : () => setArmed((v) => !v)} />}
         {props.openIn && <OpenInControl attachment={attachment} version={effectiveVersion} surface={props.openIn} label={!folded} big={phone} />}
