@@ -1446,11 +1446,11 @@ describe("the thread-state model", () => {
           const rows = JSON.stringify(world.store.listRows());
           const cursor = world.store.messageCursor(message.id);
           const image = { id: `att_${"0".repeat(25)}${captures % 10}`, path: "/p/a.png", named_path: null, name: "a.png", kind: "image" as const, sent_sha256: "a".repeat(64), size: 1, sent_at: message.created_at, sent_mtime: message.created_at, ref: "a.png", captured: "on_open" as const };
-          world.store.recordCapturedImages(message.id, [image]);
+          world.store.addCapturedImages(message.id, [image]);
           captures += 1;
           // Written once; the message keeps its place and every row reads the same.
           expect(world.store.message(message.id)!.inline_images).toHaveLength(1);
-          world.store.recordCapturedImages(message.id, []);
+          world.store.addCapturedImages(message.id, []);
           expect(world.store.message(message.id)!.inline_images).toHaveLength(1);
           expect(world.store.messageCursor(message.id)).toBe(cursor);
           expect(JSON.stringify(world.store.listRows())).toBe(rows);

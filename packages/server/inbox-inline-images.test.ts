@@ -8,14 +8,14 @@
  * sweep when its thread is deleted.
  */
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { InboxStore } from "@plannotator/shared/inbox/store";
 import { inboxBlobPath } from "@plannotator/shared/inbox/attachments";
-import { inboxMessageImageRefsInOrder } from "@plannotator/shared/inbox/message-images";
+import { blankInlineCode, inboxMessageImageRefsInOrder } from "@plannotator/shared/inbox/message-images";
 import { MAX_REVIEW_IMAGE_PREVIEW_BYTES } from "@plannotator/shared/diff-paths";
 import { startInboxServer, type InboxServer } from "./inbox";
 
@@ -150,6 +150,11 @@ test("a message's images are captured at send under the image route's rules, ser
   const big = await get(server, `/api/inbox/attachments/${a.id}/image`);
   expect(big.status).toBe(413);
   expect(((await big.json()) as any).code).toBe("image_too_large");
+  // The download of the current file keeps the cap too.
+  const bigDownload = await get(server, `/api/inbox/attachments/${a.id}/download`);
+  expect(bigDownload.status).toBe(413);
+  expect(((await bigDownload.json()) as any).code).toBe("image_too_large");
+  expect((await get(server, `/api/inbox/attachments/${a.id}/download?version=sent`)).status).toBe(200);
   expect((await get(server, `/api/inbox/attachments/${a.id}/image?version=sent`)).status).toBe(200);
 });
 
@@ -193,7 +198,12 @@ test("a message sent before capture gets its copies on the thread's first read, 
   expect(message.inline_images).toBeUndefined();
 
   const server = await start(dataDir);
+  // The read answers at once; the copies are taken in the background and arrive as one more line.
+  const answered = (await (await get(server, `/api/inbox/threads/${message.thread_id}`)).json()) as any;
+  expect(answered.thread.messages[0].inline_images).toBeUndefined();
+  await server.imageCapture.idle();
   const first = (await (await get(server, `/api/inbox/threads/${message.thread_id}`)).json()) as any;
+  expect(first.cursor).toBeGreaterThan(answered.cursor);
   const captured = first.thread.messages[0].inline_images;
   expect(captured).toHaveLength(1);
   expect(captured[0]).toMatchObject({ ref: "design/a.png", captured: "on_open", sent_at: message.created_at, sent_sha256: sha(png(4, 3, 1)) });
@@ -204,6 +214,7 @@ test("a message sent before capture gets its copies on the thread's first read, 
 
   // A second read writes nothing.
   const second = (await (await get(server, `/api/inbox/threads/${message.thread_id}`)).json()) as any;
+  await server.imageCapture.idle();
   expect(second.cursor).toBe(cursor);
   expect(second.thread.messages[0].inline_images[0].id).toBe(captured[0].id);
 
@@ -221,4 +232,103 @@ test("the capture follows the worktree a message was sent from and never reads o
   const sent = await send(await agent(server), { project_path: join(project, "packages", "web"), body: "![home](shots/home.png) ![esc](../../../outside.png)" });
   const thread = (await (await get(server, `/api/inbox/threads/${sent.thread_id}`)).json()) as any;
   expect(thread.thread.messages[0].inline_images.map((i: any) => [i.ref, i.path])).toEqual([["shots/home.png", join(project, "packages", "web", "shots", "home.png")]]);
+});
+
+test("images with no record are captured on a later read, in the background: written after the send, past the send's 64, the person's own", async () => {
+  const { project, dataDir } = world();
+  for (let i = 0; i < 66; i++) writeFileSync(join(project, "design", `many-${i}.png`), png(3, 3, i));
+  const server = await start(dataDir);
+  const client = await agent(server);
+  const late = await send(client, { project_path: project, body: "Soon:\n\n![late](design/late.png)", thread: "late" });
+  const many = await send(client, { project_path: project, body: Array.from({ length: 66 }, (_, i) => `![${i}](design/many-${i}.png)`).join("\n\n"), thread: "many" });
+  const read = async (threadId: string) => ((await (await get(server, `/api/inbox/threads/${threadId}`)).json()) as any).thread;
+  expect((await read(late.thread_id)).messages[0].inline_images).toEqual([]);
+  // The send takes at most 64.
+  expect((await read(many.thread_id)).messages[0].inline_images).toHaveLength(64);
+
+  writeFileSync(join(project, "design", "late.png"), png(4, 4, 40));
+  await read(late.thread_id);
+  await server.imageCapture.idle();
+  expect((await read(late.thread_id)).messages[0].inline_images.map((i: any) => [i.ref, i.captured])).toEqual([["design/late.png", "on_open"]]);
+  await server.imageCapture.idle();
+  const all = (await read(many.thread_id)).messages[0].inline_images;
+  // The rest arrive in text order after the first 64.
+  expect(all.map((i: any) => i.ref)).toEqual(Array.from({ length: 66 }, (_, i) => `design/many-${i}.png`));
+
+  // The person's own reply shows an image: captured too, so it opens in the viewer.
+  const reply = await post(server, `/api/inbox/messages/${late.message_id}/reply`, { idempotency_key: "k-person-image", words: "Like this:\n\n![mine](design/b.png)" });
+  expect(reply.status).toBe(200);
+  await read(late.thread_id);
+  await server.imageCapture.idle();
+  const person = (await read(late.thread_id)).messages.find((m: any) => m.author.kind === "person");
+  expect(person.inline_images.map((i: any) => i.ref)).toEqual(["design/b.png"]);
+});
+
+test("a send the store refuses leaves no blob of its images behind", async () => {
+  const { project, dataDir } = world();
+  writeFileSync(join(project, "design", "only-here.png"), png(6, 6, 77));
+  const server = await start(dataDir);
+  const client = await agent(server);
+  const result = (await client.callTool({ name: "send_message", arguments: { project_path: project, body: "![x](design/only-here.png)", supersedes: ["msg_01K7NONENONENONENONENONENO"] } })) as { isError?: boolean };
+  expect(result.isError).toBe(true);
+  expect(existsSync(inboxBlobPath(join(dataDir, "inbox"), sha(png(6, 6, 77))))).toBe(false);
+  const blobs = join(dataDir, "inbox", "blobs");
+  const temps = existsSync(blobs) ? readdirSync(blobs).filter((name) => name.endsWith(".tmp")) : [];
+  expect(temps).toEqual([]);
+});
+
+test("a large capture on first read never blocks health: the read answers at once, health keeps answering, everything is captured", async () => {
+  const { project, dataDir } = world();
+  // Distinct 2 MB images (a PNG header, then filler), three per message.
+  const BIG = 2 * 1024 * 1024;
+  const old = InboxStore.open(dataDir);
+  const projectRecord = old.ensureProject({ name: "shop", root: project });
+  let threadId = "";
+  for (let m = 0; m < 16; m++) {
+    const refs: string[] = [];
+    for (let k = 0; k < 3; k++) {
+      const bytes = Buffer.alloc(BIG, m * 3 + k + 1);
+      Buffer.from(png(64, 64, m * 3 + k)).copy(bytes, 0);
+      writeFileSync(join(project, "design", `big-${m}-${k}.png`), bytes);
+      refs.push(`![${m}-${k}](design/big-${m}-${k}.png)`);
+    }
+    const sent = old.sendMessage({ project_id: projectRecord.id, author: { kind: "agent", host: "claude-code", session: "s1", name: null }, body: refs.join("\n\n") });
+    threadId = sent.message.thread_id;
+  }
+  const server = await start(dataDir);
+  const started = performance.now();
+  const answered = (await (await get(server, `/api/inbox/threads/${threadId}`)).json()) as any;
+  expect(performance.now() - started).toBeLessThan(1000);
+  expect(answered.thread.messages.every((m: any) => m.inline_images === undefined)).toBe(true);
+  const done = server.imageCapture.idle();
+  let finished = false;
+  void done.then(() => (finished = true));
+  const latencies: number[] = [];
+  while (!finished) {
+    const at = performance.now();
+    const health = await get(server, "/api/inbox/health");
+    expect(health.status).toBe(200);
+    latencies.push(performance.now() - at);
+  }
+  await done;
+  // Health answered many times while 96 MB were read, and never waited behind the capture.
+  expect(latencies.length).toBeGreaterThan(3);
+  expect(Math.max(...latencies)).toBeLessThan(250);
+  const after = (await (await get(server, `/api/inbox/threads/${threadId}`)).json()) as any;
+  expect(after.thread.messages.map((m: any) => m.inline_images?.length ?? 0)).toEqual(Array.from({ length: 16 }, () => 3));
+}, 60_000);
+
+test("inline code is blanked in one linear pass: spans close on the same run length, many unmatched backticks finish at once", () => {
+  expect(blankInlineCode("a `![x](y.png)` b")).toBe(`a ${" ".repeat(13)} b`);
+  expect(blankInlineCode("``a`b`` ![c](d.png)")).toBe(`${" ".repeat(7)} ![c](d.png)`);
+  expect(blankInlineCode("` open ![c](d.png)")).toBe("` open ![c](d.png)");
+  // Runs of every length, none closed: quadratic matching would take seconds here.
+  const hostile = Array.from({ length: 4000 }, (_, i) => `${"`".repeat((i % 50) + 1)}x`).join("");
+  const started = performance.now();
+  blankInlineCode(hostile + "`".repeat(51));
+  expect(performance.now() - started).toBeLessThan(200);
+  const unmatched = "`a".repeat(200_000);
+  const at = performance.now();
+  expect(inboxMessageImageRefsInOrder(`${unmatched}![z](z.png)`)).toEqual(["z.png"]);
+  expect(performance.now() - at).toBeLessThan(500);
 });

@@ -46,8 +46,6 @@ import { byteRangeResponse, decideByteRange, handleRangeStream } from "./inbox-b
 import { InboxError } from "@plannotator/shared/inbox/schema";
 import type { InboxStore } from "@plannotator/shared/inbox/store";
 import { createHtmlAssetRegistry } from "./html-assets";
-import { captureThreadImagesOnOpen } from "./inbox-message-images";
-import type { InboxProjectRoots } from "./inbox-project-root";
 import { MAX_REVIEW_IMAGE_PREVIEW_BYTES, MAX_REVIEW_IMAGE_PREVIEW_PIXELS } from "@plannotator/shared/diff-paths";
 
 const JSON_HEADERS = {
@@ -112,8 +110,8 @@ export interface InboxAttachmentRoutesContext {
   readBody: (req: Request) => Promise<Record<string, unknown>>;
   /** How long a streamed answer may go unread before its file handle closes. Default `STREAM_IDLE_CLOSE_MS`; tests shorten it. */
   streamIdleMs?: number;
-  /** The project-root cache: a thread read checks a message's worktree again before capturing its images. */
-  projectRoots?: InboxProjectRoots;
+  /** Ask for the thread's uncaptured message images to be copied in the background (inbox-message-images.ts); a read never waits for it. */
+  scheduleImageCapture?: (threadId: string) => void;
 }
 
 type Version = "current" | "sent";
@@ -161,7 +159,7 @@ export function createInboxAttachmentRoutes(context: InboxAttachmentRoutesContex
       if (crossSite(req)) return json(CROSS_SITE_BODY, 403);
       const threadId = threadAttachments[1]!;
       if (!store.thread(threadId)) throw new InboxError("thread_not_found", `No thread ${threadId}.`);
-      await captureThreadImagesOnOpen(store, threadId, context.projectRoots);
+      context.scheduleImageCapture?.(threadId);
       return json({
         serverSession,
         // A changed large file is judged by its stat here and hashed when it is opened.
@@ -277,9 +275,21 @@ export function createInboxAttachmentRoutes(context: InboxAttachmentRoutesContex
       const route = bytesRoute[2] as "image" | "download";
       const kind = readInboxAttachmentKind(attachment.kind);
       if (route === "image" && kind !== "image") throw new InboxError("attachment_not_image", `${attachment.name} is not an image; download it instead.`);
+      // An image a message shows: refused by its size before the image route hashes it whole.
+      if ("ref" in attachment && versionOf(url) === "current") {
+        const check = checkCurrent(attachment);
+        if (check.ok && check.stat.size > MAX_REVIEW_IMAGE_PREVIEW_BYTES) {
+          return json({ error: `${attachment.name} is larger than 10 MB; open the version it sent.`, code: "image_too_large" }, 413);
+        }
+      }
       // The image route's ETag is the hash; a download needs none, so a large file is not read twice.
       const opened = await openInboxAttachmentVersion(store.dir, attachment, versionOf(url), { hash: route === "image" ? "always" : "none" });
       if (!opened.ok) throw new InboxError(opened.code, opened.message);
+      // An image a message's body shows keeps the message-image route's byte cap on the file as it is now, for a download too.
+      if ("ref" in attachment && opened.size > MAX_REVIEW_IMAGE_PREVIEW_BYTES) {
+        await opened.handle.close().catch(() => {});
+        return json({ error: `${attachment.name} is larger than 10 MB; open the version it sent.`, code: "image_too_large" }, 413);
+      }
       let contentType: string;
       const extra: Record<string, string> = {};
       if (route === "image") {
@@ -292,7 +302,7 @@ export function createInboxAttachmentRoutes(context: InboxAttachmentRoutesContex
         contentType = sniffed;
         const dims = readImageDimensions(opened.head, sniffed);
         // An image a message's body shows keeps the message-image route's caps on the file as it is now.
-        if ("ref" in attachment && (opened.size > MAX_REVIEW_IMAGE_PREVIEW_BYTES || (dims && dims.width * dims.height > MAX_REVIEW_IMAGE_PREVIEW_PIXELS))) {
+        if ("ref" in attachment && dims && dims.width * dims.height > MAX_REVIEW_IMAGE_PREVIEW_PIXELS) {
           await opened.handle.close().catch(() => {});
           return json({ error: `${attachment.name} is larger than 10 MB or 50 megapixels; open the version it sent.`, code: "image_too_large" }, 413);
         }

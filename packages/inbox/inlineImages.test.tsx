@@ -3,9 +3,10 @@
  * (approval "inbox-image-viewer", 2026-10-15): the message body as the thread
  * draws it (MessageBody over ui's Viewer). A captured image (`inline_images`)
  * is a button: a click, Enter or Space hands its record to the thread, which
- * opens it in the file viewer; markdown and raw HTML alike. An image the store
- * could not capture opens nothing, and the old look-only lightbox never
- * appears. The browser proof is tests/e2e/inbox-image-viewer.spec.ts.
+ * opens it in the file viewer; markdown and raw HTML alike. An image with no
+ * captured record yet (a later read of the thread captures it) is a button
+ * too and opens in the plain lightbox, so a click always opens something. The
+ * browser proof is tests/e2e/inbox-image-viewer.spec.ts.
  *
  * DOM-gated: runs under DOM_TESTS=1 (happy-dom), from the test.yml DOM list.
  */
@@ -98,7 +99,7 @@ test('the src the body drew reads back to the ref as written, only for that mess
   expect(inlineImageRefFromSrc('/api/inbox/attachments/att_x/image', ID)).toBeNull();
 });
 
-test.skipIf(!hasDom)('a captured image opens in the viewer on a click, Enter or Space, markdown and raw HTML alike; an uncaptured one opens nothing', async () => {
+test.skipIf(!hasDom)('a captured image opens in the viewer on a click, Enter or Space, markdown and raw HTML alike; an uncaptured one opens the lightbox', async () => {
   const opened: InboxInlineImage[] = [];
   const body = ['Two directions:', '', '![B](design/b.png)', '', '<p><img src="design/c.png" alt="C"></p>', '', '![gone](design/gone.png)'].join('\n');
   await render(body, [B, C], opened);
@@ -109,14 +110,33 @@ test.skipIf(!hasDom)('a captured image opens in the viewer on a click, Enter or 
   expect(img('B').getAttribute('aria-label')).toBe('Open b.png, B');
   expect(img('B').getAttribute('data-inline-image')).toBe(B.id);
   expect(img('C').getAttribute('data-inline-image')).toBe(C.id);
-  expect(img('gone').getAttribute('role')).toBeNull();
+  // Not captured yet: a button too, with no record.
+  expect(img('gone').getAttribute('role')).toBe('button');
+  expect(img('gone').getAttribute('aria-label')).toBe('Open gone.png, gone');
+  expect(img('gone').getAttribute('data-inline-image')).toBeNull();
 
   await act(async () => img('B').click());
   await act(async () => img('C').click());
+  expect(opened.map((i) => i.id)).toEqual([B.id, C.id]);
+  expect(document.querySelector('[data-image-lightbox]')).toBeNull();
+  // The uncaptured one opens in the lightbox, so a click always opens something; Escape closes it.
   await act(async () => img('gone').click());
   expect(opened.map((i) => i.id)).toEqual([B.id, C.id]);
-  // The look-only lightbox is gone from the Inbox.
+  const box = document.querySelector<HTMLElement>('[data-image-lightbox]')!;
+  expect(box).not.toBeNull();
+  expect(box.querySelector('img')!.getAttribute('src')).toBe(img('gone').getAttribute('src'));
+  await act(async () => {
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  });
   expect(document.querySelector('[data-image-lightbox]')).toBeNull();
+  // From the keyboard too.
+  await act(async () => {
+    img('gone').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  });
+  expect(document.querySelector('[data-image-lightbox]')).not.toBeNull();
+  await act(async () => {
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  });
 
   for (const key of ['Enter', ' ']) {
     await act(async () => {

@@ -362,36 +362,47 @@ export async function sendAgentMessage(
   }
   const basePath = await sendBasePath(context, input.project_path, project);
   // The images the body shows, copied now under the message-image route's rules (inline-images.ts):
-  // files of the thread, with a sent version. One that cannot be read is left to show as before.
-  const inlineImages = bodyShowsLocalImages(input.body)
-    ? captureInboxInlineImages(store.dir, {
+  // files of the thread, with a sent version. One that cannot be read is captured on a later read.
+  // Asynchronous and yielding; the blobs stay staged until the store accepts the message.
+  const captured = bodyShowsLocalImages(input.body)
+    ? await captureInboxInlineImages(store.dir, {
         body: input.body,
         root: project.root,
         base: basePath,
         worktree: basePath && !isInsideFolder(basePath, project.root) ? basePath : null,
         sentAt: new Date().toISOString(),
+        stage: true,
       })
-    : undefined;
-  const result = store.sendMessage({
-    project_id: project.id,
-    author: {
-      kind: "agent",
-      host: input.agent_host?.trim() || null,
-      session: input.agent_session?.trim() || null,
-      name: input.agent_name?.trim() || null,
-    },
-    body: input.body,
-    subject: input.subject ?? null,
-    reply_to: input.reply_to ?? null,
-    idempotency_key: input.idempotency_key ?? null,
-    thread: input.thread ?? null,
-    attachments,
-    inline_images: inlineImages,
-    guide: guide ?? null,
-    base_path: basePath,
-    supersedes: input.supersedes ?? null,
-    ...(wakes ? { wakes: true } : {}),
-  });
+    : null;
+  let result: ReturnType<InboxStore["sendMessage"]>;
+  try {
+    result = store.sendMessage({
+      project_id: project.id,
+      author: {
+        kind: "agent",
+        host: input.agent_host?.trim() || null,
+        session: input.agent_session?.trim() || null,
+        name: input.agent_name?.trim() || null,
+      },
+      body: input.body,
+      subject: input.subject ?? null,
+      reply_to: input.reply_to ?? null,
+      idempotency_key: input.idempotency_key ?? null,
+      thread: input.thread ?? null,
+      attachments,
+      inline_images: captured?.images,
+      guide: guide ?? null,
+      base_path: basePath,
+      supersedes: input.supersedes ?? null,
+      ...(wakes ? { wakes: true } : {}),
+    });
+  } catch (error) {
+    await captured?.discard();
+    throw error;
+  }
+  // A replay keeps the records the first send wrote; this send's copies are not used.
+  if (result.replayed) await captured?.discard();
+  else await captured?.commit();
   const message = result.message;
   const landed = store.project(message.project_id)!;
   const questions = (message.questions ?? []).map((q) => ({ key: q.key, kind: q.kind, prompt: q.prompt }));

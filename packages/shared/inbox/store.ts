@@ -1900,26 +1900,45 @@ export class InboxStore {
   }
 
   /**
-   * The thread's agent messages whose body images were never captured: sent
-   * before capture existed (no `inline_images` at all). `showsImages` says
-   * whether a body shows a local image (inline-images.ts), so a message with
-   * none is never rewritten.
+   * The thread's messages (an agent's or the person's) with images their body
+   * shows that have no captured record yet, and the sources missing, in text
+   * order: a message sent before capture existed, an image written after the
+   * send, one past the send's 64, one a read refused for a moment. `refsOf`
+   * lists a body's images (inline-images.ts). A message with no local image
+   * is never listed.
    */
-  messagesAwaitingImageCapture(threadId: string, showsImages: (body: string) => boolean): InboxMessage[] {
-    return this.threadMessages(threadId).filter((m) => m.author.kind === "agent" && m.inline_images === undefined && showsImages(m.body));
+  imageCaptureGaps(threadId: string, refsOf: (body: string) => readonly string[]): { message: InboxMessage; refs: string[] }[] {
+    const out: { message: InboxMessage; refs: string[] }[] = [];
+    for (const message of this.threadMessages(threadId)) {
+      const refs = refsOf(message.body);
+      if (refs.length === 0) continue;
+      const have = new Set((message.inline_images ?? []).map((image) => image.ref));
+      const missing = refs.filter((ref) => !have.has(ref));
+      if (missing.length > 0) out.push({ message, refs: missing });
+    }
+    return out;
   }
 
   /**
-   * Keep the images captured the first time a thread was read (a message
-   * sent before capture existed): one more line for the message, its latest
-   * snapshot plus `inline_images`. Written once: a message that has them (an
-   * empty list included) is left as it is and its record returned.
+   * Keep images captured on a later read of the thread: one more line for the
+   * message, its latest snapshot with these records added after the ones it
+   * has (a source it already has is skipped), in `order` when given. Nothing is written when nothing
+   * is new, except that a message with no `inline_images` at all gets its
+   * (possibly empty) list once. Returns the message as it is now.
    */
-  recordCapturedImages(messageId: string, images: readonly InboxInlineImage[]): InboxMessage {
+  addCapturedImages(messageId: string, images: readonly InboxInlineImage[], order?: readonly string[]): InboxMessage {
     const message = this.messages.get(messageId);
     if (!message) throw new InboxError("message_not_found", `No message ${messageId}.`);
-    if (message.author.kind !== "agent" || message.inline_images !== undefined) return message;
-    const next: InboxMessage = { ...message, inline_images: [...images] };
+    const have = new Set((message.inline_images ?? []).map((image) => image.ref));
+    const added = images.filter((image) => !have.has(image.ref) && have.add(image.ref));
+    if (added.length === 0 && message.inline_images !== undefined) return message;
+    const merged = [...(message.inline_images ?? []), ...added];
+    // In the order the body shows them (`order`: its sources in text order), when given.
+    if (order) {
+      const rank = new Map(order.map((ref, index) => [ref, index]));
+      merged.sort((a, b) => (rank.get(a.ref) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.ref) ?? Number.MAX_SAFE_INTEGER));
+    }
+    const next: InboxMessage = { ...message, inline_images: merged };
     this.appendMessage(next, this.stamp());
     return next;
   }

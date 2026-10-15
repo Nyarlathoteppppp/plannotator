@@ -21,8 +21,8 @@
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isInboxId } from "@plannotator/core/inbox-types";
-import { INBOX_MESSAGE_IMAGE_CSP, readInboxMessageImage } from "@plannotator/shared/inbox/message-images";
-import { bodyShowsLocalImages, captureInboxInlineImages } from "@plannotator/shared/inbox/inline-images";
+import { INBOX_MESSAGE_IMAGE_CSP, inboxMessageImageRefsInOrder, readInboxMessageImageAsync } from "@plannotator/shared/inbox/message-images";
+import { captureInboxInlineImages, yieldToLoop } from "@plannotator/shared/inbox/inline-images";
 import type { InboxStore } from "@plannotator/shared/inbox/store";
 import { isInsideFolder, type InboxProjectRoots } from "./inbox-project-root";
 
@@ -73,7 +73,7 @@ export async function inboxMessageImageRoute(req: Request, url: URL, store: Inbo
   const project = store.project(message.project_id);
   if (!project) return refuse(404, "project_not_found", "The message's project is gone.");
 
-  const result = readInboxMessageImage({
+  const result = await readInboxMessageImageAsync({
     body: message.body,
     root: project.root,
     base: message.base_path ?? null,
@@ -109,37 +109,119 @@ function ifNoneMatchHits(header: string | null, etag: string): boolean {
   return header.split(",").some((tag) => tag.trim() === "*" || strip(tag) === etag);
 }
 
+
+/** How many bytes one background pass reads before it pauses (and lets everything else run). */
+export const INBOX_IMAGE_CAPTURE_PASS_BYTES = 32 * 1024 * 1024;
+/** The pause between passes. */
+export const INBOX_IMAGE_CAPTURE_PAUSE_MS = 25;
+/** A source a read could not capture is tried again after this long (a transient `image_changed`, a file written later). */
+export const INBOX_IMAGE_CAPTURE_RETRY_MS = 60_000;
+/** The most sources one message's background capture takes per pass. */
+const MESSAGE_BATCH = 64;
+const ATTEMPTS_MAX = 5000;
+/** Refusals that cost a read of the file: not tried again until the retry window passes. */
+const COSTLY_REFUSALS = new Set(["not_an_image", "image_changed", "image_too_large", "write_failed"]);
+
+export interface InboxImageCapture {
+  /** Capture the thread's uncaptured images in the background (a read never waits for it). */
+  schedule: (threadId: string) => void;
+  /** Resolves once nothing is queued or running (tests). */
+  idle: () => Promise<void>;
+}
+
 /**
- * The first read of a thread whose agent messages were sent before images
- * were captured (approval "inbox-image-viewer"): each such message's body
- * images are copied now, as they are on disk, marked `captured: "on_open"`,
- * and kept on the message (one more line each; a message whose images could
- * not be read still gets its empty list, so it is never tried again). Never
- * throws. Returns how many messages it wrote.
+ * The images a thread's messages show that have no captured record yet
+ * (approval "inbox-image-viewer"; `store.imageCaptureGaps`): copied after a
+ * read of the thread asked for them, off the request path. The read answers
+ * at once; each message's new records arrive as one more line for it (the
+ * event stream carries it, and the window reads the thread again). One thread
+ * at a time, every read and write asynchronous (inline-images.ts), a yield
+ * between images and messages, and a pause after each
+ * INBOX_IMAGE_CAPTURE_PASS_BYTES read, so health, streams, the bridge and the
+ * MCP keep answering. A source refused after a read (not an image, changed
+ * while read) is tried again only after INBOX_IMAGE_CAPTURE_RETRY_MS; one
+ * refused before any read (not on disk yet) on the next read. Records are marked `captured: "on_open"`.
  */
-export async function captureThreadImagesOnOpen(store: InboxStore, threadId: string, projectRoots?: InboxProjectRoots): Promise<number> {
-  let written = 0;
-  for (const message of store.messagesAwaitingImageCapture(threadId, bodyShowsLocalImages)) {
-    try {
-      const project = store.project(message.project_id);
-      if (!project) continue;
-      const worktree = await sentFromWorktree(message.base_path, project.root, projectRoots);
-      // Read again after the await: another read of the thread may have captured it meanwhile.
-      const latest = store.message(message.id);
-      if (!latest || latest.inline_images !== undefined) continue;
-      const images = captureInboxInlineImages(store.dir, {
-        body: latest.body,
-        root: project.root,
-        base: latest.base_path ?? null,
-        worktree,
-        sentAt: latest.created_at,
-        capturedOnOpenAt: new Date().toISOString(),
-      });
-      store.recordCapturedImages(latest.id, images);
-      written += 1;
-    } catch {
-      // Left for the next read.
+export function createInboxImageCapture(
+  store: InboxStore,
+  projectRoots?: InboxProjectRoots,
+  options: { passBytes?: number; pauseMs?: number; retryMs?: number } = {},
+): InboxImageCapture {
+  const passBytes = options.passBytes ?? INBOX_IMAGE_CAPTURE_PASS_BYTES;
+  const pauseMs = options.pauseMs ?? INBOX_IMAGE_CAPTURE_PAUSE_MS;
+  const retryMs = options.retryMs ?? INBOX_IMAGE_CAPTURE_RETRY_MS;
+  const queue = new Set<string>();
+  const attempts = new Map<string, number>();
+  let running: Promise<void> | null = null;
+
+  const tried = (key: string) => {
+    attempts.delete(key);
+    attempts.set(key, Date.now());
+    while (attempts.size > ATTEMPTS_MAX) attempts.delete(attempts.keys().next().value!);
+  };
+
+  const captureThread = async (threadId: string, budget: { bytes: number }) => {
+    for (const { message, refs } of store.imageCaptureGaps(threadId, inboxMessageImageRefsInOrder)) {
+      const now = Date.now();
+      const due = refs.filter((ref) => now - (attempts.get(`${message.id}\0${ref}`) ?? -Infinity) >= retryMs).slice(0, MESSAGE_BATCH);
+      if (due.length === 0) continue;
+      await yieldToLoop();
+      try {
+        const project = store.project(message.project_id);
+        if (!project) continue;
+        const worktree = await sentFromWorktree(message.base_path, project.root, projectRoots);
+        const latest = store.message(message.id);
+        if (!latest) continue;
+        const captured = await captureInboxInlineImages(store.dir, {
+          body: latest.body,
+          root: project.root,
+          base: latest.base_path ?? null,
+          worktree,
+          sentAt: latest.created_at,
+          capturedOnOpenAt: new Date().toISOString(),
+          refs: due,
+          max: MESSAGE_BATCH,
+        });
+        // A refusal decided before any read (missing, outside the project, too large by its size) is tried again on
+        // the next read; one that cost a read (not an image, changed while read) waits INBOX_IMAGE_CAPTURE_RETRY_MS.
+        for (const failure of captured.failures) if (COSTLY_REFUSALS.has(failure.code)) tried(`${message.id}\0${failure.ref}`);
+        // Still there (a deletion may have run meanwhile): the records go on it, in text order.
+        if (store.message(message.id)) store.addCapturedImages(message.id, captured.images, inboxMessageImageRefsInOrder(latest.body));
+        budget.bytes += captured.bytes;
+        if (budget.bytes >= passBytes) {
+          budget.bytes = 0;
+          await new Promise((resolve) => setTimeout(resolve, pauseMs));
+        }
+      } catch {
+        // Left for a later read.
+      }
     }
-  }
-  return written;
+  };
+
+  const run = async () => {
+    const budget = { bytes: 0 };
+    while (queue.size > 0) {
+      const threadId = queue.values().next().value!;
+      queue.delete(threadId);
+      if (store.thread(threadId)) await captureThread(threadId, budget);
+    }
+  };
+
+  return {
+    schedule(threadId) {
+      queue.add(threadId);
+      if (running) return;
+      running = (async () => {
+        try {
+          await yieldToLoop();
+          await run();
+        } finally {
+          running = null;
+        }
+      })();
+    },
+    async idle() {
+      while (running) await running;
+    },
+  };
 }

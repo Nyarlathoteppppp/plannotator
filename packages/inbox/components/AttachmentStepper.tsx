@@ -123,7 +123,8 @@ export function AttachmentStepper(props: AttachmentStepperProps) {
   }, [menuOpen]);
 
   const close = (reason: 'key' | 'outside') => {
-    if (reason === 'outside') refocus.current = false;
+    // A press elsewhere on a desktop leaves focus where it went; a phone's sheet backdrop covers everything, so focus goes back to the count.
+    if (reason === 'outside' && !phone) refocus.current = false;
     props.onMenuOpenChange(false);
   };
 

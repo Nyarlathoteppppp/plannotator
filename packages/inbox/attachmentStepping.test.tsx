@@ -356,7 +356,7 @@ test.skipIf(!hasDom)('the peek opens a picture list, one row per message; it own
   expect(openId()).toBe(shotB.id);
 });
 
-test.skipIf(!hasDom)('on a phone the count opens the peek as a bottom sheet, three across; the backdrop closes it', async () => {
+test.skipIf(!hasDom)('on a phone the count opens the peek as a bottom sheet, three across; the backdrop closes it and focus returns to the count', async () => {
   await render(<Pane start={shotA} harness={harnessOf()} phone />);
   await act(async () => host!.querySelector<HTMLButtonElement>('[data-step-label]')!.click());
   const sheet = document.querySelector<HTMLElement>('[data-image-peek-sheet]')!;
@@ -365,6 +365,8 @@ test.skipIf(!hasDom)('on a phone the count opens the peek as a bottom sheet, thr
   expect(sheet.querySelector('[role="row"] [class*="grid-cols-3"]')).not.toBeNull();
   await act(async () => sheet.querySelector<HTMLElement>('[data-peek-backdrop]')!.click());
   expect(document.querySelector('[data-image-peek-sheet]')).toBeNull();
+  // The backdrop covered everything: focus goes back to the count that opened it.
+  expect(document.activeElement).toBe(host!.querySelector('[data-step-label]'));
 });
 
 test('images in a message come before its attached files, in text order; each says where it was', () => {

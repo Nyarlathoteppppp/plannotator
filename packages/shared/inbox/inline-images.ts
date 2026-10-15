@@ -6,27 +6,38 @@
  * When an agent's message lands, each image its body shows
  * (`inboxMessageImageRefsInOrder`: markdown `![alt](src)` and `<img src>`,
  * outside code, in text order, each once) is read under the message-image
- * route's own rules (`readInboxMessageImage`: referenced in the body, an image
- * by extension and by its magic bytes, inside the message's project or the
- * linked worktree it was sent from, at most 10 MB and 50 megapixels, one
+ * route's own rules (`readInboxMessageImageAsync`: referenced in the body, an
+ * image by extension and by its magic bytes, inside the message's project or
+ * the linked worktree it was sent from, at most 10 MB and 50 megapixels, one
  * `O_NOFOLLOW | O_NONBLOCK` descriptor checked by dev and ino). Its bytes go
  * to `inbox/blobs/<sha256>` and the message keeps an attachment record for it
  * plus `ref`, the src as written (`InboxInlineImage`). An image that cannot be
  * read (remote, outside the project, missing, too large) is left out: the
- * body still shows it through the message-image route, as before, and it
- * never refuses the send.
+ * body still shows it through the message-image route, and the window opens
+ * it in the plain lightbox until a later read captures it. It never refuses
+ * the send.
  *
- * A message sent before this has no copies: the first read of its thread
- * captures them as they are then, marked `captured: "on_open"`.
+ * Every read and write is asynchronous and the capture yields to the event
+ * loop between images, so many images never stall the Inbox. At send the
+ * blobs are staged as temp files and committed only once the store accepted
+ * the message (`commit`), or removed (`discard`).
+ *
+ * Images a message shows that were not captured (a message sent before this,
+ * an image written after the send, past the send's 64, a transient refusal,
+ * the person's own messages) are captured on a later read of the thread, in
+ * the background (packages/server/inbox-message-images.ts), marked
+ * `captured: "on_open"`.
  */
 
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { rename, unlink, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { inboxAttachmentId, type InboxInlineImage } from "@plannotator/core/inbox-types";
-import { writeBlob } from "./attachments";
-import { inboxMessageImageRefsInOrder, readInboxMessageImage } from "./message-images";
+import { inboxBlobPath, inboxBlobsDir } from "./attachments";
+import { inboxMessageImageRefsInOrder, readInboxMessageImageAsync } from "./message-images";
 
-/** The most images one message's capture takes (the rest show through the message-image route, as before). */
+/** The most images one message's capture at send takes (the rest are captured on a later read). */
 export const INBOX_INLINE_IMAGES_MAX = 64;
 
 export interface CaptureInlineImagesInput {
@@ -39,8 +50,26 @@ export interface CaptureInlineImagesInput {
   worktree?: string | null;
   /** The message's time: each record's `sent_at`. */
   sentAt: string;
-  /** Set when capturing a message sent before capture existed: the records are marked `captured: "on_open"` at this time. */
+  /** Set when capturing on a later read: the records are marked `captured: "on_open"` at this time. */
   capturedOnOpenAt?: string;
+  /** Only these sources (as written), in this order; default every image the body shows. */
+  refs?: readonly string[];
+  /** At most this many images (default INBOX_INLINE_IMAGES_MAX). */
+  max?: number;
+  /** Stage the blobs as temp files until `commit` (a send the store may still refuse). */
+  stage?: boolean;
+}
+
+export interface CapturedInlineImages {
+  images: InboxInlineImage[];
+  /** The sources not captured, with the refusal's code (`image_missing`, `not_an_image`, ...). */
+  failures: { ref: string; code: string }[];
+  /** The bytes read. */
+  bytes: number;
+  /** Move staged blobs into place (a no-op unless `stage`). */
+  commit: () => Promise<void>;
+  /** Remove staged blobs (a no-op unless `stage`). */
+  discard: () => Promise<void>;
 }
 
 /** Whether a body shows any local image the capture could take. */
@@ -48,27 +77,55 @@ export function bodyShowsLocalImages(body: string): boolean {
   return inboxMessageImageRefsInOrder(body).length > 0;
 }
 
+/** Let other requests run (between images). */
+export function yieldToLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function writeTemp(dir: string, bytes: Uint8Array): Promise<string> {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const temp = join(dir, `.send.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`);
+  await writeFile(temp, bytes, { mode: 0o600, flag: "wx" });
+  return temp;
+}
+
+async function place(temp: string, path: string): Promise<void> {
+  if (existsSync(path)) await unlink(temp).catch(() => {});
+  else await rename(temp, path);
+}
+
 /**
  * Read and copy each image the body shows. Never throws: an image that cannot
- * be read is left out. Blobs are written once (content-addressed).
+ * be read is left out.
  */
-export function captureInboxInlineImages(inboxDirPath: string, input: CaptureInlineImagesInput): InboxInlineImage[] {
-  const out: InboxInlineImage[] = [];
-  for (const ref of inboxMessageImageRefsInOrder(input.body).slice(0, INBOX_INLINE_IMAGES_MAX)) {
-    let read: ReturnType<typeof readInboxMessageImage>;
-    try {
-      read = readInboxMessageImage({ body: input.body, root: input.root, base: input.base ?? null, worktree: input.worktree ?? null, path: ref });
-    } catch {
+export async function captureInboxInlineImages(inboxDirPath: string, input: CaptureInlineImagesInput): Promise<CapturedInlineImages> {
+  const images: InboxInlineImage[] = [];
+  const failures: { ref: string; code: string }[] = [];
+  const staged: { temp: string; path: string }[] = [];
+  let bytes = 0;
+  const dir = inboxBlobsDir(inboxDirPath);
+  const refs = (input.refs ?? inboxMessageImageRefsInOrder(input.body)).slice(0, input.max ?? INBOX_INLINE_IMAGES_MAX);
+  for (const [index, ref] of refs.entries()) {
+    if (index > 0) await yieldToLoop();
+    const read = await readInboxMessageImageAsync({ body: input.body, root: input.root, base: input.base ?? null, worktree: input.worktree ?? null, path: ref }).catch(() => null);
+    if (!read || !read.ok) {
+      failures.push({ ref, code: read && !read.ok ? read.code : "image_missing" });
       continue;
     }
-    if (!read.ok) continue;
     const sha256 = createHash("sha256").update(read.bytes).digest("hex");
+    const path = inboxBlobPath(inboxDirPath, sha256);
     try {
-      writeBlob(inboxDirPath, sha256, read.bytes);
+      if (!existsSync(path)) {
+        const temp = await writeTemp(dir, read.bytes);
+        if (input.stage) staged.push({ temp, path });
+        else await place(temp, path);
+      }
     } catch {
+      failures.push({ ref, code: "write_failed" });
       continue;
     }
-    out.push({
+    bytes += read.bytes.length;
+    images.push({
       id: inboxAttachmentId(),
       path: read.real,
       named_path: read.named === read.real ? null : read.named,
@@ -84,5 +141,15 @@ export function captureInboxInlineImages(inboxDirPath: string, input: CaptureInl
       ...(input.capturedOnOpenAt ? { captured: "on_open" as const, captured_at: input.capturedOnOpenAt } : {}),
     });
   }
-  return out;
+  return {
+    images,
+    failures,
+    bytes,
+    commit: async () => {
+      for (const { temp, path } of staged.splice(0)) await place(temp, path).catch(() => unlink(temp).catch(() => {}));
+    },
+    discard: async () => {
+      for (const { temp } of staged.splice(0)) await unlink(temp).catch(() => {});
+    },
+  };
 }

@@ -436,13 +436,34 @@ export function guideFeedback(records: readonly InboxAnnotationRecord[]): string
  * A file's heading in the export: an attached file by its path; an image the
  * message's text shows by its src as written plus the message it was in, so
  * the agent knows which picture it was: `design/checkout-b.png (image in
- * your 11:22 AM message)`.
+ * your 11:22 AM message)`. When another message of `others` shows the same
+ * src within the same minute, the time carries its seconds (`11:22:41 AM`),
+ * and when that still ties, the message's place among them (`message 2`), so
+ * two pictures never share one heading.
  */
-export function exportFileLabel(attachment: Pick<InboxAttachmentState, 'path' | 'name' | 'ref' | 'sent_at'>, projectRoot: string): string {
+export function exportFileLabel(
+  attachment: Pick<InboxAttachmentState, 'path' | 'name' | 'ref' | 'sent_at'> & { message_id?: string },
+  projectRoot: string,
+  others: readonly Pick<InboxAttachmentState, 'ref' | 'sent_at' | 'message_id'>[] = [],
+): string {
   const label = attachmentLabel(attachment, projectRoot);
   if (attachment.ref === undefined) return label;
-  const at = whenTime(attachment.sent_at);
-  return `${label} (image in your ${at ? `${at} ` : ''}message)`;
+  const minute = whenTime(attachment.sent_at);
+  const sameRef = others.filter((o) => o.ref === attachment.ref && o.message_id !== attachment.message_id && whenTime(o.sent_at) === minute);
+  if (sameRef.length === 0) return `${label} (image in your ${minute ? `${minute} ` : ''}message)`;
+  const secondsOf = (iso: string) => {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  };
+  const second = secondsOf(attachment.sent_at);
+  const tied = sameRef.filter((o) => secondsOf(o.sent_at) === second);
+  if (tied.length === 0) return `${label} (image in your ${second} message)`;
+  const order = [...tied, { sent_at: attachment.sent_at, message_id: attachment.message_id ?? '' }]
+    .map((o) => `${o.sent_at}\0${o.message_id ?? ''}`)
+    .filter((key, index, all) => all.indexOf(key) === index)
+    .sort();
+  const place = order.indexOf(`${attachment.sent_at}\0${attachment.message_id ?? ''}`) + 1;
+  return `${label} (image in your ${second} message ${place})`;
 }
 
 export const ATTACHMENT_FEEDBACK_HEADING = {
@@ -476,10 +497,19 @@ export function attachmentFeedback(
     // Comments on a guided review's diff go in their own section, after the files'.
     if (record.guide) continue;
     const attachment = attachments.find((a) => a.id === record.attachment_id) ?? attachments.find((a) => a.path === record.path);
-    if (!attachment) continue;
     const sent = record.version !== 'current';
+    if (!attachment) {
+      // A file the caller does not list (an image a message shows, on a phone app older than
+      // `inline_images`): its comment still rides the Send, under the path it was made on.
+      const label = `${record.path}${sent ? ' (the version you sent)' : ''}`;
+      const group = groups.get(label) ?? { annotations: [], blocks: [] };
+      groups.set(label, group);
+      const { exportLocation: _dropped, ...annotation } = annotationOf(record) as Annotation & { exportLocation?: unknown };
+      group.annotations.push(annotation as Annotation);
+      continue;
+    }
     if (attachment.ref !== undefined) inlineImages = true;
-    const label = `${exportFileLabel(attachment, projectRoot)}${sent ? (attachment.captured === 'on_open' ? ' (the version the person first saw)' : ' (the version you sent)') : ''}`;
+    const label = `${exportFileLabel(attachment, projectRoot, attachments)}${sent ? (attachment.captured === 'on_open' ? ' (the version the person first saw)' : ' (the version you sent)') : ''}`;
     let group = groups.get(label);
     if (!group) {
       const text = texts.get(`${attachment.id}\0${record.version}`) ?? '';

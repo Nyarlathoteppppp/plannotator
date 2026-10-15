@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Viewer } from '@plannotator/ui/components/Viewer';
+import { ImageLightbox } from '@plannotator/ui/components/ImageLightbox';
 import { parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
 import type { InboxDecision, InboxDecisionDraft, InboxListRow, InboxMessageWire, InboxProjectRepo, InboxQuestion, InboxThread } from '@plannotator/core/inbox-types';
 import type { IndexedQuestion, QuestionAnswer, QuestionStatus } from '@plannotator/core/question-block';
@@ -273,12 +275,14 @@ export function MessageBody({
     return () => body.removeEventListener('load', onLoad, true);
   }, []);
   // Images the body shows open in the thread's one viewer (approval "inbox-image-viewer"): a
-  // click, or Enter / Space on one (each captured image is a button). One the store could not
-  // capture (outside the project, too large, missing) opens nothing.
+  // click, or Enter / Space on one (every image the window loads from the message is a button).
+  // Until the store has captured it (a later read of the thread does, in the background), the
+  // plain lightbox shows it, so a click always opens something.
   const inlineRef = useRef<readonly InboxInlineImage[]>(message.inline_images ?? []);
   inlineRef.current = message.inline_images ?? [];
   const openImageRef = useRef(onOpenInlineImage);
   openImageRef.current = onOpenInlineImage;
+  const [fallback, setFallback] = useState<{ src: string; alt: string } | null>(null);
   const imageOf = useCallback(
     (src: string | null) => {
       const ref = src ? inlineImageRefFromSrc(src, message.id) : null;
@@ -286,46 +290,49 @@ export function MessageBody({
     },
     [message.id],
   );
-  const onImageClick = useCallback(
-    (src: string) => {
+  /** Open one of the body's images: its captured file in the viewer, else the lightbox. False: not one of them. */
+  const openImage = useCallback(
+    (src: string | null, alt: string): boolean => {
+      if (!src || inlineImageRefFromSrc(src, message.id) === null) return false;
       const image = imageOf(src);
-      if (image) openImageRef.current?.(image);
+      if (image && openImageRef.current) openImageRef.current(image);
+      else setFallback({ src, alt });
+      return true;
     },
-    [imageOf],
+    [imageOf, message.id],
   );
+  const onImageClick = useCallback((src: string, alt: string) => void openImage(src, alt), [openImage]);
   useEffect(() => {
     const body = bodyRef.current;
-    if (!body || !onOpenInlineImage) return;
+    if (!body) return;
     for (const img of body.querySelectorAll<HTMLImageElement>('img')) {
-      const image = imageOf(img.getAttribute('src'));
-      if (!image) continue;
+      const src = img.getAttribute('src');
+      const ref = src ? inlineImageRefFromSrc(src, message.id) : null;
+      if (ref === null) continue;
+      const image = imageOf(src);
+      const name = image?.name ?? ref.split(/[\\/]/).pop() ?? 'image';
       img.setAttribute('role', 'button');
       img.tabIndex = 0;
-      img.setAttribute('aria-label', `Open ${image.name}${img.alt ? `, ${img.alt}` : ''}`);
-      img.setAttribute('data-inline-image', image.id);
+      img.setAttribute('aria-label', `Open ${name}${img.alt ? `, ${img.alt}` : ''}`);
+      if (image) img.setAttribute('data-inline-image', image.id);
+      else img.removeAttribute('data-inline-image');
       img.style.cursor = 'zoom-in';
     }
   });
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    // Markdown images reach the viewer through Viewer's onImageClick; an image in a raw-HTML block has no handler of its own.
+    // Markdown images reach openImage through Viewer's onImageClick; an image in a raw-HTML block has no handler of its own.
     const onClick = (event: MouseEvent) => {
       const img = event.target instanceof HTMLImageElement ? event.target : null;
       if (!img || img.classList.contains('cursor-zoom-in')) return;
-      const image = imageOf(img.getAttribute('src'));
-      if (!image) return;
-      event.preventDefault();
-      openImageRef.current?.(image);
+      if (openImage(img.getAttribute('src'), img.alt)) event.preventDefault();
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
       const img = event.target instanceof HTMLImageElement ? event.target : null;
-      const image = img ? imageOf(img.getAttribute('src')) : null;
-      if (!image) return;
-      event.preventDefault();
-      openImageRef.current?.(image);
+      if (img && openImage(img.getAttribute('src'), img.alt)) event.preventDefault();
     };
     body.addEventListener('click', onClick);
     body.addEventListener('keydown', onKey);
@@ -333,7 +340,7 @@ export function MessageBody({
       body.removeEventListener('click', onClick);
       body.removeEventListener('keydown', onKey);
     };
-  }, [imageOf]);
+  }, [openImage]);
   // The skills the block names are painted in the person's words, as the composer painted them.
   useEffect(() => {
     const body = bodyRef.current;
@@ -457,6 +464,7 @@ export function MessageBody({
         renderQuestionBelowPrompt={renderReplacesLine ? belowPrompt : undefined}
       />
       {skills && <SkillsLine split={skills} />}
+      {fallback && createPortal(<ImageLightbox src={fallback.src} alt={fallback.alt} onClose={() => setFallback(null)} />, document.body)}
     </div>
   );
 }
