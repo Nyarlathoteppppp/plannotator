@@ -56,6 +56,15 @@ const run = (args: string[], options: SpawnSyncOptions = {}) => {
   const result = spawnSync(process.execPath, args, { cwd: repo, env, encoding: "utf8", timeout: 10 * 60_000, ...options });
   return { code: result.status, out: `${result.stdout ?? ""}`, err: `${result.stderr ?? ""}` };
 };
+/**
+ * Playwright under Node: under Bun on Windows, Chromium's launch never
+ * finishes (Playwright talks to it over extra stdio pipes; the first CI run
+ * timed out at 180 s). Node 24 runs these .ts files by stripping types.
+ */
+const runNode = (args: string[]) => {
+  const result = spawnSync("node", args, { cwd: repo, env, encoding: "utf8", timeout: 10 * 60_000 });
+  return { code: result.status, out: `${result.stdout ?? ""}`, err: `${result.stderr ?? ""}` };
+};
 const registry = () => JSON.parse(readFileSync(join(data, "inbox", "inbox.json"), "utf8")) as { port: number; token: string; serverSession: string; url: string };
 const nameState = async (port: number) => ((await (await fetch(`http://127.0.0.1:${port}/api/inbox/name`)).json()) as { name: Record<string, unknown> }).name;
 const httpsSession = async (): Promise<string> => {
@@ -89,7 +98,7 @@ try {
   record("start scratch inbox", true, `${url} (data ${data})`);
 
   // 2.
-  const flow = run([join(repo, "scripts/proto-fixed-address/ui-flow.ts"), url, shots, "--click-sure"]);
+  const flow = runNode([join(repo, "scripts/proto-fixed-address/ui-flow.ts"), url, shots, "--click-sure"]);
   console.log(flow.out, flow.err);
   const afterSure = await nameState(first.port);
   record("Sure in the window -> on", afterSure.status === "on", `status ${afterSure.status}; reason ${afterSure.reason}; probe ${afterSure.probe}; os_trust ${afterSure.os_trust}`);
@@ -115,7 +124,7 @@ try {
     const added = spawnSync("certutil", ["-d", `sql:${nss}`, "-A", "-t", "C,,", "-n", "portless Local CA", "-i", join(portlessState, "ca.pem")], { encoding: "utf8" });
     record("linux: CA added to Chromium's NSS store (portless does not do this)", added.status === 0, (added.stderr || "ok").trim());
   }
-  const browsers = run([join(repo, "scripts/proto-fixed-address/browser-check.ts"), first.serverSession, NAME]);
+  const browsers = runNode([join(repo, "scripts/proto-fixed-address/browser-check.ts"), first.serverSession, NAME]);
   console.log(browsers.out, browsers.err);
   record("a browser loads the name with certificate checks on", browsers.code === 0, browsers.out.trim().split("\n").join(" | "));
 
