@@ -116,7 +116,7 @@ import { createInboxRepoCache } from "./inbox-repos";
 import { createInboxProjectRoots, nearestProjectHolding, type InboxGitRunner } from "./inbox-project-root";
 import { handleFavicon } from "./shared-handlers";
 import { createInboxAttachmentRoutes } from "./inbox-attachments";
-import { inboxMessageImageRoute } from "./inbox-message-images";
+import { captureThreadImagesOnOpen, inboxMessageImageRoute } from "./inbox-message-images";
 import { createInboxOpenInRoute, systemOpenInLauncher, type InboxOpenInLauncher } from "./inbox-open-in";
 import { recordInboxAttachments, sweepStaleInboxSendTemps } from "@plannotator/shared/inbox/attachments";
 import { inboxBodyForAgent } from "@plannotator/shared/inbox/uploads";
@@ -1625,6 +1625,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       const threadMatch = /^\/api\/inbox\/threads\/([A-Za-z0-9_]+)$/.exec(path);
       if (threadMatch && req.method === "GET") {
         // The window's thread: each message's seq (what is new since the last look) and a reply's sent annotations.
+        // Images in messages sent before they were captured: copied now, once (approval "inbox-image-viewer").
+        if (store.thread(threadMatch[1]!)) await captureThreadImagesOnOpen(store, threadMatch[1]!, projectRoots);
         const thread = store.windowThread(threadMatch[1]!);
         if (!thread) return json({ error: "No such thread.", code: "thread_not_found" }, 404);
         const decisionIds = thread.messages.flatMap((m) => (m.questions ?? []).map((q) => q.decision_id));
@@ -1857,7 +1859,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     return handle(req, "local");
   };
 
-  attachmentRoutes = createInboxAttachmentRoutes({ store, serverSession, readBody, streamIdleMs: options.streamIdleMs });
+  attachmentRoutes = createInboxAttachmentRoutes({ store, serverSession, readBody, streamIdleMs: options.streamIdleMs, projectRoots });
   const started = startOnLoopback(fetch, previous?.port ?? null);
   server = started.server;
   portChanged = started.portChanged;

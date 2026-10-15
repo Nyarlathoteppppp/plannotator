@@ -80,8 +80,61 @@ export function inboxMessageImageRefs(body: string): Set<string> {
   return refs;
 }
 
+/** Fenced code blocks and inline code spans, blanked to spaces (line breaks kept) so the image grammar never matches inside them. */
+function blankCode(body: string): string {
+  const blank = (text: string) => text.replace(/[^\n]/g, " ");
+  const lines = body.split("\n");
+  let fence: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence === null) {
+      if (open) {
+        fence = open[1]!;
+        lines[i] = blank(line);
+      }
+    } else {
+      if (open && open[1]![0] === fence[0] && open[1]!.length >= fence.length && line.trim().replace(/[`~]/g, "") === "") fence = null;
+      lines[i] = blank(line);
+    }
+  }
+  return lines.join("\n").replace(/(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g, blank);
+}
+
+/**
+ * The images the body shows, each once, in the order the text shows them:
+ * the sources `inboxMessageImageRefs` finds, minus any inside a code block or
+ * an inline code span (drawn as code, never as an image). What the store
+ * captures (inline-images.ts), in the order the window steps through them.
+ */
+export function inboxMessageImageRefsInOrder(body: string): string[] {
+  const text = blankCode(body);
+  const found: { index: number; src: string }[] = [];
+  for (const match of text.matchAll(MARKDOWN_IMAGE_RE)) found.push({ index: match.index ?? 0, src: match[1]! });
+  for (const match of text.matchAll(HTML_IMG_SRC_RE)) found.push({ index: match.index ?? 0, src: decodeAttribute(match[1] ?? match[2] ?? match[3] ?? "") });
+  found.sort((a, b) => a.index - b.index);
+  const out: string[] = [];
+  for (const { src } of found) {
+    if (!src || /^(https?:|data:|blob:)/i.test(src) || out.includes(src)) continue;
+    out.push(src);
+  }
+  return out;
+}
+
 export type InboxMessageImageResult =
-  | { ok: true; bytes: Buffer; contentType: string; width?: number; height?: number }
+  | {
+      ok: true;
+      bytes: Buffer;
+      contentType: string;
+      width?: number;
+      height?: number;
+      /** The realpath read (inside the project, or the worktree it was sent from). */
+      real: string;
+      /** The path the src named, resolved to an absolute path before symlinks. */
+      named: string;
+      /** The file's mtime, from the descriptor that was read. */
+      mtime: string;
+    }
   | { ok: false; status: number; code: string; error: string };
 
 function refuse(status: number, code: string, error: string): InboxMessageImageResult {
@@ -184,6 +237,7 @@ export function readInboxMessageImage(input: {
     if (!inArea(real)) return refuse(403, "outside_project", "That image leads outside the message's project.");
     const read = readImageFile(real);
     if (!read.ok) return read;
+    const { mtime } = read;
     const bytes = read.bytes;
     if (isLfsPointer(bytes)) return refuse(415, "not_an_image", "That image is stored in Git LFS.");
     const contentType = sniffImageContentType(bytes);
@@ -192,7 +246,7 @@ export function readInboxMessageImage(input: {
     if (dims && dims.width * dims.height > MAX_REVIEW_IMAGE_PREVIEW_PIXELS) {
       return refuse(413, "image_too_large", "That image has too many pixels to show.");
     }
-    return { ok: true, bytes, contentType, ...(dims ? { width: dims.width, height: dims.height } : {}) };
+    return { ok: true, bytes, contentType, real, named, mtime, ...(dims ? { width: dims.width, height: dims.height } : {}) };
   }
   return refuse(404, "image_missing", "That image is not on disk.");
 }
@@ -206,7 +260,7 @@ const CHANGED = "That image changed while it was read.";
  * never blocks on a FIFO, never buffers more than the cap + 1 bytes, and
  * refuses when the path no longer leads to the file that was read.
  */
-function readImageFile(real: string): { ok: true; bytes: Buffer } | Extract<InboxMessageImageResult, { ok: false }> {
+function readImageFile(real: string): { ok: true; bytes: Buffer; mtime: string } | Extract<InboxMessageImageResult, { ok: false }> {
   const fail = (status: number, code: string, error: string) => ({ ok: false as const, status, code, error });
   let fd: number;
   try {
@@ -239,7 +293,7 @@ function readImageFile(real: string): { ok: true; bytes: Buffer } | Extract<Inbo
       again = null;
     }
     if (!again || again.dev !== stat.dev || again.ino !== stat.ino) return fail(409, "image_changed", CHANGED);
-    return { ok: true, bytes: buffer.subarray(0, total) };
+    return { ok: true, bytes: buffer.subarray(0, total), mtime: stat.mtime.toISOString() };
   } catch {
     return fail(404, "image_missing", "That image could not be read.");
   } finally {

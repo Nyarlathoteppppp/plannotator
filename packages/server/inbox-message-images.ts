@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isInboxId } from "@plannotator/core/inbox-types";
 import { INBOX_MESSAGE_IMAGE_CSP, readInboxMessageImage } from "@plannotator/shared/inbox/message-images";
+import { bodyShowsLocalImages, captureInboxInlineImages } from "@plannotator/shared/inbox/inline-images";
 import type { InboxStore } from "@plannotator/shared/inbox/store";
 import { isInsideFolder, type InboxProjectRoots } from "./inbox-project-root";
 
@@ -45,7 +46,7 @@ function refuse(status: number, code: string, error: string): Response {
  * outside the project's root: checked again now (the folder still folds into
  * this project), never taken from the record alone. Null otherwise.
  */
-async function sentFromWorktree(base: string | null | undefined, root: string, projectRoots: InboxProjectRoots | undefined): Promise<string | null> {
+export async function sentFromWorktree(base: string | null | undefined, root: string, projectRoots: InboxProjectRoots | undefined): Promise<string | null> {
   if (!base || !projectRoots) return null;
   try {
     if (isInsideFolder(realpathSync(base), root)) return null;
@@ -106,4 +107,39 @@ function ifNoneMatchHits(header: string | null, etag: string): boolean {
   if (!header) return false;
   const strip = (tag: string) => tag.trim().replace(/^W\//, "");
   return header.split(",").some((tag) => tag.trim() === "*" || strip(tag) === etag);
+}
+
+/**
+ * The first read of a thread whose agent messages were sent before images
+ * were captured (approval "inbox-image-viewer"): each such message's body
+ * images are copied now, as they are on disk, marked `captured: "on_open"`,
+ * and kept on the message (one more line each; a message whose images could
+ * not be read still gets its empty list, so it is never tried again). Never
+ * throws. Returns how many messages it wrote.
+ */
+export async function captureThreadImagesOnOpen(store: InboxStore, threadId: string, projectRoots?: InboxProjectRoots): Promise<number> {
+  let written = 0;
+  for (const message of store.messagesAwaitingImageCapture(threadId, bodyShowsLocalImages)) {
+    try {
+      const project = store.project(message.project_id);
+      if (!project) continue;
+      const worktree = await sentFromWorktree(message.base_path, project.root, projectRoots);
+      // Read again after the await: another read of the thread may have captured it meanwhile.
+      const latest = store.message(message.id);
+      if (!latest || latest.inline_images !== undefined) continue;
+      const images = captureInboxInlineImages(store.dir, {
+        body: latest.body,
+        root: project.root,
+        base: latest.base_path ?? null,
+        worktree,
+        sentAt: latest.created_at,
+        capturedOnOpenAt: new Date().toISOString(),
+      });
+      store.recordCapturedImages(latest.id, images);
+      written += 1;
+    } catch {
+      // Left for the next read.
+    }
+  }
+  return written;
 }

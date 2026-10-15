@@ -19,6 +19,7 @@ import { QUESTION_AUTHORING_GUIDE } from "@plannotator/core/question-block";
 import { INBOX_SECTIONS, INBOX_THREAD_NAME_MAX, type InboxGuideRef, type InboxSectionId, type InboxLine, type InboxMessage, type InboxProject } from "@plannotator/core/inbox-types";
 import { INBOX_WAKES_META_KEY } from "@plannotator/shared/inbox/connection";
 import { inboxBodyForAgent } from "@plannotator/shared/inbox/uploads";
+import { bodyShowsLocalImages, captureInboxInlineImages } from "@plannotator/shared/inbox/inline-images";
 import { InboxError } from "@plannotator/shared/inbox/schema";
 import type { InboxStore } from "@plannotator/shared/inbox/store";
 import { recordAgentDecision } from "./inbox-decisions";
@@ -360,6 +361,17 @@ export async function sendAgentMessage(
     attachments = await context.recordAttachments(input.attachments, project, base);
   }
   const basePath = await sendBasePath(context, input.project_path, project);
+  // The images the body shows, copied now under the message-image route's rules (inline-images.ts):
+  // files of the thread, with a sent version. One that cannot be read is left to show as before.
+  const inlineImages = bodyShowsLocalImages(input.body)
+    ? captureInboxInlineImages(store.dir, {
+        body: input.body,
+        root: project.root,
+        base: basePath,
+        worktree: basePath && !isInsideFolder(basePath, project.root) ? basePath : null,
+        sentAt: new Date().toISOString(),
+      })
+    : undefined;
   const result = store.sendMessage({
     project_id: project.id,
     author: {
@@ -374,6 +386,7 @@ export async function sendAgentMessage(
     idempotency_key: input.idempotency_key ?? null,
     thread: input.thread ?? null,
     attachments,
+    inline_images: inlineImages,
     guide: guide ?? null,
     base_path: basePath,
     supersedes: input.supersedes ?? null,
