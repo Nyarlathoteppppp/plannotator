@@ -19,6 +19,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SimAgent } from "../../scripts/inbox-sim";
@@ -1009,8 +1010,10 @@ describe("the door's parity routes, in process (7.39 to 7.49)", () => {
     const base = `http://127.0.0.1:${inbox.port}`;
     const token = await pairPhone(base);
     /** The phone: a JSON body, or a raw one (`raw`), with its bearer token and no Origin. */
-    const door = (path: string, init: { body?: unknown; raw?: BodyInit; headers?: Record<string, string>; doorBase?: string } = {}) =>
+    const door = (path: string, init: { body?: unknown; raw?: BodyInit; headers?: Record<string, string>; doorBase?: string; fresh?: boolean } = {}) =>
       fetch(`${init.doorBase ?? base}/api/inbox/device/${path}`, {
+        // `fresh`: a connection of its own (a body the server stopped reading leaves its connection unusable).
+        ...(init.fresh ? { keepalive: false } : {}),
         method: init.body === undefined && init.raw === undefined ? "GET" : "POST",
         headers: { Authorization: `Bearer ${token}`, ...(init.body === undefined ? {} : { "Content-Type": "application/json" }), ...init.headers },
         body: init.raw ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
@@ -1024,7 +1027,7 @@ describe("the door's parity routes, in process (7.39 to 7.49)", () => {
       });
       expect(response.status).toBe(200);
     };
-    return { root, ledger, inbox, base, door, poll };
+    return { root, ledger, inbox, base, token, door, poll };
   };
 
   test("7.39 to 7.41: the live sessions, a thread the phone starts (replayed by its key, refusals unchanged), and Send to another session", async () => {
@@ -1049,6 +1052,9 @@ describe("the door's parity routes, in process (7.39 to 7.49)", () => {
     expect(((await again.json()) as Json).message.id).toBe(first.message.id);
     expect(inbox.store.thread(first.thread_id)!.messages).toHaveLength(1);
     // No live session: the window's refusal, and nothing written.
+    // draft_id deletes a shared draft, and drafts stay on the computer: the door refuses it before the window runs.
+    const drafted = await door("messages", { body: { idempotency_key: "compose-3", to: { session: "ses-a" }, body: "Hi", draft_id: "drf_01K70000000000000000000001" } });
+    expect([drafted.status, ((await drafted.json()) as Json).field]).toEqual([422, "draft_id"]);
     const gone = await door("messages", { body: { idempotency_key: "compose-2", to: { session: "ses-gone" }, body: "Hello" } });
     expect([gone.status, ((await gone.json()) as Json).code]).toEqual([409, "session_not_live"]);
 
@@ -1171,6 +1177,70 @@ describe("the door's parity routes, in process (7.39 to 7.49)", () => {
     expect((await door("markups?idempotency_key=mk-2", { raw: "<svg/>" })).status).toBe(422);
   });
 
+  test("a raw body past its bound is refused promptly and never buffered whole: a chunked drawing past 32 MB, an upload declaring more than 100 MB; neither is recorded under its key", async () => {
+    const { base, token, door } = await world();
+    // A chunked body (no Content-Length) of 1 MiB chunks, up to 400 MiB, made only as the server reads it.
+    const chunk = new Uint8Array(1024 * 1024);
+    let made = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (made >= 400) return controller.close();
+        made += 1;
+        controller.enqueue(chunk);
+      },
+    });
+    const started = Date.now();
+    const big = await door("markups?idempotency_key=big-1", { raw: endless, headers: { "Content-Type": "image/png" }, fresh: true });
+    expect([big.status, ((await big.json()) as Json).code]).toEqual([413, "markup_too_large"]);
+    expect(big.headers.get("connection")).toBe("close");
+    expect(Date.now() - started).toBeLessThan(10_000);
+    // Read up to the bound and a little past it (what was already in flight), never the 400 MiB.
+    expect(made).toBeGreaterThan(32);
+    expect(made).toBeLessThan(120);
+    // Not recorded: the same key with a drawing that fits is applied, not answered 413 again.
+    const fits = await door("markups?idempotency_key=big-1", { raw: ONE_PIXEL_PNG, headers: { "Content-Type": "image/png" }, fresh: true });
+    expect([fits.status, fits.headers.get("idempotent-replayed")]).toEqual([200, null]);
+    // The window's own markup route has the same bound (it buffers the image whole).
+    const windowBig = await fetch(`${base}/api/inbox/markups`, { method: "POST", body: new Uint8Array(33 * 1024 * 1024), keepalive: false });
+    expect([windowBig.status, ((await windowBig.json()) as Json).code]).toEqual([413, "markup_too_large"]);
+
+    // An upload that declares 110 MB (past the 100 MB bound, under Bun's 128 MiB request bound): refused from its headers.
+    const port = Number(new URL(base).port);
+    const answer = await new Promise<string>((resolve, reject) => {
+      const socket = createConnection({ host: "127.0.0.1", port });
+      let data = "";
+      const done = () => resolve(data);
+      const timer = setTimeout(() => {
+        socket.destroy();
+        done();
+      }, 5_000);
+      socket.on("data", (d) => {
+        data += d.toString("latin1");
+        // The whole answer is here (headers and the Content-Length body): stop sending. Bun reads and drops the rest of a body
+        // the handler stopped reading, so it does not close the socket itself.
+        const head = data.indexOf("\r\n\r\n");
+        const length = /content-length: (\d+)/i.exec(data);
+        if (head >= 0 && length && data.length - head - 4 >= Number(length[1])) {
+          clearTimeout(timer);
+          socket.destroy();
+          done();
+        }
+      });
+      socket.on("close", () => {
+        clearTimeout(timer);
+        done();
+      });
+      socket.on("error", reject);
+      socket.write(
+        `POST /api/inbox/device/uploads?name=big.bin&idempotency_key=big-2 HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nAuthorization: Bearer ${token}\r\nContent-Type: application/octet-stream\r\nContent-Length: ${110 * 1024 * 1024}\r\n\r\n`,
+      );
+      socket.write(Buffer.alloc(64 * 1024));
+    });
+    expect(answer).toMatch(/^HTTP\/1\.1 413/);
+    expect(answer).toContain('"code":"upload_too_large"');
+    expect(answer.toLowerCase()).toContain("connection: close");
+  });
+
   test("a raw upload over the tailnet's door listener, replayed by its key through the window port's door", async () => {
     const serve = new Map<number, string>();
     const tailscale: TailscaleRunner = (args) => {
@@ -1204,6 +1274,8 @@ describe("the door's parity routes, in process (7.39 to 7.49)", () => {
     expect(upload.size).toBe(bytes.length);
     const viaLoopback = await door("uploads?name=big.txt&idempotency_key=tail-1", { raw: bytes });
     expect(viaLoopback.headers.get("idempotent-replayed")).toBe("true");
+    // The 3 MB it sent again is read and dropped only up to 1 MiB; then the connection closes after the answer.
+    expect(viaLoopback.headers.get("connection")).toBe("close");
     expect(((await viaLoopback.json()) as Json).upload.upload_id).toBe(upload.upload_id);
     // A large file the window refuses before reading it still gets its answer (the door reads the rest and drops it).
     const refused = await door("uploads?name=.env&idempotency_key=tail-2", { raw: bytes, doorBase: tailnetDoor, headers: { Host: "macbook-pro.tail0000.ts.net:8443" } });

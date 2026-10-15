@@ -367,6 +367,7 @@ const ERROR_STATUS: Record<string, number> = {
   draft_conflict: 409,
   upload_refused: 422,
   upload_too_large: 413,
+  markup_too_large: 413,
   upload_not_found: 404,
   // Over your tailnet (packages/server/inbox-tailscale.ts).
   tailscale_env_decides: 409,

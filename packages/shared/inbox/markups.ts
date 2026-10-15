@@ -33,6 +33,51 @@ export function isInboxMarkupName(name: string): boolean {
   return NAME_RE.test(name);
 }
 
+/**
+ * The most bytes one marked-up image may have. The annotator exports a PNG at
+ * the image's own size; a 4K frame with strokes is well under this. A bound
+ * of its own, because the route buffers the image whole.
+ */
+export const INBOX_MARKUP_MAX_BYTES = 32 * 1024 * 1024;
+
+function markupTooLarge(): InboxError {
+  return new InboxError("markup_too_large", `A drawing is at most ${INBOX_MARKUP_MAX_BYTES / (1024 * 1024)} MB.`, { max_bytes: INBOX_MARKUP_MAX_BYTES });
+}
+
+/**
+ * Read a markup's body, at most `INBOX_MARKUP_MAX_BYTES`: a declared
+ * Content-Length over it is refused before a byte is read, and a body that
+ * grows past it is cancelled there (`markup_too_large`), never buffered whole.
+ */
+export async function readInboxMarkupBody(body: ReadableStream<Uint8Array> | null, declaredLength: string | null): Promise<Uint8Array> {
+  const declared = declaredLength === null ? Number.NaN : Number(declaredLength);
+  if (Number.isFinite(declared) && declared > INBOX_MARKUP_MAX_BYTES) {
+    await body?.cancel().catch(() => {});
+    throw markupTooLarge();
+  }
+  if (!body) return new Uint8Array(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > INBOX_MARKUP_MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw markupTooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return bytes;
+}
+
 /** Keep a marked-up image (PNG, JPEG or WebP by its bytes), once. Returns its absolute path and file name. */
 export function writeInboxMarkup(inboxDirPath: string, bytes: Uint8Array): { path: string; name: string; contentType: string } {
   const contentType = sniffImageContentType(bytes);
