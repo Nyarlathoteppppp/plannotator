@@ -1,0 +1,89 @@
+# PROTOTYPE (proto/inbox-fixed-address, not for merge): the Inbox's fixed
+# address (https://inbox.plannotator.localhost through portless) on Linux,
+# Windows and macOS runners. Manual only:
+#
+#   gh workflow run proto-fixed-address.yml --ref proto/inbox-fixed-address
+#
+# Runs everything except a human typing a password: the runners are already
+# admin, so the Inbox's privileged step uses passwordless `sudo -n`
+# (PLANNOTATOR_PROTO_NAME_ELEVATE=sudo) or an elevated Windows session
+# (=direct) instead of the osascript / pkexec / UAC prompt. The prompts
+# themselves need a person: scripts/proto-fixed-address/README.md.
+name: Prototype - Inbox fixed address
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixed-address:
+    name: Fixed address (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    # macOS runners cannot show the keychain's trust prompt, so trusting the CA
+    # as root may fail there; the run still records what happened.
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      # portless needs Node 24+; the Inbox finds this one on PATH.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright's Chromium (Linux also gets NSS tools for Chromium's own trust store)
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            bunx playwright install --with-deps chromium
+            sudo apt-get install -y libnss3-tools
+          else
+            bunx playwright install chromium
+          fi
+
+      - name: Build the Inbox window
+        run: bun run build:review && bun run build:hook
+
+      - name: Unit tests for the fixed address
+        run: bun test packages/server/inbox-name.test.ts
+
+      - name: What is on 443 before
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then netstat -ano | grep ':443 ' || true; else sudo lsof -nP -iTCP:443 -sTCP:LISTEN || true; fi
+
+      - name: The whole flow (click Sure, verify, port change, off)
+        run: bun scripts/proto-fixed-address/ci-check.ts "$RUNNER_TEMP/proto-shots"
+
+      - name: portless state after (for the record)
+        if: always()
+        run: |
+          ls -la ~/.portless || true
+          cat ~/.portless/routes.json || true
+          if [ "$RUNNER_OS" = "Linux" ]; then systemctl status portless.service --no-pager || true; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then sudo launchctl print system/sh.portless.proxy | head -20 || true; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then schtasks /Query /TN "Portless Proxy" || true; grep -i localhost /c/Windows/System32/drivers/etc/hosts || true; fi
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proto-fixed-address-${{ matrix.os }}
+          path: ${{ runner.temp }}/proto-shots/
+          if-no-files-found: ignore
