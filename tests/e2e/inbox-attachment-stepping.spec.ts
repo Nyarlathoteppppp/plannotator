@@ -382,8 +382,8 @@ test('a phone: Previous / "1 of 5" / Next, the list across the width', async () 
   await page.goto(`${world.url}#thread=${world.threadId}`);
   await page.getByRole('button', { name: 'Open checkout-flow.html' }).click();
   await expect(pane()).toHaveClass(/ib-full/);
-  await expect(page.getByRole('button', { name: 'Next attachment: retry-states.mmd' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Previous attachment: SCOPE.md' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next file: retry-states.mmd' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Previous file: SCOPE.md' })).toBeVisible();
   await shot('06-phone-html');
   await label().click();
   await shot('07-phone-list');
