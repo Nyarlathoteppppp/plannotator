@@ -718,7 +718,7 @@ curl -sS "$INBOX/api/inbox/device/threads/msg_01K70000000000000000000010/attachm
 }
 ```
 
-`inline_images` (additive, 2026-10-15): the images the thread's messages show, captured as files of the thread (approval "inbox-image-viewer"): the same state shape as an attachment, plus `ref` (the src exactly as the body wrote it) and, for a message sent before images were captured, `captured: "on_open"` and `captured_at` (the copy was taken the first time the thread was read). They are reached by id through the same routes as attachments (`attachments/:id/image`, `download`, annotations), and the message record carries them as `inline_images` too. They are never in `attachments`, so an app that does not know the field draws nothing extra.
+`inline_images` (additive, 2026-10-15): the images the thread's messages show, captured as files of the thread (approval "inbox-image-viewer"): the same state shape as an attachment, plus `ref` (the src exactly as the body wrote it) and, for a message sent before images were captured, `captured: "on_open"` and `captured_at` (the copy was taken the first time the thread was read). They are reached by id through the same routes as attachments (`attachments/:id/image`, `download`, annotations), and the message record carries them as `inline_images` too. They are never in `attachments`, so an app that does not know the field draws nothing extra. An app that sends with `export_feedback` (section 5) should pass these states in its `attachments` list too, so comments the person left on them in the window ride the Send; an older app's feedback text leaves them out.
 
 ### 7.15 An attachment's view
 
