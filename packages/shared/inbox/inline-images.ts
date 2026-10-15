@@ -115,11 +115,10 @@ export async function captureInboxInlineImages(inboxDirPath: string, input: Capt
     const sha256 = createHash("sha256").update(read.bytes).digest("hex");
     const path = inboxBlobPath(inboxDirPath, sha256);
     try {
-      if (!existsSync(path)) {
-        const temp = await writeTemp(dir, read.bytes);
-        if (input.stage) staged.push({ temp, path });
-        else await place(temp, path);
-      }
+      // Staged even when the blob exists now: a deletion's sweep may remove it before the
+      // record that will use it is written, and `commit` then puts this copy in its place.
+      if (input.stage) staged.push({ temp: await writeTemp(dir, read.bytes), path });
+      else if (!existsSync(path)) await place(await writeTemp(dir, read.bytes), path);
     } catch {
       failures.push({ ref, code: "write_failed" });
       continue;

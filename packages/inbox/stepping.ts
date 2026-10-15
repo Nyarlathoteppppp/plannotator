@@ -11,7 +11,7 @@ import { agentName, whenTime } from './format';
 /** One file in the thread's sequence, with the message it came in. */
 export interface AttachmentStep {
   attachment: InboxAttachmentState;
-  /** "Claude Code": who sent the message. */
+  /** "Claude Code": who sent the message ("You" for the person's own). */
   sender: string;
   /** "11:06 AM": when the message was sent. */
   sentAt: string;
@@ -36,7 +36,8 @@ export function attachmentSequence(
   const placed = new Set<string>();
   const add = (attachment: InboxAttachmentState, message: InboxMessageWire, inline: boolean) => {
     placed.add(attachment.id);
-    steps.push({ attachment, messageId: message.id, sender: agentName(message.author), sentAt: whenTime(message.created_at), inline });
+    // The person's own message (an image in their reply): "You", never an agent's name.
+    steps.push({ attachment, messageId: message.id, sender: message.author.kind === 'person' ? 'You' : agentName(message.author), sentAt: whenTime(message.created_at), inline });
   };
   for (const message of messages) {
     for (const image of inlineImages) if (image.message_id === message.id && !placed.has(image.id)) add(image, message, true);
@@ -70,7 +71,8 @@ export function stepAnnouncement(steps: readonly AttachmentStep[], index: number
   const kind = inboxAttachmentKindLabel(attachment.kind, attachment.name, attachment.media_type);
   const changed = attachment.changed_since_sent ? (attachment.captured === 'on_open' ? ', changed since you first opened it' : ', changed since it was sent') : '';
   const where = step.inline ? 'in' : 'attached to';
-  const from = step.sentAt ? `, ${where} ${step.sender}'s ${step.sentAt} message` : `, ${where} ${step.sender}'s message`;
+  const whose = step.sender === 'You' ? 'your' : `${step.sender}'s`;
+  const from = step.sentAt ? `, ${where} ${whose} ${step.sentAt} message` : `, ${where} ${whose} message`;
   return `${index + 1} of ${steps.length}, ${attachment.name}, ${kind}${changed}${from}`;
 }
 

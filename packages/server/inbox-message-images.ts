@@ -118,7 +118,8 @@ export const INBOX_IMAGE_CAPTURE_PAUSE_MS = 25;
 export const INBOX_IMAGE_CAPTURE_RETRY_MS = 60_000;
 /** The most sources one message's background capture takes per pass. */
 const MESSAGE_BATCH = 64;
-const ATTEMPTS_MAX = 5000;
+/** Messages the retry table remembers (least recently tried dropped first). */
+const ATTEMPTS_MAX_MESSAGES = 10_000;
 /** Refusals that cost a read of the file: not tried again until the retry window passes. */
 const COSTLY_REFUSALS = new Set(["not_an_image", "image_changed", "image_too_large", "write_failed"]);
 
@@ -127,6 +128,8 @@ export interface InboxImageCapture {
   schedule: (threadId: string) => void;
   /** Resolves once nothing is queued or running (tests). */
   idle: () => Promise<void>;
+  /** The server stopped: nothing more is read or written; a capture in flight discards its copies. */
+  stop: () => void;
 }
 
 /**
@@ -138,9 +141,14 @@ export interface InboxImageCapture {
  * at a time, every read and write asynchronous (inline-images.ts), a yield
  * between images and messages, and a pause after each
  * INBOX_IMAGE_CAPTURE_PASS_BYTES read, so health, streams, the bridge and the
- * MCP keep answering. A source refused after a read (not an image, changed
- * while read) is tried again only after INBOX_IMAGE_CAPTURE_RETRY_MS; one
- * refused before any read (not on disk yet) on the next read. Records are marked `captured: "on_open"`.
+ * MCP keep answering. The copies are staged as temp files and moved into
+ * `blobs/` only right after the records that use them are written, so a
+ * deletion's blob sweep (which keeps only blobs a record names) can never
+ * remove a copy no record names yet. A source refused after a read (not an
+ * image, changed while read, too many pixels) is tried again only after
+ * INBOX_IMAGE_CAPTURE_RETRY_MS; one refused before any read (not on disk yet)
+ * on the next read. Records are marked `captured: "on_open"`. After `stop`,
+ * nothing is written.
  */
 export function createInboxImageCapture(
   store: InboxStore,
@@ -151,19 +159,25 @@ export function createInboxImageCapture(
   const pauseMs = options.pauseMs ?? INBOX_IMAGE_CAPTURE_PAUSE_MS;
   const retryMs = options.retryMs ?? INBOX_IMAGE_CAPTURE_RETRY_MS;
   const queue = new Set<string>();
-  const attempts = new Map<string, number>();
+  /** Per message (least recently tried first), when each costly refusal was last tried. */
+  const attempts = new Map<string, Map<string, number>>();
   let running: Promise<void> | null = null;
+  let stopped = false;
 
-  const tried = (key: string) => {
-    attempts.delete(key);
-    attempts.set(key, Date.now());
-    while (attempts.size > ATTEMPTS_MAX) attempts.delete(attempts.keys().next().value!);
+  const tried = (messageId: string, ref: string) => {
+    const refs = attempts.get(messageId) ?? new Map<string, number>();
+    attempts.delete(messageId);
+    refs.set(ref, Date.now());
+    attempts.set(messageId, refs);
+    while (attempts.size > ATTEMPTS_MAX_MESSAGES) attempts.delete(attempts.keys().next().value!);
   };
+  const lastTried = (messageId: string, ref: string) => attempts.get(messageId)?.get(ref) ?? -Infinity;
 
   const captureThread = async (threadId: string, budget: { bytes: number }) => {
     for (const { message, refs } of store.imageCaptureGaps(threadId, inboxMessageImageRefsInOrder)) {
+      if (stopped) return;
       const now = Date.now();
-      const due = refs.filter((ref) => now - (attempts.get(`${message.id}\0${ref}`) ?? -Infinity) >= retryMs).slice(0, MESSAGE_BATCH);
+      const due = refs.filter((ref) => now - lastTried(message.id, ref) >= retryMs).slice(0, MESSAGE_BATCH);
       if (due.length === 0) continue;
       await yieldToLoop();
       try {
@@ -171,7 +185,7 @@ export function createInboxImageCapture(
         if (!project) continue;
         const worktree = await sentFromWorktree(message.base_path, project.root, projectRoots);
         const latest = store.message(message.id);
-        if (!latest) continue;
+        if (!latest || stopped) continue;
         const captured = await captureInboxInlineImages(store.dir, {
           body: latest.body,
           root: project.root,
@@ -181,12 +195,19 @@ export function createInboxImageCapture(
           capturedOnOpenAt: new Date().toISOString(),
           refs: due,
           max: MESSAGE_BATCH,
+          stage: true,
         });
         // A refusal decided before any read (missing, outside the project, too large by its size) is tried again on
         // the next read; one that cost a read (not an image, changed while read) waits INBOX_IMAGE_CAPTURE_RETRY_MS.
-        for (const failure of captured.failures) if (COSTLY_REFUSALS.has(failure.code)) tried(`${message.id}\0${failure.ref}`);
-        // Still there (a deletion may have run meanwhile): the records go on it, in text order.
-        if (store.message(message.id)) store.addCapturedImages(message.id, captured.images, inboxMessageImageRefsInOrder(latest.body));
+        for (const failure of captured.failures) if (COSTLY_REFUSALS.has(failure.code)) tried(message.id, failure.ref);
+        // Still there (a deletion may have run meanwhile) and the server still running: the records go on
+        // it, in text order, and only then do the copies move into blobs/ (no await in between).
+        if (stopped || !store.message(message.id)) {
+          await captured.discard();
+          continue;
+        }
+        store.addCapturedImages(message.id, captured.images, inboxMessageImageRefsInOrder(latest.body));
+        await captured.commit();
         budget.bytes += captured.bytes;
         if (budget.bytes >= passBytes) {
           budget.bytes = 0;
@@ -200,7 +221,7 @@ export function createInboxImageCapture(
 
   const run = async () => {
     const budget = { bytes: 0 };
-    while (queue.size > 0) {
+    while (queue.size > 0 && !stopped) {
       const threadId = queue.values().next().value!;
       queue.delete(threadId);
       if (store.thread(threadId)) await captureThread(threadId, budget);
@@ -209,6 +230,7 @@ export function createInboxImageCapture(
 
   return {
     schedule(threadId) {
+      if (stopped) return;
       queue.add(threadId);
       if (running) return;
       running = (async () => {
@@ -222,6 +244,10 @@ export function createInboxImageCapture(
     },
     async idle() {
       while (running) await running;
+    },
+    stop() {
+      stopped = true;
+      queue.clear();
     },
   };
 }

@@ -1974,6 +1974,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     connectStop.abort();
     updates.stop();
     search.dispose();
+    // No capture writes after stop (a restart to update starts the next binary on this store).
+    imageCapture.stop();
     clearInterval(uploadSweep);
     void mcp.close().catch(() => {});
     server.stop(true);

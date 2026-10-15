@@ -383,6 +383,13 @@ test('images in a message come before its attached files, in text order; each sa
   ]);
   expect(stepAnnouncement(steps, 0)).toMatch(/^1 of 6, b\.png, PNG image, in Claude's .*message$/);
   expect(stepAnnouncement(steps, 3)).toMatch(/^4 of 6, a\.png, PNG image, changed since you first opened it, in Claude's /);
+  // An image in the person's own reply is theirs, never an agent's.
+  const M3 = 'msg_01K7M3MMMMMMMMMMMMMMMMMMMM';
+  const mine = file('att_01K7KKKKKKKKKKKKKKKKKKKKKK', 'mine.png', 'image', M3, { ref: 'design/mine.png' });
+  const reply = { id: M3, created_at: '2026-10-10T11:10:00.000Z', author: { kind: 'person' } } as unknown as InboxMessageWire;
+  const withReply = attachmentSequence([message(M1, '2026-10-10T10:42:00.000Z'), reply], [], [mine]);
+  expect(withReply[0]!.sender).toBe('You');
+  expect(stepAnnouncement(withReply, 0)).toMatch(/^1 of 1, mine\.png, PNG image, in your .*message$/);
 });
 
 test.skipIf(!hasDom)('a typed image comment asks first: keep writing, discard, or save it and go on', async () => {

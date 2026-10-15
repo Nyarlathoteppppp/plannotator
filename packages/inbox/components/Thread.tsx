@@ -294,6 +294,8 @@ export function MessageBody({
   const openImage = useCallback(
     (src: string | null, alt: string): boolean => {
       if (!src || inlineImageRefFromSrc(src, message.id) === null) return false;
+      // An image that failed to load (outside the project, gone) opens nothing: an empty lightbox helps no one.
+      if ([...(bodyRef.current?.querySelectorAll<HTMLImageElement>('img[data-ib-broken]') ?? [])].some((img) => img.getAttribute('src') === src)) return true;
       const image = imageOf(src);
       if (image && openImageRef.current) openImageRef.current(image);
       else setFallback({ src, alt });
@@ -308,7 +310,7 @@ export function MessageBody({
     for (const img of body.querySelectorAll<HTMLImageElement>('img')) {
       const src = img.getAttribute('src');
       const ref = src ? inlineImageRefFromSrc(src, message.id) : null;
-      if (ref === null) continue;
+      if (ref === null || img.hasAttribute('data-ib-broken')) continue;
       const image = imageOf(src);
       const name = image?.name ?? ref.split(/[\\/]/).pop() ?? 'image';
       img.setAttribute('role', 'button');
@@ -336,9 +338,21 @@ export function MessageBody({
     };
     body.addEventListener('click', onClick);
     body.addEventListener('keydown', onKey);
+    // An image that fails to load is not a button (error does not bubble: a capture listener hears it).
+    const onError = (event: Event) => {
+      const img = event.target instanceof HTMLImageElement ? event.target : null;
+      if (!img) return;
+      img.setAttribute('data-ib-broken', '');
+      img.removeAttribute('role');
+      img.removeAttribute('tabindex');
+      img.removeAttribute('aria-label');
+      img.style.cursor = '';
+    };
+    body.addEventListener('error', onError, true);
     return () => {
       body.removeEventListener('click', onClick);
       body.removeEventListener('keydown', onKey);
+      body.removeEventListener('error', onError, true);
     };
   }, [openImage]);
   // The skills the block names are painted in the person's words, as the composer painted them.
@@ -1024,7 +1038,9 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
         texts.set(key, '');
       }
     }
-    return attachmentFeedback(pending, allFiles, texts, thread.project.root);
+    return attachmentFeedback(pending, allFiles, texts, thread.project.root, {
+      personMessageIds: new Set(thread.messages.filter((m) => m.author.kind === 'person').map((m) => m.id)),
+    });
   };
 
   useEffect(() => {
@@ -2342,6 +2358,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
         onToggleFull={() => setFull((v) => !v)}
         focusId={file!.focus}
         focusRequest={paneFocus}
+        fromPerson={thread.messages.find((m) => m.id === openAttachment.message_id)?.author.kind === 'person'}
         readOnly={(() => {
           const owner = thread.messages.find((m) => m.id === openAttachment.message_id) ?? root;
           // The person does not comment on their own upload.

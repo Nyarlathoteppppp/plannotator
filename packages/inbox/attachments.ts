@@ -445,25 +445,28 @@ export function exportFileLabel(
   attachment: Pick<InboxAttachmentState, 'path' | 'name' | 'ref' | 'sent_at'> & { message_id?: string },
   projectRoot: string,
   others: readonly Pick<InboxAttachmentState, 'ref' | 'sent_at' | 'message_id'>[] = [],
+  /** The image is in the person's own message: "(image in my … message)", never "your". */
+  mine = false,
 ): string {
   const label = attachmentLabel(attachment, projectRoot);
   if (attachment.ref === undefined) return label;
+  const whose = mine ? 'my' : 'your';
   const minute = whenTime(attachment.sent_at);
   const sameRef = others.filter((o) => o.ref === attachment.ref && o.message_id !== attachment.message_id && whenTime(o.sent_at) === minute);
-  if (sameRef.length === 0) return `${label} (image in your ${minute ? `${minute} ` : ''}message)`;
+  if (sameRef.length === 0) return `${label} (image in ${whose} ${minute ? `${minute} ` : ''}message)`;
   const secondsOf = (iso: string) => {
     const date = new Date(iso);
     return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
   };
   const second = secondsOf(attachment.sent_at);
   const tied = sameRef.filter((o) => secondsOf(o.sent_at) === second);
-  if (tied.length === 0) return `${label} (image in your ${second} message)`;
+  if (tied.length === 0) return `${label} (image in ${whose} ${second} message)`;
   const order = [...tied, { sent_at: attachment.sent_at, message_id: attachment.message_id ?? '' }]
     .map((o) => `${o.sent_at}\0${o.message_id ?? ''}`)
     .filter((key, index, all) => all.indexOf(key) === index)
     .sort();
   const place = order.indexOf(`${attachment.sent_at}\0${attachment.message_id ?? ''}`) + 1;
-  return `${label} (image in your ${second} message ${place})`;
+  return `${label} (image in ${whose} ${second} message ${place})`;
 }
 
 export const ATTACHMENT_FEEDBACK_HEADING = {
@@ -489,6 +492,8 @@ export function attachmentFeedback(
   attachments: readonly InboxAttachmentState[],
   texts: ReadonlyMap<string, string>,
   projectRoot: string,
+  /** The person's own messages (their images are named "image in my … message"). */
+  options: { personMessageIds?: ReadonlySet<string> } = {},
 ): string {
   if (records.length === 0) return '';
   let inlineImages = false;
@@ -509,7 +514,9 @@ export function attachmentFeedback(
       continue;
     }
     if (attachment.ref !== undefined) inlineImages = true;
-    const label = `${exportFileLabel(attachment, projectRoot, attachments)}${sent ? (attachment.captured === 'on_open' ? ' (the version the person first saw)' : ' (the version you sent)') : ''}`;
+    const mine = attachment.ref !== undefined && options.personMessageIds?.has(attachment.message_id) === true;
+    const sentLabel = attachment.captured === 'on_open' ? ' (the version I first saw)' : mine ? ' (the version I sent)' : ' (the version you sent)';
+    const label = `${exportFileLabel(attachment, projectRoot, attachments, mine)}${sent ? sentLabel : ''}`;
     let group = groups.get(label);
     if (!group) {
       const text = texts.get(`${attachment.id}\0${record.version}`) ?? '';

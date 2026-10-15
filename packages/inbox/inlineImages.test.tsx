@@ -145,3 +145,23 @@ test.skipIf(!hasDom)('a captured image opens in the viewer on a click, Enter or 
   }
   expect(opened.map((i) => i.id)).toEqual([B.id, C.id, C.id, C.id]);
 });
+
+test.skipIf(!hasDom)('an image that fails to load is not a button and opens nothing; a data: image is not a button', async () => {
+  const opened: InboxInlineImage[] = [];
+  const body = ['![gone](design/gone.png)', '', '![dot](data:image/gif;base64,R0lGODlhAQABAAAAACw=)'].join('\n');
+  await render(body, [], opened);
+  const gone = host!.querySelector<HTMLImageElement>('img[alt="gone"]')!;
+  expect(gone.getAttribute('role')).toBe('button');
+  await act(async () => {
+    gone.dispatchEvent(new Event('error'));
+  });
+  expect(gone.getAttribute('role')).toBeNull();
+  expect(gone.hasAttribute('tabindex')).toBe(false);
+  await act(async () => gone.click());
+  expect(document.querySelector('[data-image-lightbox]')).toBeNull();
+  const dot = host!.querySelector<HTMLImageElement>('img[alt="dot"]')!;
+  expect(dot.getAttribute('role')).toBeNull();
+  await act(async () => dot.click());
+  expect(document.querySelector('[data-image-lightbox]')).toBeNull();
+  expect(opened).toEqual([]);
+});

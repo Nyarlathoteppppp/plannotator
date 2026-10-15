@@ -345,6 +345,22 @@ const CHANGED = "That image changed while it was read.";
 
 const failRead = (status: number, code: string, error: string): Refusal => ({ ok: false as const, status, code, error });
 
+/** How much of a file is read first, to tell its type and size before the rest is read. */
+const HEAD_BYTES = 64 * 1024;
+
+/**
+ * The first bytes decide before the rest is read: not an image (or an LFS
+ * pointer) or over the pixel cap is refused without reading up to 10 MB.
+ */
+function headRefusal(head: Buffer): Refusal | null {
+  if (isLfsPointer(head)) return failRead(415, "not_an_image", "That image is stored in Git LFS.");
+  const type = sniffImageContentType(head);
+  if (!type) return failRead(415, "not_an_image", "That file is not a recognized image.");
+  const dims = readImageDimensions(head, type);
+  if (dims && dims.width * dims.height > MAX_REVIEW_IMAGE_PREVIEW_PIXELS) return failRead(413, "image_too_large", "That image has too many pixels to show.");
+  return null;
+}
+
 /** The path must still lead to the file a descriptor read, so a parent folder swapped for a symlink in between is caught. */
 function stillSameFile(real: string, stat: { dev: number; ino: number }): boolean {
   try {
@@ -377,10 +393,21 @@ function readImageFile(real: string): { ok: true; bytes: Buffer; mtime: string }
     // One byte past what fstat said, so a file that grew meanwhile is seen.
     const buffer = Buffer.alloc(Math.min(stat.size, MAX_REVIEW_IMAGE_PREVIEW_BYTES) + 1);
     let total = 0;
+    const head = Math.min(buffer.length, HEAD_BYTES);
+    let checked = false;
     while (total < buffer.length) {
-      const n = readSync(fd, buffer, total, buffer.length - total, null);
+      const n = readSync(fd, buffer, total, (checked ? buffer.length : head) - total, null);
       if (n === 0) break;
       total += n;
+      if (!checked && total >= head) {
+        checked = true;
+        const refused = headRefusal(buffer.subarray(0, total));
+        if (refused) return refused;
+      }
+    }
+    if (!checked) {
+      const refused = headRefusal(buffer.subarray(0, total));
+      if (refused) return refused;
     }
     if (total > MAX_REVIEW_IMAGE_PREVIEW_BYTES) return failRead(413, "image_too_large", TOO_LARGE);
     if (total === buffer.length) return failRead(409, "image_changed", CHANGED);
@@ -408,10 +435,21 @@ async function readImageFileAsync(real: string): Promise<{ ok: true; bytes: Buff
     if (stat.size > MAX_REVIEW_IMAGE_PREVIEW_BYTES) return failRead(413, "image_too_large", TOO_LARGE);
     const buffer = Buffer.alloc(Math.min(stat.size, MAX_REVIEW_IMAGE_PREVIEW_BYTES) + 1);
     let total = 0;
+    const head = Math.min(buffer.length, HEAD_BYTES);
+    let checked = false;
     while (total < buffer.length) {
-      const { bytesRead } = await handle.read(buffer, total, Math.min(1024 * 1024, buffer.length - total), total);
+      const { bytesRead } = await handle.read(buffer, total, Math.min(1024 * 1024, (checked ? buffer.length : head) - total), total);
       if (bytesRead === 0) break;
       total += bytesRead;
+      if (!checked && total >= head) {
+        checked = true;
+        const refused = headRefusal(buffer.subarray(0, total));
+        if (refused) return refused;
+      }
+    }
+    if (!checked) {
+      const refused = headRefusal(buffer.subarray(0, total));
+      if (refused) return refused;
     }
     if (total > MAX_REVIEW_IMAGE_PREVIEW_BYTES) return failRead(413, "image_too_large", TOO_LARGE);
     if (total === buffer.length) return failRead(409, "image_changed", CHANGED);

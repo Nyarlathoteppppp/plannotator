@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { InboxStore } from "@plannotator/shared/inbox/store";
 import { inboxBlobPath } from "@plannotator/shared/inbox/attachments";
-import { blankInlineCode, inboxMessageImageRefsInOrder } from "@plannotator/shared/inbox/message-images";
+import { blankInlineCode, inboxMessageImageRefsInOrder, readInboxMessageImage, readInboxMessageImageAsync } from "@plannotator/shared/inbox/message-images";
 import { MAX_REVIEW_IMAGE_PREVIEW_BYTES } from "@plannotator/shared/diff-paths";
 import { startInboxServer, type InboxServer } from "./inbox";
 
@@ -331,4 +331,69 @@ test("inline code is blanked in one linear pass: spans close on the same run len
   const at = performance.now();
   expect(inboxMessageImageRefsInOrder(`${unmatched}![z](z.png)`)).toEqual(["z.png"]);
   expect(performance.now() - at).toBeLessThan(500);
+});
+
+/** Many 2 MB images in one message an older Inbox wrote (no inline_images): a long background capture. */
+function bigOldThread(dataDir: string, project: string, count: number, salt: number): { store: InboxStore; threadId: string; messageId: string } {
+  const old = InboxStore.open(dataDir);
+  const projectRecord = old.ensureProject({ name: "shop", root: project });
+  const refs: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const bytes = Buffer.alloc(2 * 1024 * 1024, (i + salt) % 251);
+    Buffer.from(png(64, 64, (i + salt) % 256)).copy(bytes, 0);
+    bytes.writeUInt32BE(i + salt * 1000, 40);
+    writeFileSync(join(project, "design", `race-${salt}-${i}.png`), bytes);
+    refs.push(`![${i}](design/race-${salt}-${i}.png)`);
+  }
+  const { message } = old.sendMessage({ project_id: projectRecord.id, author: { kind: "agent", host: "claude-code", session: `s${salt}`, name: null }, body: refs.join("\n\n"), thread: `race ${salt}` });
+  return { store: old, threadId: message.thread_id, messageId: message.id };
+}
+
+test("a deletion during a background capture never removes its copies: every record points at a blob", async () => {
+  const { project, dataDir } = world();
+  const { threadId } = bigOldThread(dataDir, project, 60, 1);
+  const server = await start(dataDir);
+  // Another thread, with an attachment of its own, to delete while the capture runs.
+  writeFileSync(join(project, "design", "other.png"), png(5, 5, 99));
+  const other = await send(await agent(server), { project_path: project, body: "Other.", attachments: ["design/other.png"], thread: "other" });
+  await get(server, `/api/inbox/threads/${threadId}`);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  expect((await post(server, `/api/inbox/threads/${other.thread_id}/delete`, {})).status).toBe(200);
+  await server.imageCapture.idle();
+  const thread = (await (await get(server, `/api/inbox/threads/${threadId}`)).json()) as any;
+  const records = thread.thread.messages[0].inline_images as { sent_sha256: string; id: string }[];
+  expect(records).toHaveLength(60);
+  const missing = records.filter((r) => !existsSync(inboxBlobPath(join(dataDir, "inbox"), r.sent_sha256)));
+  expect(missing).toEqual([]);
+  // No staged copy is left behind.
+  expect(readdirSync(join(dataDir, "inbox", "blobs")).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  expect((await get(server, `/api/inbox/attachments/${records[59]!.id}/image?version=sent`)).status).toBe(200);
+}, 60_000);
+
+test("nothing is written after the server stops, even with a capture in flight", async () => {
+  const { project, dataDir } = world();
+  const { threadId, messageId } = bigOldThread(dataDir, project, 30, 2);
+  const server = await start(dataDir);
+  await get(server, `/api/inbox/threads/${threadId}`);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  server.stop();
+  await server.imageCapture.idle();
+  const reopened = InboxStore.open(dataDir);
+  expect(reopened.message(messageId)!.inline_images).toBeUndefined();
+  const blobs = join(dataDir, "inbox", "blobs");
+  expect(existsSync(blobs) ? readdirSync(blobs) : []).toEqual([]);
+}, 60_000);
+
+test("a file named .png that is not an image, or one over the pixel cap, is refused from its first bytes", async () => {
+  const { project } = world();
+  const fake = Buffer.alloc(9 * 1024 * 1024, 0x41);
+  writeFileSync(join(project, "design", "fake-big.png"), fake);
+  const huge = Buffer.alloc(9 * 1024 * 1024, 0);
+  Buffer.from(png(20_000, 20_000, 1)).copy(huge, 0);
+  writeFileSync(join(project, "design", "huge.png"), huge);
+  const body = "![a](design/fake-big.png) ![b](design/huge.png)";
+  const read = (path: string) => readInboxMessageImageAsync({ body, root: project, path });
+  expect(await read("design/fake-big.png")).toMatchObject({ ok: false, code: "not_an_image" });
+  expect(await read("design/huge.png")).toMatchObject({ ok: false, code: "image_too_large" });
+  expect(readInboxMessageImage({ body, root: project, path: "design/fake-big.png" })).toMatchObject({ ok: false, code: "not_an_image" });
 });
