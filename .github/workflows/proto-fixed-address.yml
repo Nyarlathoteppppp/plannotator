@@ -13,6 +13,13 @@ name: Prototype - Inbox fixed address
 
 on:
   workflow_dispatch:
+  # GitHub dispatches only workflows it knows, and it learns a workflow from
+  # the default branch or from a run. This branch-only, this-file-only push
+  # trigger registers it (one run when this file changes on this branch);
+  # after that, re-run by hand: gh workflow run <workflow id> --ref proto/inbox-fixed-address
+  push:
+    branches: [proto/inbox-fixed-address]
+    paths: [.github/workflows/proto-fixed-address.yml]
 
 permissions:
   contents: read
