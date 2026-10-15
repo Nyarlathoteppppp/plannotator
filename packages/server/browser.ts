@@ -232,16 +232,15 @@ async function openGlimpse(url: string): Promise<boolean> {
  * Open a URL in the browser. Returns false when nothing was opened.
  *
  * `PLANNOTATOR_BROWSER=none` (any "none" value, see browser-intent) opens
- * nothing at all and says so in one stderr line, unless `quiet` is set (a
- * caller that prints the reason itself).
+ * nothing at all and says so in one stderr line.
  */
 export async function openBrowser(
   url: string,
-  options?: { isRemote?: boolean; useGlimpse?: boolean; quiet?: boolean }
+  options?: { isRemote?: boolean; useGlimpse?: boolean }
 ): Promise<boolean> {
   const intent = resolveBrowserIntent(process.env);
   if (intent.kind === "none") {
-    if (!options?.quiet) process.stderr.write(`  ${browserNoneReason(intent)}\n`);
+    process.stderr.write(`  ${browserNoneReason(intent)}\n`);
     return false;
   }
   const plannotatorBrowser = intent.kind === "explicit" && intent.source === "PLANNOTATOR_BROWSER"

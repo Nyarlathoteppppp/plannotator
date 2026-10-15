@@ -21,7 +21,13 @@ import { stripComments } from "./real-inbox-scan";
 /** The marker for a line that deliberately sets a sentinel to test its handling. */
 export const SENTINEL_UNDER_TEST_MARK = "no-browser-guard: sentinel under test";
 
-/** The values a binary from before browser-intent read as unset (#756). */
+/**
+ * The values a binary from before browser-intent read as unset (#756).
+ * Intentionally only #756's six, not `off` / `no`, which current builds also
+ * read as "open nothing": an older binary treats `off` or `no` as a browser
+ * name, whose launch fails rather than opening the default browser, so those
+ * cannot open a real tab and are not scanned for.
+ */
 const SENTINEL = String.raw`\s*(?:none|true|false|0|1|:)\s*`;
 
 /** A sentinel value, quoted (a TS, JSON, YAML or shell string) or bare (shell, YAML). */
