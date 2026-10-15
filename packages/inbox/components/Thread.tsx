@@ -1888,9 +1888,6 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                     type="button"
                     className="ib-fl-hit"
                     data-fold-head=""
-                    data-clip=""
-                    data-clip-from=".ib-fl-nm"
-                    data-name={name}
                     aria-expanded={true}
                     aria-label={foldLabel}
                     onClick={() => toggleMessage(message.id)}

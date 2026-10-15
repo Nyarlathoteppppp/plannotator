@@ -298,6 +298,16 @@ test('opening and folding a line keeps it where it was', async () => {
   await expect(article(id)).toHaveAttribute('data-folded', '');
   expect(Math.abs((await top(id)) - before)).toBeLessThan(2);
   await expect(page.locator(':focus')).toHaveAttribute('aria-expanded', 'false');
+  // A 1280 or 1366 px window beside the list keeps the folded line one 44 px row (the two-line row is for a
+  // thread under 560 px of text: beside a file, or a phone).
+  try {
+    for (const width of [1280, 1366]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(async () => Math.round((await article(id).locator('button.ib-fline').boundingBox())!.height), { message: `${width} px` }).toBe(44);
+    }
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
 });
 
 test('keys: n goes to the first new message, k and j move between messages; never while typing', async () => {
