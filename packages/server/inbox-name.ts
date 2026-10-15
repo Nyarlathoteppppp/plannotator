@@ -325,8 +325,8 @@ export const probeName: NameProbe = async (stateDir, serverSession) => {
     // Tell a name that does not resolve from a proxy without our route: portless accepts plain HTTP on its TLS port.
     try {
       const port = readProxyPort(stateDir);
-      const plain = await fetch(`http://127.0.0.1:${port}/api/inbox/health`, { headers: { host: INBOX_NAME_HOST }, signal: AbortSignal.timeout(3000) });
-      return { ok: false, detail: `https failed (${https}); plain http to 127.0.0.1:${port} answered ${plain.status}` };
+      const plain = await fetch(`http://127.0.0.1:${port}/api/inbox/health`, { headers: { host: INBOX_NAME_HOST }, redirect: "manual", signal: AbortSignal.timeout(3000) });
+      return { ok: false, detail: `https failed (${https}); plain http to 127.0.0.1:${port} answered ${plain.status}${plain.headers.get("x-portless") ? " from portless" : ""}` };
     } catch (plainError) {
       return { ok: false, detail: `https failed (${https}); proxy not answering (${plainError instanceof Error ? plainError.message : String(plainError)})` };
     }
@@ -343,10 +343,15 @@ function readProxyPort(stateDir: string): number {
   return 443;
 }
 
-/** portless's proxy answers on its port (plain HTTP is accepted on the TLS port): the service is installed and running. */
+/**
+ * portless's proxy answers on its port: the service is installed and running.
+ * Plain HTTP on its TLS port gets a 302 to https carrying `X-Portless`; never
+ * follow it (Bun's own CA store does not trust portless's CA; CI on macOS
+ * found this), the header on the 302 is the answer.
+ */
 async function proxyAnswers(stateDir: string): Promise<boolean> {
   try {
-    const response = await fetch(`http://127.0.0.1:${readProxyPort(stateDir)}/`, { headers: { host: INBOX_NAME_HOST }, signal: AbortSignal.timeout(2000) });
+    const response = await fetch(`http://127.0.0.1:${readProxyPort(stateDir)}/`, { headers: { host: INBOX_NAME_HOST }, redirect: "manual", signal: AbortSignal.timeout(2000) });
     return response.headers.get("x-portless") !== null;
   } catch {
     return false;
