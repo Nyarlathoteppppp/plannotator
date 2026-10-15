@@ -345,7 +345,18 @@ test('phone (WebKit, iPhone 15): an arrival under New message\'s sheet is not se
     const article = page.locator(`[data-message-article="${arrived.message_id}"]`);
     await expect(article).toHaveCount(1);
     await expect.poll(() => isBold(page, id)).toBe(true);
-    // The view followed it to the end: its first lines are inside the thread's view, under the sheet.
+    // The view followed it to the end: its first lines are inside the thread's view, under the sheet. The
+    // follow is a smooth scroll, and the head row on a phone is two lines (inbox-polish, item 5), so wait for
+    // the scroll to bring the whole row in before sampling it.
+    await expect
+      .poll(() =>
+        article.evaluate((a) => {
+          const view = a.closest('.ib-pbody')!.getBoundingClientRect();
+          const r = (a.querySelector('.ib-fline') ?? a).getBoundingClientRect();
+          return r.top >= view.top && r.bottom <= view.bottom;
+        }),
+      )
+      .toBe(true);
     const under = await article.evaluate((a) => {
       const view = a.closest('.ib-pbody')!.getBoundingClientRect();
       const r = (a.querySelector('.ib-fline') ?? a).getBoundingClientRect();
