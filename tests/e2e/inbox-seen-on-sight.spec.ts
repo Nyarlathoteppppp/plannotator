@@ -348,7 +348,7 @@ test('phone (WebKit, iPhone 15): an arrival under New message\'s sheet is not se
     // The view followed it to the end: its first lines are inside the thread's view, under the sheet.
     const under = await article.evaluate((a) => {
       const view = a.closest('.ib-pbody')!.getBoundingClientRect();
-      const r = (a.querySelector('.ib-sender') ?? a).getBoundingClientRect();
+      const r = (a.querySelector('.ib-fline') ?? a).getBoundingClientRect();
       const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 8);
       return { inView: r.top >= view.top && r.bottom <= view.bottom, covered: hit !== null && hit.closest('[data-not-running]') !== null };
     });
