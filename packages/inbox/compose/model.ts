@@ -13,7 +13,7 @@ export interface ComposeTarget extends InboxComposeSession {
   project: InboxComposeProject['project'];
 }
 
-/** A project's live sessions, the current project marked (the picker draws them first). */
+/** A project's live sessions, and whether it is the current project (the picker draws it first). */
 export interface ComposeGroup {
   project: InboxComposeProject['project'];
   current: boolean;
@@ -36,7 +36,7 @@ export function findTarget(projects: readonly InboxComposeProject[], session: st
 const isCurrent = (project: InboxComposeProject['project'], current: { id: string | null; root: string | null } | null): boolean =>
   !!current && ((current.id !== null && project.id === current.id) || (current.root !== null && project.root === current.root));
 
-/** The picker's groups: the current project first (marked "current"), the others in the server's order. */
+/** The picker's groups: the current project first, the others in the server's order. */
 export function composeGroups(projects: readonly InboxComposeProject[], current: { id: string | null; root: string | null } | null): ComposeGroup[] {
   const groups = projects.map((group) => ({
     project: group.project,

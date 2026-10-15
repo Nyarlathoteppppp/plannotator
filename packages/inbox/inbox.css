@@ -2134,16 +2134,17 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-cp-filter { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--ib-line); color: var(--muted-foreground); flex: none; }
 .pn-inbox .ib-cp-filter input { flex: 1; min-width: 0; height: 40px; border: 0; outline: none; background: transparent; color: var(--foreground); font: inherit; font-size: 14px; }
 /* One line per live session; the rows share the list's columns (subgrid), so agent, project and folder line up. */
-.ib-cp-list { overflow-y: auto; overscroll-behavior: contain; padding: 4px 6px 6px; display: grid; grid-template-columns: auto max-content fit-content(40%) minmax(0, 1fr) max-content 16px; column-gap: 10px; align-content: start; }
+.ib-cp-list { overflow-y: auto; overscroll-behavior: contain; padding: 4px 6px 6px; display: grid; grid-template-columns: auto max-content minmax(0, max-content) minmax(min(12ch, 30%), 1fr) max-content 16px; column-gap: 10px; align-content: start; }
 .ib-cp-opt { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; min-height: 36px; padding: 0 8px; border-radius: 7px; font-size: 13.5px; cursor: default; user-select: none; }
 .ib-cp-opt.ib-hl { background: color-mix(in oklch, var(--muted) 80%, transparent); }
 :root.light .ib-cp-opt.ib-hl { background: var(--muted); }
 .ib-cp-oa { font-weight: 600; color: var(--foreground); white-space: nowrap; }
 .ib-cp-op { color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .ib-cp-of { display: flex; min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 12.5px; white-space: nowrap; unicode-bidi: isolate; }
-.ib-cp-ofh { overflow: hidden; text-overflow: ellipsis; min-width: 1ch; white-space: nowrap; }
-.ib-cp-oft { flex: none; white-space: nowrap; }
-.ib-cp-os { color: var(--muted-foreground); font-size: 12.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The leading folders shrink first; the last name shrinks only once they are gone, with its own ellipsis (never a hard cut). */
+.ib-cp-ofh { flex: 0 1000 auto; overflow: hidden; text-overflow: ellipsis; min-width: 1ch; white-space: nowrap; }
+.ib-cp-oft { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ib-cp-os { color: var(--muted-foreground); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-variant-numeric: tabular-nums; }
 .ib-cp-check { width: 16px; flex: none; color: var(--primary); display: inline-flex; }
 .ib-cp-none { grid-column: 1 / -1; padding: 14px 10px; font-size: 13px; color: var(--muted-foreground); }
 .ib-cp-pickhead { display: none; }
@@ -2254,7 +2255,11 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   .pn-inbox .ib-cp-filter input { height: 48px; font-size: 16px; }
   .ib-cp-picker[data-phone] .ib-cp-list { flex: 1; }
   .ib-cp-opt { min-height: 44px; font-size: 15px; }
-  .ib-cp-of, .ib-cp-os { font-size: 13.5px; }
+  .ib-cp-os { font-size: 13.5px; }
+  /* A phone shows the agent and the project only; the folder stays in the option's accessible name. */
+  /* The project keeps a floor; on a narrow phone the start time gives way first (whole in the option's name and title). */
+  .ib-cp-picker[data-phone] .ib-cp-list { grid-template-columns: auto max-content minmax(min(11ch, 100%), max-content) minmax(0, 1fr) 16px; column-gap: 8px; }
+  .ib-cp-picker[data-phone] .ib-cp-of { display: none; }
   .ib-draft-open { grid-template-columns: 36px minmax(0, 1fr); }
   .pn-inbox .ib-draft-open { padding: 14px 0 14px 12px; align-items: start; }
   .ib-drafts .ib-drafts-empty, .ib-drafts > .ib-error { margin-inline: 16px; }

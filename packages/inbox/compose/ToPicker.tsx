@@ -142,7 +142,7 @@ export function ToPicker({
                 {target.project.name}
               </span>
               <FolderPath path={folder} />
-              <span className="ib-cp-os" data-compose-started={started ?? undefined}>
+              <span className="ib-cp-os" data-compose-started={started ?? undefined} title={started ? `Started ${started}` : undefined}>
                 {started ? `· ${started}` : null}
               </span>
               <span className="ib-cp-check" aria-hidden="true">
