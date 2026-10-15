@@ -214,7 +214,7 @@ export const ImagePeek = forwardRef<ImagePeekHandle, ImagePeekProps>(function Im
                   data-peek-open={open ? '' : undefined}
                   onClick={() => onPick(item.key)}
                   onFocus={() => setFocus({ row: r, col: c })}
-                  className="group flex min-w-0 cursor-pointer flex-col gap-1 rounded-lg p-1 outline-none hover:bg-muted/70 focus-visible:bg-muted/70 focus-visible:ring-2 focus-visible:ring-primary/60"
+                  className="group flex min-w-0 cursor-pointer flex-col gap-1 rounded-lg p-1 outline-none hover:bg-muted/70 focus-visible:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-dashed focus-visible:outline-foreground/45"
                 >
                   <span
                     className={`relative block w-full overflow-hidden rounded-md border bg-muted ${sheet ? 'h-[99px]' : 'aspect-[16/10]'} ${open ? 'border-primary ring-2 ring-primary' : 'border-border/70'}`}
@@ -235,7 +235,7 @@ export const ImagePeek = forwardRef<ImagePeekHandle, ImagePeekProps>(function Im
                       </span>
                     ) : null}
                   </span>
-                  <span className={`line-clamp-2 break-all text-[12.5px] leading-tight ${open ? 'font-semibold text-foreground' : 'text-foreground/85'}`}>{item.name}</span>
+                  <span className={`line-clamp-2 [overflow-wrap:anywhere] text-[12.5px] leading-tight ${open ? 'font-semibold text-foreground' : 'text-foreground/85'}`}>{item.name}</span>
                 </div>
               );
             })}

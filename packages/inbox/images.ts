@@ -35,7 +35,8 @@ export function inboxMessageImageUrl(messageId: string, src: string): string {
  */
 export function inlineImageRefFromSrc(src: string, messageId: string): string | null {
   try {
-    const url = new URL(src, typeof window !== 'undefined' ? window.location.href : 'http://localhost/');
+    const base = typeof window !== 'undefined' && /^https?:/.test(window.location.href) ? window.location.href : 'http://localhost/';
+    const url = new URL(src, base);
     if (url.pathname !== `/api/inbox/messages/${encodeURIComponent(messageId)}/image`) return null;
     return url.searchParams.get('path');
   } catch {

@@ -15,7 +15,8 @@ export interface LightboxImage {
  */
 export function lightboxImageName(image: Pick<LightboxImage, 'src' | 'alt'>): string {
   try {
-    const url = new URL(image.src, typeof window !== 'undefined' ? window.location.href : 'http://localhost/');
+    const base = typeof window !== 'undefined' && /^https?:/.test(window.location.href) ? window.location.href : 'http://localhost/';
+    const url = new URL(image.src, base);
     const named = url.searchParams.get('path') ?? (url.protocol === 'data:' || url.protocol === 'blob:' ? '' : url.pathname);
     const last = named.split(/[\\/]/).filter(Boolean).pop();
     if (last) return decodeURIComponent(last);
