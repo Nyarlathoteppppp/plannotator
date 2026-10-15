@@ -45,7 +45,7 @@ Results go to the job summary. Screenshots are uploaded as artifacts.
 
 | OS | Prompt that CI cannot click | What to check by hand |
 |---|---|---|
-| Windows 11 | UAC ("Do you want to allow this app to make changes?" for `node.exe`, "Publisher: Unknown" until signed); possibly a second certificate-install warning from `certutil` | Both prompts appear once. After Sure, Edge and Chrome open the name with no warning. A port change keeps the name. |
+| Windows 11 | UAC ("Do you want to allow this app to make changes?" for `node.exe`, "Publisher: Unknown" until signed); then Windows' own "Security Warning: install this certificate?" from `certutil -addstore -user Root` (CI confirmed it waits for a click; it timed out with no one to click) | Both prompts appear once. After Sure, Edge and Chrome open the name with no warning. A port change keeps the name. |
 | Ubuntu desktop | The polkit dialog from `pkexec`. It names the binary path, not our reason. | The dialog appears. Chromium and Firefox trust the CA. Note: `update-ca-certificates` does not reach Chromium's NSS store, so the CI job adds the CA to NSS by hand. Expect a warning in Chrome on a stock Ubuntu until portless or we also write to `~/.pki/nssdb`. |
 
 **Windows 11 ARM in UTM or Parallels on this Mac:**
@@ -74,3 +74,10 @@ Results go to the job summary. Screenshots are uploaded as artifacts.
 - **The service plist points at a Node path.** The Inbox uses the real path of the Node it found. If that Node version is uninstalled (fnm, nvm), the proxy stops at the next boot.
 - **Linux trust.** Chromium and Firefox need NSS; portless only updates the system store.
 - **portless is pre-1.0.** We pin 0.15.8 and install it with npm from the registry at click time, which needs network.
+
+## What CI found (runs on this branch, 2026-10-15)
+
+- **Linux (ubuntu-latest): the flow works.** That covers Sure, `service install` through `sudo -n`, the alias, HTTPS verification, a port change that keeps the name with no privileged step, and off. Chromium does not trust the CA until it is added to NSS (`~/.pki/nssdb`), because portless only runs `update-ca-certificates`.
+- **macOS (macos-latest): the flow works through Sure.** OS trust passed (`security verify-cert`, after `service install` as root), and the tab moved itself to the name. Two problems showed up and are fixed. First, the proxy took longer than 15 s to come up after `launchctl`, and plain HTTP on portless's TLS port gets a 302 to https, so the proxy check must not follow redirects. Second, a start-time race: the window's GET and the start-up Node lookup ran at once, and the window read "no Node". A test now covers the race.
+- **Windows (windows-latest): routing works,** and a port change keeps the name. The name resolves with no hosts edit. Trusting the CA (`certutil -addstore -user Root`) shows Windows' own Security Warning dialog, which waits for a click. A person gets a second prompt after UAC. CI adds the CA to the machine store instead.
+- **Playwright under Bun on Windows never launches Chromium,** so CI drives the browser with Node.

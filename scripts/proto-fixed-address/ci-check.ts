@@ -108,6 +108,8 @@ try {
   const movedLine = (/tab moved to the name: .*/.exec(flow.out) ?? ["(no line)"])[0];
   if (!moved && process.platform === "linux" && afterSure.status === "on") {
     finding("linux: the tab could not move (Chromium reads NSS, which update-ca-certificates does not reach)", movedLine);
+  } else if (!moved && process.platform === "win32" && afterSure.status === "on") {
+    finding("windows: the tab could not move (the CA is not trusted yet: see the certutil finding below)", movedLine);
   } else {
     record("the tab moved itself to the name", moved, movedLine);
   }
@@ -124,8 +126,19 @@ try {
     const added = spawnSync("certutil", ["-d", `sql:${nss}`, "-A", "-t", "C,,", "-n", "portless Local CA", "-i", join(portlessState, "ca.pem")], { encoding: "utf8" });
     record("linux: CA added to Chromium's NSS store (portless does not do this)", added.status === 0, (added.stderr || "ok").trim());
   }
-  const browsers = runNode([join(repo, "scripts/proto-fixed-address/browser-check.ts"), first.serverSession, NAME]);
+  let browsers = runNode([join(repo, "scripts/proto-fixed-address/browser-check.ts"), first.serverSession, NAME]);
   console.log(browsers.out, browsers.err);
+  if (browsers.code !== 0 && process.platform === "win32" && existsSync(join(portlessState, "ca.pem"))) {
+    // portless trusts its CA with `certutil -addstore -user Root`, which shows Windows' own
+    // "Security Warning: install this certificate?" dialog; with no one to click Yes it times
+    // out (the first CI run). A person clicks it. CI adds it to the machine store instead
+    // (admin, no dialog), then checks the browsers again.
+    finding("windows: trusting the CA needs a click on Windows' Security Warning dialog (certutil -user Root timed out here)", browsers.out.trim().split("\n")[0] ?? "");
+    const added = spawnSync("certutil", ["-addstore", "-f", "Root", join(portlessState, "ca.pem")], { encoding: "utf8" });
+    record("windows (CI only): CA added to the machine Root store", added.status === 0, (added.stdout || added.stderr).trim().split("\n").slice(-1)[0] ?? "");
+    browsers = runNode([join(repo, "scripts/proto-fixed-address/browser-check.ts"), first.serverSession, NAME]);
+    console.log(browsers.out, browsers.err);
+  }
   record("a browser loads the name with certificate checks on", browsers.code === 0, browsers.out.trim().split("\n").join(" | "));
 
   // 5.
@@ -142,6 +155,7 @@ try {
       state = await nameState(second.port);
     }
     record("name on again after the move, no privileged step", state.status === "on", `status ${state.status}; listener ${state.listener_port} (was ${listener}); ${state.reason ?? ""}`);
+    console.log("commands run after the move:\n" + ((state.log as string[] | undefined) ?? []).join("\n"));
     const session2 = await httpsSession();
     record("https name answers the restarted Inbox", session2 === second.serverSession, session2);
 

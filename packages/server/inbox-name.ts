@@ -447,6 +447,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   let osTrusted: boolean | null = null;
   let node: { node: string; version: string } | null = null;
   let nodeChecked = false;
+  let nodeLookup: Promise<{ node: string; version: string } | null> | null = null;
   let listener: ReturnType<typeof Bun.serve> | null = null;
   let job: Promise<void> | null = null;
   let stopped = false;
@@ -470,18 +471,26 @@ export function createInboxName(options: InboxNameOptions): InboxName {
         } catch {
           continue;
         }
-        const result = await runner({ command: real, args: ["--version"] }, { env: { ...env }, timeoutMs: 5000 });
+        // A busy machine can take seconds to start Node (a CI Mac's first restart did); logged either way.
+        const result = await exec({ command: real, args: ["--version"] }, { env: { ...env }, timeoutMs: 20_000 });
         if (result.code === 0) return { node: real, version: result.stdout.trim() };
       }
       return null;
     });
 
   const ensureNode = async (): Promise<string | null> => {
-    if (!nodeChecked) {
-      nodeChecked = true;
-      node = await findNode().catch(() => null);
+    // One lookup at a time (start and a window's GET race at every start: the first CI Mac
+    // restart read "no Node" from a lookup still running), and only a found Node is kept.
+    if (!nodeChecked || !node) {
+      nodeLookup ??= findNode()
+        .catch(() => null)
+        .finally(() => {
+          nodeLookup = null;
+        });
+      node = await nodeLookup;
+      nodeChecked = node !== null;
     }
-    if (!node) return "Needs Node 24 or newer on this computer (portless runs on it). None was found on PATH.";
+    if (!node) return `Needs Node 24 or newer on this computer (portless runs on it). None was found on this Inbox's PATH${log.length ? ` (last: ${log[log.length - 1]})` : ""}.`;
     const major = nodeMajor(node.version);
     if (major === null || major < PORTLESS_MIN_NODE_MAJOR) return `Needs Node 24 or newer; found ${node.version} at ${node.node}.`;
     return null;
@@ -665,11 +674,21 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   return {
     async start() {
       try {
-        await refresh();
-        if (!saved.on || status === "unavailable") return;
-        // On at the last run: same listener port when free, the alias re-pointed (no prompt), then the probe.
+        if (!enabledHere || !saved.on) {
+          await refresh();
+          return;
+        }
+        // On at the last run: same listener port when free, the alias re-pointed (no prompt), then
+        // the probe. "working" from the first moment, so a window reading the state meanwhile waits.
         status = "working";
         step = "alias";
+        const missing = await ensureNode();
+        if (missing) {
+          status = "unavailable";
+          reason = missing;
+          step = null;
+          return;
+        }
         const port = openListener();
         if (!existsSync(cli)) return fail("portless is no longer installed; turn the fixed address on again.");
         const aliasError = await alias(port);

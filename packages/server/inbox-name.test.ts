@@ -201,7 +201,7 @@ interface Rig {
 }
 
 /** A temp world: data dir, a portless home and state dir, and seams that record every command instead of running it. */
-async function rig(options: { off?: boolean; node?: string | null; config?: Json; dataDir?: string; tailscale?: TailscaleRunner; carry?: Rig } = {}): Promise<Rig> {
+async function rig(options: { off?: boolean; nodeDelayMs?: number; node?: string | null; config?: Json; dataDir?: string; tailscale?: TailscaleRunner; carry?: Rig } = {}): Promise<Rig> {
   const dataDir = options.dataDir ?? realpathSync(mkdtempSync(join(tmpdir(), "plannotator-inbox-name-")));
   if (!options.dataDir) roots.push(dataDir);
   setEnv("PLANNOTATOR_DATA_DIR", dataDir);
@@ -266,6 +266,7 @@ async function rig(options: { off?: boolean; node?: string | null; config?: Json
       probe,
       findNode: async () => {
         nodeLookups.count++;
+        if (options.nodeDelayMs) await Bun.sleep(options.nodeDelayMs);
         return node === null ? null : { node: join(nodeDir, "node"), version: node };
       },
       proxyAnswers: async () => proxy.up,
@@ -423,6 +424,27 @@ describe("the fixed address's routes", () => {
     } finally {
       squatter.stop(true);
     }
+  });
+
+  test("a window reading the state while a slow Node lookup runs at start sees working, never 'no Node' (the CI Mac race)", async () => {
+    const first = await rig();
+    await post(first, "/api/inbox/name", { on: true, serverSession: first.inbox.serverSession });
+    await waitFor("on", () => first.inbox.name.state().status === "on");
+    first.inbox.stop();
+    servers.splice(servers.indexOf(first.inbox), 1);
+    nodeLookups.count = 0;
+    const second = await rig({ dataDir: first.dataDir, carry: first, nodeDelayMs: 300 });
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      const status = ((await (await fetch(`http://localhost:${second.inbox.port}/api/inbox/name`)).json()) as Json).name.status as string;
+      seen.add(status);
+      if (status === "on") break;
+      await Bun.sleep(25);
+    }
+    expect([...seen]).not.toContain("unavailable");
+    expect([...seen]).not.toContain("off");
+    expect(seen.has("on")).toBe(true);
+    expect(nodeLookups.count).toBe(1);
   });
 
   test("off removes only our alias and closes the listener", async () => {
