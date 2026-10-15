@@ -428,12 +428,19 @@ function Inbox() {
   const [said, setSaid] = useState('');
   /** The thread whose reply box opens once it is on screen (the warning toast's Reply). */
   const [replyFor, setReplyFor] = useState<string | null>(null);
+  /** The thread pane on screen and whether anything covers it (ThreadPane's `onScreenChange`). */
+  const threadOnScreenRef = useRef<{ threadId: string; covered: boolean } | null>(null);
   const notifications = useInboxNotifications({
     settings: settings?.notifications ?? null,
     // New questions ring the doorbell on their own rules (sound.ts), whatever notifications say.
     onQuestions: sound.questionsArrived,
     // Silent only when the bell can ring: on, and armed by a click in this tab.
     silent: () => sound.settings.enabled && sound.armed,
+    // A question in the thread the person has open and visible raises nothing (the tab in front is notify.ts's check).
+    threadOnScreen: (threadId) => {
+      const pane = threadOnScreenRef.current;
+      return pane !== null && pane.threadId === threadId && !pane.covered && routeRef.current.thread === threadId;
+    },
     onSettings: (next) => setSettings((current) => (current ? { ...current, notifications: next } : current)),
     // A click on a notification: the thread opens, and the list on screen catches up, even with a
     // thread open. The one exception to "the list holds still while a thread is open" (settle.ts):
@@ -720,6 +727,8 @@ function Inbox() {
       const first = await refreshList(true);
       void refreshSettings();
       if (cancelled || !first) return;
+      // The threads already here: a later line of one of their roots is never a new thread (notify.ts).
+      flushNotifications(first);
       unsubscribe = subscribeInboxEvents(first.cursor, {
         onRecord: (event) => {
           observeEvent(event);
@@ -1978,6 +1987,9 @@ function Inbox() {
             seenThrough={look?.threadId === thread.thread_id ? look.through : null}
             onSeen={(through) => seenOnSight(thread.thread_id, through)}
             covered={!!route.guide || updateDialog !== null || soundDialog === 'open' || agentNoteOpen || compose !== null}
+            onScreenChange={(state) => {
+              threadOnScreenRef.current = state;
+            }}
             backLabel={filterProject?.name ?? 'Inbox'}
             phone={phone}
             stacked={stack.thread}
@@ -2044,7 +2056,6 @@ function Inbox() {
             onDecisions={() => go({ page: 'decisions', project: null, thread: null })}
             onUpdate={pressUpdate}
             onWhatsNew={openWhatsNew}
-            soundNeedsClick={!!settings?.sound && sound.settings.enabled && !sound.armed}
             mcpCommand={settings?.mcp_command ?? null}
           />
         }
