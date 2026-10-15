@@ -332,7 +332,6 @@ export async function handleServerReady(
       process.stderr.write(`  Open it on your local machine (forward port ${port} if needed).\n`);
     }
   }
-  if (announce) process.stderr.write("\n");
 
   const skipBrowserOpen = options.skipBrowserOpen ?? process.env.PLANNOTATOR_SKIP_BROWSER_OPEN === "1";
   // PLANNOTATOR_BROWSER=none (or --browser none): open nothing, anywhere, and
