@@ -42,6 +42,8 @@ export interface InboxNameState {
   prototype: boolean;
   verified_at: string | null;
   probe: string | null;
+  /** The commands run for it, newest last. */
+  log?: string[];
   os_trust: boolean | null;
   portless: { node: string | null; cli: string | null; state_dir: string; home: string };
 }

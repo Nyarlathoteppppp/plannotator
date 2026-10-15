@@ -31,7 +31,7 @@ The scratch Inbox uses `$TMPDIR/plannotator-proto-fixed-address/data`. It never 
 
 ### CI (everything except the password prompt)
 
-`gh workflow run proto-fixed-address.yml --ref proto/inbox-fixed-address` runs `ci-check.ts` on ubuntu-latest, windows-latest and macos-latest. The runners are already admin, so the privileged step runs as `sudo -n` (`PLANNOTATOR_PROTO_NAME_ELEVATE=sudo`) or directly in the elevated Windows session (`=direct`). The steps:
+`gh workflow run 385915726 --ref proto/inbox-fixed-address` runs `ci-check.ts` on ubuntu-latest, windows-latest and macos-latest. The runners are already admin, so the privileged step runs as `sudo -n` (`PLANNOTATOR_PROTO_NAME_ELEVATE=sudo`) or directly in the elevated Windows session (`=direct`). The steps:
 
 - Click Sure in headless Chromium.
 - Verify the name over HTTPS against portless's CA.

@@ -266,7 +266,7 @@ export interface InboxServerOptions {
    * (packages/server/inbox-name.ts). Tests pass a scripted runner and probe,
    * so no real portless, npm, osascript or sudo ever runs.
    */
-  name?: Partial<Pick<InboxNameOptions, "runner" | "probe" | "findNode" | "proxyAnswers" | "osTrust" | "user" | "platform" | "env" | "pollMs" | "pollTries">>;
+  name?: Partial<Pick<InboxNameOptions, "runner" | "probe" | "findNode" | "proxyAnswers" | "osTrust" | "user" | "platform" | "env" | "pollMs" | "pollTries" | "proxyWaitMs">>;
   /** Tests: how a project root's `origin` is read (default `readInboxProjectRepo`, inbox-repos.ts). */
   readProjectRepo?: (root: string) => Promise<InboxProjectRepo | null>;
   /** Tests: the git that decides a path's project (default `inboxGitRunner`, inbox-project-root.ts). */

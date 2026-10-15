@@ -108,7 +108,7 @@ export function nodeMajor(version: string): number | null {
 }
 
 const POSIX_PATH = /^\/[A-Za-z0-9 ._+@,:\/-]*$/;
-const WINDOWS_PATH = /^[A-Za-z]:\\[A-Za-z0-9 ._+@,()\\-]*$/;
+const WINDOWS_PATH = /^[A-Za-z]:\\[A-Za-z0-9 ._+@,()~\\-]*$/;
 const USER_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
 const NUMERIC_ID = /^\d{1,10}$/;
 
@@ -280,6 +280,8 @@ export interface InboxNameState {
   verified_at: string | null;
   /** How the last probe went, for the checklist and CI. */
   probe: string | null;
+  /** The commands run for it, newest last: what ran, its exit, the end of its output (for the checklist, CI and Try again). */
+  log: string[];
   /**
    * Whether the OS trusts portless's CA (macOS: `security verify-cert`; null
    * elsewhere or before a check). The probe trusts the CA explicitly, so a
@@ -371,6 +373,8 @@ export interface InboxNameOptions {
   /** Tests: shorten the waits for the proxy and the route. */
   pollMs?: number;
   pollTries?: number;
+  /** How long to wait for portless's proxy after the privileged step. Default 90 s (a CI Mac took over 15). */
+  proxyWaitMs?: number;
 }
 
 export interface InboxName {
@@ -395,6 +399,16 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   const probe = options.probe ?? probeName;
   const pollMs = options.pollMs ?? 500;
   const pollTries = options.pollTries ?? 30;
+  const proxyWaitMs = options.proxyWaitMs ?? 90_000;
+  const log: string[] = [];
+  /** Run a command and keep a line about it (never its environment). */
+  const exec: NameRunner = async (line, opts) => {
+    const result = await (options.runner ?? runDetached)(line, opts);
+    const tail = `${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-4).join(" | ").slice(0, 600);
+    log.push(`${new Date().toISOString()} ${[line.command, ...line.args].join(" ").slice(0, 300)} -> ${result.timedOut ? "timed out" : `exit ${result.code}`}${tail ? `: ${tail}` : ""}`);
+    if (log.length > 20) log.splice(0, log.length - 20);
+    return result;
+  };
   const file = join(inboxDir(options.dataDir), NAME_FILE);
   const home = env.PLANNOTATOR_PROTO_PORTLESS_HOME || join(options.dataDir, "portless");
   const userHome = (platform === "win32" ? env.USERPROFILE : env.HOME) || homedir();
@@ -521,7 +535,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   const alias = async (port: number): Promise<string | null> => {
     if (!node) return "Node is missing.";
     if (lanMode()) return "portless runs in LAN mode (proxy.lan): the alias would put the Inbox on the network. Refused.";
-    const result = await runner(aliasCommand(node.node, cli, port), { env: childEnv(), timeoutMs: ALIAS_TIMEOUT_MS });
+    const result = await exec(aliasCommand(node.node, cli, port), { env: childEnv(), timeoutMs: ALIAS_TIMEOUT_MS });
     if (result.code !== 0) return `portless alias failed: ${(result.stderr || result.stdout).trim() || `exit ${result.code}`}`;
     return null;
   };
@@ -561,7 +575,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       const npmCli = [join(dirname(node!.node), "node_modules", "npm", "bin", "npm-cli.js"), join(dirname(node!.node), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js")].find((p) => existsSync(p));
       if (!npmCli) return fail(`npm was not found next to ${node!.node}.`);
       mkdirSync(home, { recursive: true });
-      const installed = await runner(npmInstallCommand(node!.node, npmCli, home), { env: childEnv(), timeoutMs: NPM_TIMEOUT_MS });
+      const installed = await exec(npmInstallCommand(node!.node, npmCli, home), { env: childEnv(), timeoutMs: NPM_TIMEOUT_MS });
       if (installed.code !== 0 || !existsSync(cli)) return fail(`Installing portless ${PORTLESS_VERSION} failed: ${(installed.stderr || installed.stdout).trim().slice(-400) || `exit ${installed.code}`}`);
     }
     // 3. The one privileged step, only when the proxy is not already up.
@@ -579,18 +593,19 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       } catch (error) {
         return fail(error instanceof Error ? error.message : String(error));
       }
-      const result = await runner(line, { env: childEnv(), timeoutMs: PRIVILEGED_TIMEOUT_MS });
+      const result = await exec(line, { env: childEnv(), timeoutMs: PRIVILEGED_TIMEOUT_MS });
       if (result.timedOut) return fail("The password prompt timed out. Nothing changed.");
       if (result.code !== 0) return fail(explainPrivilegedFailure(platform, result.code, result.stderr || result.stdout));
       let up = false;
-      for (let i = 0; i < pollTries && !stopped; i++) {
+      const until = Date.now() + proxyWaitMs;
+      while (!stopped && Date.now() < until) {
         if (await answers(stateDir)) {
           up = true;
           break;
         }
         await Bun.sleep(pollMs);
       }
-      if (!up) return fail("portless was installed but its proxy does not answer on port 443. Run: portless doctor");
+      if (!up) return fail(`portless was installed but its proxy did not answer on port 443 within ${Math.round(proxyWaitMs / 1000)} s. Run: portless doctor`);
     }
     // 4. The alias, as the person.
     step = "alias";
@@ -618,6 +633,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
     prototype: enabledHere,
     verified_at: verifiedAt,
     probe: probeDetail,
+    log: [...log],
     os_trust: osTrusted,
     portless: { node: node?.node ?? null, cli: existsSync(cli) ? cli : null, state_dir: stateDir, home },
   });
@@ -690,7 +706,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
         try {
           const routes = JSON.parse(readFileSync(join(stateDir, "routes.json"), "utf8")) as { hostname?: string; port?: number; pid?: number }[];
           const ours = Array.isArray(routes) && routes.some((r) => r.hostname === INBOX_NAME_HOST && r.pid === 0 && r.port === port);
-          if (ours) await runner(aliasRemoveCommand(node.node, cli), { env: childEnv(), timeoutMs: ALIAS_TIMEOUT_MS });
+          if (ours) await exec(aliasRemoveCommand(node.node, cli), { env: childEnv(), timeoutMs: ALIAS_TIMEOUT_MS });
         } catch {
           // No routes file: nothing to remove.
         }

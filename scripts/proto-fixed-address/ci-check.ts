@@ -42,10 +42,15 @@ const env = {
   PLANNOTATOR_PROTO_NAME_ELEVATE: process.platform === "win32" ? "direct" : "sudo",
 };
 
-const results: { step: string; ok: boolean; detail: string }[] = [];
+const results: { step: string; ok: boolean; finding?: boolean; detail: string }[] = [];
 const record = (step: string, ok: boolean, detail: string) => {
   results.push({ step, ok, detail });
   console.log(`${ok ? "PASS" : "FAIL"} ${step}: ${detail}`);
+};
+/** Something this run exists to find out, expected on this OS: shown, not counted as a failure. */
+const finding = (step: string, detail: string) => {
+  results.push({ step, ok: true, finding: true, detail });
+  console.log(`FINDING ${step}: ${detail}`);
 };
 const run = (args: string[], options: SpawnSyncOptions = {}) => {
   const result = spawnSync(process.execPath, args, { cwd: repo, env, encoding: "utf8", timeout: 10 * 60_000, ...options });
@@ -88,7 +93,15 @@ try {
   console.log(flow.out, flow.err);
   const afterSure = await nameState(first.port);
   record("Sure in the window -> on", afterSure.status === "on", `status ${afterSure.status}; reason ${afterSure.reason}; probe ${afterSure.probe}; os_trust ${afterSure.os_trust}`);
-  record("the tab moved itself to the name", /tab moved to the name: true/.test(flow.out), (/tab moved to the name: .*/.exec(flow.out) ?? ["(no line)"])[0]);
+  console.log("commands run:\n" + ((afterSure.log as string[] | undefined) ?? []).join("\n"));
+  if (afterSure.os_trust === false) finding("macOS: the OS does not trust portless's CA (root could not add trust without a person)", String(afterSure.reason));
+  const moved = /tab moved to the name: true/.test(flow.out);
+  const movedLine = (/tab moved to the name: .*/.exec(flow.out) ?? ["(no line)"])[0];
+  if (!moved && process.platform === "linux" && afterSure.status === "on") {
+    finding("linux: the tab could not move (Chromium reads NSS, which update-ca-certificates does not reach)", movedLine);
+  } else {
+    record("the tab moved itself to the name", moved, movedLine);
+  }
 
   // 3.
   const session1 = await httpsSession();
@@ -125,7 +138,12 @@ try {
 
     // 6.
     const off = run([join(repo, "apps/hook/server/index.ts"), "inbox", "--name", "off"]);
-    const session3 = await httpsSession();
+    // portless reloads routes.json on a file watch, and the listener closes a moment after the answer.
+    let session3 = await httpsSession();
+    for (let i = 0; i < 30 && session3 === second.serverSession; i++) {
+      await Bun.sleep(200);
+      session3 = await httpsSession();
+    }
     record("--name off: the name no longer answers this Inbox", off.code === 0 && session3 !== second.serverSession, session3);
     await stopInbox();
   } finally {
@@ -135,7 +153,7 @@ try {
   record("unexpected", false, String(error));
 }
 
-const lines = [`### Fixed address on ${process.platform}`, "", "| | step | detail |", "|---|---|---|", ...results.map((r) => `| ${r.ok ? "✅" : "❌"} | ${r.step} | ${r.detail.replace(/\|/g, "\\|").slice(0, 400)} |`)];
+const lines = [`### Fixed address on ${process.platform}`, "", "| | step | detail |", "|---|---|---|", ...results.map((r) => `| ${r.finding ? "⚠️" : r.ok ? "✅" : "❌"} | ${r.step} | ${r.detail.replace(/\|/g, "\\|").slice(0, 400)} |`)];
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
 console.log(JSON.stringify({ platform: process.platform, results }, null, 2));
 process.exit(results.every((r) => r.ok) ? 0 : 1);

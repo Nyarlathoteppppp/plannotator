@@ -2,7 +2,7 @@
 # address (https://inbox.plannotator.localhost through portless) on Linux,
 # Windows and macOS runners. Manual only:
 #
-#   gh workflow run proto-fixed-address.yml --ref proto/inbox-fixed-address
+#   gh workflow run 385915726 --ref proto/inbox-fixed-address   (the id: the file is not on main)
 #
 # Runs everything except a human typing a password: the runners are already
 # admin, so the Inbox's privileged step uses passwordless `sudo -n`

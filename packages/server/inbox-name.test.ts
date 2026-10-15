@@ -30,6 +30,10 @@ type Json = Record<string, any>;
 
 const roots: string[] = [];
 const nodeLookups = { count: 0 };
+/** The rig runs the module as macOS would, or as Windows on a Windows runner (its temp paths are Windows paths). */
+const PLATFORM: NodeJS.Platform = process.platform === "win32" ? "win32" : "darwin";
+const isPrivileged = (line: CommandLine) => line.command === "/usr/bin/osascript" || line.command === "pkexec" || line.command === "powershell.exe";
+const CANCELLED = PLATFORM === "win32" ? ["The operation was canceled by the user.", "You cancelled the Windows prompt. Nothing changed."] : ["0:300: execution error: User canceled. (-128)", "You cancelled the password prompt. Nothing changed."];
 const servers: InboxServer[] = [];
 const restoreEnv: (() => void)[] = [];
 
@@ -218,7 +222,7 @@ async function rig(options: { off?: boolean; node?: string | null; config?: Json
       writeFileSync(cli, "// fake portless\n");
       return { code: 0, stdout: "", stderr: "", timedOut: false };
     }
-    if (line.command === "/usr/bin/osascript" || line.command === "pkexec") {
+    if (isPrivileged(line)) {
       if (privileged.code === 0) {
         proxy.up = true;
         mkdirSync(stateDir, { recursive: true });
@@ -255,8 +259,9 @@ async function rig(options: { off?: boolean; node?: string | null; config?: Json
     phones: false,
     ...(options.tailscale ? { tailscale: options.tailscale } : {}),
     name: {
-      platform: "darwin",
-      env: { HOME: dataDir, PATH: "/usr/bin:/bin", PLANNOTATOR_PROTO_FIXED_ADDRESS: options.off ? undefined : "1", PLANNOTATOR_PROTO_PORTLESS_HOME: home, PLANNOTATOR_PROTO_PORTLESS_STATE_DIR: stateDir },
+      platform: PLATFORM,
+      proxyWaitMs: 400,
+      env: { HOME: dataDir, USERPROFILE: dataDir, PATH: "/usr/bin:/bin", PLANNOTATOR_PROTO_FIXED_ADDRESS: options.off ? undefined : "1", PLANNOTATOR_PROTO_PORTLESS_HOME: home, PLANNOTATOR_PROTO_PORTLESS_STATE_DIR: stateDir },
       runner,
       probe,
       findNode: async () => {
@@ -353,7 +358,7 @@ describe("the fixed address's routes", () => {
     expect(listener).toBeGreaterThan(0);
     expect(listener).not.toBe(r.inbox.port);
 
-    const kinds = r.calls.map((c) => (c.args.some((a) => a.endsWith("npm-cli.js")) ? "npm" : c.command === "/usr/bin/osascript" ? "privileged" : c.args.includes("alias") ? "alias" : c.command));
+    const kinds = r.calls.map((c) => (c.args.some((a) => a.endsWith("npm-cli.js")) ? "npm" : isPrivileged(c) ? "privileged" : c.args.includes("alias") ? "alias" : c.command));
     expect(kinds).toEqual(["npm", "privileged", "alias"]);
     const aliasCall = r.calls.find((c) => c.args.includes("alias"))!;
     expect(aliasCall.args.slice(1)).toEqual(["alias", "inbox.plannotator", String(listener)]);
@@ -383,10 +388,10 @@ describe("the fixed address's routes", () => {
   test("a cancelled password prompt: failed, said plainly, nothing switched on, Try again works", async () => {
     const r = await rig();
     r.privileged.code = 1;
-    r.privileged.stderr = "0:300: execution error: User canceled. (-128)";
+    r.privileged.stderr = CANCELLED[0]!;
     await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
     const failed = await waitFor("failed", () => (r.inbox.name.state().status === "failed" ? r.inbox.name.state() : null));
-    expect(failed.reason).toBe("You cancelled the password prompt. Nothing changed.");
+    expect(failed.reason).toBe(CANCELLED[1]!);
     expect(r.calls.some((c) => c.args.includes("alias"))).toBe(false);
     const file = join(r.dataDir, "inbox", "name.json");
     expect(existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).on : false).toBe(false);
@@ -411,7 +416,7 @@ describe("the fixed address's routes", () => {
       await waitFor("on again", () => second.inbox.name.state().status === "on");
       expect(second.inbox.port).not.toBe(windowPort);
       expect(second.inbox.name.listenerPort()).toBe(listener);
-      expect(first.calls.map((c) => c.command === "/usr/bin/osascript")).not.toContain(true);
+      expect(first.calls.some(isPrivileged)).toBe(false);
       expect(first.calls.filter((c) => c.args.includes("alias")).map((c) => c.args.at(-1))).toEqual([String(listener)]);
       const health = (await (await fetch(`http://127.0.0.1:${listener}/api/inbox/health`, { headers: { host: INBOX_NAME_HOST } })).json()) as Json;
       expect(health.serverSession).toBe(second.inbox.serverSession);
