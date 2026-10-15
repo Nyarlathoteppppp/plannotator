@@ -301,7 +301,8 @@ test.skipIf(!hasDom)('Mod+Enter still sends with the picker open; a bare trigger
   expect(el.querySelector('[data-skills-line]')).toBeNull();
 });
 
-test.skipIf(!hasDom)('New message: a clicked row inserts; the session is woken with the block, "this message"', async () => {
+// The in-thread New message button is off (approval "inbox-acknowledge", 2026-10-15); its route stays. Turn SHOW_NEW_MESSAGE_BUTTON on in packages/inbox/components/Thread.tsx and drop this skip to bring it back.
+test.skip('New message: a clicked row inserts; the session is woken with the block, "this message"', async () => {
   const projectRoot = (await threadOf(world.stopped)).thread.project.root;
   await poll('ses_live', projectRoot);
   const el = await renderApp(`#thread=${world.stopped}`);

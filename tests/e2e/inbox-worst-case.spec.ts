@@ -272,6 +272,8 @@ test('things that grow: the reply chooser with 50 sessions, the New message list
     }
   }
   // New message with 50 live sessions: the list starts inside the window (row 35).
+  // The in-thread New message button is off (approval "inbox-acknowledge", 2026-10-15); its route stays. Turn SHOW_NEW_MESSAGE_BUTTON on in packages/inbox/components/Thread.tsx and drop this skip to bring it back.
+  if (SHOW_NEW_MESSAGE_BUTTON_IN_THREAD) {
   const { context, page } = await open(browser, WIDTHS[2]!, `thread=${world.seed.threads.kitchen}`);
   try {
     await page.waitForSelector('[data-new-message]');
@@ -284,7 +286,11 @@ test('things that grow: the reply chooser with 50 sessions, the New message list
   } finally {
     await context.close();
   }
+  }
 });
+
+/** The in-thread New message button (off since approval "inbox-acknowledge"). */
+const SHOW_NEW_MESSAGE_BUTTON_IN_THREAD = false;
 
 test('a long file name never widens the window: the stepping guard, the header (rows 49, 74)', async ({ browser }) => {
   const { context, page } = await open(browser, WIDTHS[0]!, `thread=${world.seed.threads.files}`);

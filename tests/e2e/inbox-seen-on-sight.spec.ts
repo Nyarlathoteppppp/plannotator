@@ -321,7 +321,9 @@ test('phone (WebKit, iPhone 15): seen on sight with the same rule; Back shows it
 
 // The failure this guards: a bottom sheet over the end of the thread (here New
 // message's "not running" sheet) hid the arrival, and it was marked seen anyway.
-test('phone (WebKit, iPhone 15): an arrival under New message\'s sheet is not seen until the sheet closes', async () => {
+// The in-thread New message button is off (approval "inbox-acknowledge", 2026-10-15); its route stays. Turn SHOW_NEW_MESSAGE_BUTTON on in packages/inbox/components/Thread.tsx and drop this skip to bring it back.
+// The rule this guards (a sheet over the first lines hides them) is still proved in packages/inbox/seenOnSight.test.tsx.
+test.skip('phone (WebKit, iPhone 15): an arrival under New message\'s sheet is not seen until the sheet closes', async () => {
   let own: Browser | null = null;
   let context: BrowserContext | null = null;
   try {

@@ -154,6 +154,8 @@ const clock = (ms: number) => new Intl.DateTimeFormat('en-US', { hour: 'numeric'
 const startedLabel = (ms: number) => new RegExp(`^Started (?:[A-Z][a-z]{2} \\d{1,2}, )?${clock(ms).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
 
 test.describe.configure({ mode: 'serial' });
+// The in-thread New message button is off (approval "inbox-acknowledge", 2026-10-15); its route stays. Turn SHOW_NEW_MESSAGE_BUTTON on in packages/inbox/components/Thread.tsx and drop this skip to bring it back.
+test.skip(true, 'the in-thread New message button is off (approval inbox-acknowledge)');
 
 test.beforeAll(async ({ browser }: { browser: Browser }) => {
   expect(existsSync(binary), `build the binary first: ${binary}`).toBe(true);
