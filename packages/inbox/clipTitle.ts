@@ -5,16 +5,20 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
  * its full text as its title while the pointer is over it, and only when it
  * is actually shortened (a subject that fits has no tooltip repeating it).
  * A FileName (`.ib-fname`) counts as cut when its first part is, and its
- * title is its whole name (`data-name`). Put this on a container's
- * `onPointerOver`: one listener for every row in it.
+ * title is its whole name (`data-name`). An element with `data-clip-from`
+ * (a selector) counts as cut when that element in its parent is: a message's
+ * fold button lies under the head row, so the row's cut name gives the button
+ * its title. Put this on a container's `onPointerOver`: one listener for
+ * every row in it.
  */
 export function titleIfClipped(event: ReactPointerEvent<HTMLElement>): void {
   const target = event.target;
   if (!(target instanceof Element)) return;
   const el = target.closest<HTMLElement>('[data-clip]');
   if (!el) return;
+  const from = el.dataset.clipFrom ? el.parentElement?.querySelector<HTMLElement>(el.dataset.clipFrom) : null;
   const part = el.classList.contains('ib-fname') ? el.querySelector<HTMLElement>('.ib-fname-h') : el;
-  const cut = isClipped(el) || (part !== null && part !== el && isClipped(part));
+  const cut = from ? isClipped(from) : isClipped(el) || (part !== null && part !== el && isClipped(part));
   const text = el.dataset.name ?? el.textContent ?? '';
   if (cut && text) el.title = text;
   else el.removeAttribute('title');

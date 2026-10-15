@@ -47,7 +47,11 @@ function row(id: string, subject: string, thread_name: string | null): InboxList
 const REPEAT = row('msg_repeat', 'Inbox: skills in messages and the picker', 'Inbox: skills  in messages');
 const OTHER = row('msg_other', 'Inbox: a menu on each sidebar project with Mark all as read', 'Inbox: project menu');
 const PREFIX = row('msg_prefix', 'Searchable archive', 'search');
-const SECTIONS: InboxListSection[] = [{ id: 'waiting', label: 'Waiting on you', threads: [REPEAT, OTHER, PREFIX] }];
+const VERSION = row('msg_version', 'v2.1 release', 'v2');
+const HYPHEN = row('msg_hyphen', 'auth-service down', 'auth');
+const COLON = row('msg_colon', 'Search: ranking for archived threads', 'search');
+const DASH = row('msg_dash', 'auth - token refresh fails', 'auth');
+const SECTIONS: InboxListSection[] = [{ id: 'waiting', label: 'Waiting on you', threads: [REPEAT, OTHER, PREFIX, VERSION, HYPHEN, COLON, DASH] }];
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
@@ -106,8 +110,13 @@ function sized(node: HTMLElement, scroll: number, client: number) {
 test.skipIf(!hasDom)('the thread label is left out when the subject already starts with it, on wide and phone rows', () => {
   expect(chipName(REPEAT)).toBeNull();
   expect(chipName(OTHER)).toBe('Inbox: project menu');
-  // Only up to a word's end: "search" beside "Searchable…" is not a repeat.
+  // Only where the subject's words end: a space, or ":", "-" or a dash and a space.
   expect(chipName(PREFIX)).toBe('search');
+  expect(chipName(VERSION)).toBe('v2');
+  expect(chipName(HYPHEN)).toBe('auth');
+  expect(chipName(COLON)).toBeNull();
+  expect(chipName(DASH)).toBeNull();
+  expect(chipName(row('msg_same', 'Release notes', 'release notes'))).toBeNull();
   for (const phone of [false, true]) {
     const el = render(phone);
     expect(rowEl(el, REPEAT.thread_id).querySelector('.ib-keyt')).toBeNull();

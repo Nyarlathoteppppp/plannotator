@@ -2303,6 +2303,10 @@ For the Plannotator Inbox's composers (approval "inbox-skill-references"). Every
 - **`@plannotator/core/markdown-structure`** gains **`codeFenceFor(code)`** (three backticks, or one more than the longest backtick run in the code). Code review's feedback export fences Highlighted text, Replaces and Suggested code with it: byte-identical unless the quoted code holds a ``` run.
 - **`utils/skillCatalog`**: **`normalizeSkillContent`** is exported; **`setSkillCatalogExportRegistration(on)`** (host configuration: `resetSkillCatalogCache` leaves it alone), and **`configurePlannotatorUI({ skillReferenceExport })`** (default true): false keeps the fetched catalog out of the per-comment export, for a host that composes one block per message itself.
 
+## `Tooltip` `shouldOpen` (ui, next publish; additive, no core change)
+
+**`Tooltip`** (`components/Tooltip`) gains **`shouldOpen?: (trigger: Element) => boolean`**, asked each time the tooltip would open; `false` keeps it closed that time (Base UI's `onOpenChange` with `cancel()`). Unset, it always opens, as before. The Inbox passes a check that the trigger's text is cut (`scrollWidth > clientWidth`), so a list row's thread label and subject show their whole text only while they are cut.
+
 ## The law (guardrails for anyone editing `@plannotator/ui`)
 
 These are enforced socially and, where possible, by CI. They exist because a prior from-scratch reimplementation of this UI broke the app and was reverted.

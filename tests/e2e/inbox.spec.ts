@@ -339,7 +339,7 @@ test('a row opens the thread as an email with the question cards; the decision t
   const pane = page.locator('section.ib-pane');
   await expect(pane.getByRole('heading', { name: 'Which way should the worker go on a Stripe 409?' })).toBeVisible();
   await expect(pane.locator('.ib-who').first()).toHaveText('Claude Code');
-  await expect(pane.locator('.ib-fl-mt').first()).toHaveText('in billing-svc · to you');
+  await expect(pane.locator('.ib-fl-meta').first()).toHaveText('in billing-svc · to you');
   await expect(pane.getByText('Question 1 of 2')).toBeVisible();
   await expect(pane.getByText('Question 2 of 2')).toBeVisible();
   await expect(pane.getByText('Waiting on this answer')).toBeVisible();

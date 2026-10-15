@@ -1888,6 +1888,9 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                     type="button"
                     className="ib-fl-hit"
                     data-fold-head=""
+                    data-clip=""
+                    data-clip-from=".ib-fl-nm"
+                    data-name={name}
                     aria-expanded={true}
                     aria-label={foldLabel}
                     onClick={() => toggleMessage(message.id)}
@@ -1902,16 +1905,18 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                     </span>
                   )}
                 </span>
-                <span className="ib-fl-nm ib-who" aria-hidden={hide} data-clip="">
+                <span className="ib-fl-nm ib-who" aria-hidden={hide} data-clip={one ? '' : undefined}>
                   <bdi>{name}</bdi>
                 </span>
+                {/* The project gives way first; "to you", the session-ended mark and the count never shrink (the row wraps instead). */}
                 <span className="ib-fl-meta">
-                  <span className="ib-fl-mt" aria-hidden={hide}>
-                    in <bdi>{thread.project.name}</bdi>
-                    <span className="ib-to-sep"> · </span>
-                    <span className="ib-to">{toWords}</span>
+                  <span className="ib-fl-in" aria-hidden={hide}>
+                    in <bdi>{thread.project.name}</bdi>{' '}
                   </span>
-                  {count}
+                  <span className="ib-fl-to" aria-hidden={hide}>
+                    <span className="ib-to-sep">·</span> <span className="ib-to">{toWords}</span>
+                  </span>
+                  {count && <span className="ib-fl-files">{count}</span>}
                 </span>
                 <span className="ib-fl-chips" />
                 <span className="ib-fl-tm">

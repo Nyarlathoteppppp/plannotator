@@ -340,7 +340,7 @@ test.skipIf(!hasDom)("a message's head is one row folded or open: the mark, the 
   expect(cells(open)).toEqual(['ib-mk ib-big', 'ib-fl-nm ib-who', 'ib-fl-meta', 'ib-fl-chips', 'ib-fl-tm']);
   expect(open.querySelector('.ib-mk')!.className).toBe(foldedMark);
   expect(open.querySelector('.ib-fl-nm')!.textContent).toBe(foldedName);
-  expect(open.querySelector('.ib-fl-mt')!.textContent).toBe('in docs-site · to you');
+  expect(open.querySelector('.ib-fl-meta')!.textContent).toBe('in docs-site · to you');
   // The fold button lies under the row; the row's text is its label's, hidden from screen readers.
   const hit = open.querySelector('.ib-fl-hit')!;
   expect(hit.getAttribute('data-fold-head')).toBe('');
@@ -467,9 +467,9 @@ test.skipIf(!hasDom)('a one-message thread looks as it always did: no fold butto
   const head = article(el, ROOT)!.querySelector('[data-open-head]')!;
   expect(head.classList.contains('ib-fline')).toBe(true);
   expect(head.querySelector('.ib-who')!.textContent).toBe('Claude Code');
-  expect(head.querySelector('.ib-fl-mt')!.textContent).toBe('in docs-site · to you');
+  expect(head.querySelector('.ib-fl-meta')!.textContent).toBe('in docs-site · to you');
   expect(head.querySelector('.ib-fl-nm')!.hasAttribute('aria-hidden')).toBe(false);
-  expect(head.querySelector('.ib-fl-mt')!.hasAttribute('aria-hidden')).toBe(false);
+  expect(head.querySelector('.ib-fl-in')!.hasAttribute('aria-hidden')).toBe(false);
 });
 
 test.skipIf(!hasDom)('a payload without seqs (an older Inbox) folds nothing and marks nothing new', async () => {
