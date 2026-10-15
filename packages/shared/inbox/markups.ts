@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { sniffImageContentType } from "../review-image";
+import { INBOX_MAX_REQUEST_BYTES } from "./connection";
 import { InboxError } from "./schema";
 
 export const MARKUPS_DIR = "markups";
@@ -34,26 +35,39 @@ export function isInboxMarkupName(name: string): boolean {
 }
 
 /**
- * The most bytes one marked-up image may have. The annotator exports a PNG at
- * the image's own size; a 4K frame with strokes is well under this. A bound
- * of its own, because the route buffers the image whole.
+ * The most bytes one marked-up image may have from the window: the Inbox's
+ * request bound, as before it had a bound of its own. The annotator exports a
+ * PNG at the image's own size, so a 24 MP photo with strokes can pass 40 MB.
+ * Still a bound the read enforces, because the route buffers the image whole.
  */
-export const INBOX_MARKUP_MAX_BYTES = 32 * 1024 * 1024;
+export const INBOX_MARKUP_MAX_BYTES = INBOX_MAX_REQUEST_BYTES;
 
-function markupTooLarge(): InboxError {
-  return new InboxError("markup_too_large", `A drawing is at most ${INBOX_MARKUP_MAX_BYTES / (1024 * 1024)} MB.`, { max_bytes: INBOX_MARKUP_MAX_BYTES });
+/**
+ * The phone door's bound for a drawing (`POST markups`, contract 7.49): a
+ * phone's drawing is a screen-sized image, and the door counts the body
+ * itself because the window's handler runs in-process.
+ */
+export const INBOX_DEVICE_MARKUP_MAX_BYTES = 32 * 1024 * 1024;
+
+function markupTooLarge(max: number): InboxError {
+  return new InboxError("markup_too_large", `A drawing is at most ${Math.round(max / (1024 * 1024))} MB.`, { max_bytes: max });
 }
 
 /**
- * Read a markup's body, at most `INBOX_MARKUP_MAX_BYTES`: a declared
- * Content-Length over it is refused before a byte is read, and a body that
- * grows past it is cancelled there (`markup_too_large`), never buffered whole.
+ * Read a markup's body, at most `max` bytes (default
+ * `INBOX_MARKUP_MAX_BYTES`): a declared Content-Length over it is refused
+ * before a byte is read, and a body that grows past it is cancelled there
+ * (`markup_too_large`), never buffered past the bound.
  */
-export async function readInboxMarkupBody(body: ReadableStream<Uint8Array> | null, declaredLength: string | null): Promise<Uint8Array> {
+export async function readInboxMarkupBody(
+  body: ReadableStream<Uint8Array> | null,
+  declaredLength: string | null,
+  max: number = INBOX_MARKUP_MAX_BYTES,
+): Promise<Uint8Array> {
   const declared = declaredLength === null ? Number.NaN : Number(declaredLength);
-  if (Number.isFinite(declared) && declared > INBOX_MARKUP_MAX_BYTES) {
+  if (Number.isFinite(declared) && declared > max) {
     await body?.cancel().catch(() => {});
-    throw markupTooLarge();
+    throw markupTooLarge(max);
   }
   if (!body) return new Uint8Array(0);
   const reader = body.getReader();
@@ -63,9 +77,9 @@ export async function readInboxMarkupBody(body: ReadableStream<Uint8Array> | nul
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > INBOX_MARKUP_MAX_BYTES) {
+    if (size > max) {
       await reader.cancel().catch(() => {});
-      throw markupTooLarge();
+      throw markupTooLarge(max);
     }
     chunks.push(value);
   }

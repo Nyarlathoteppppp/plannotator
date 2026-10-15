@@ -47,7 +47,7 @@ import {
 } from "@plannotator/shared/inbox/devices";
 import { readInboxRegistry, updateOwnInboxRegistry, type InboxRegistryEntry } from "@plannotator/shared/inbox/registry";
 import { InboxError, inboxDir } from "@plannotator/shared/inbox/schema";
-import { INBOX_MARKUP_MAX_BYTES } from "@plannotator/shared/inbox/markups";
+import { INBOX_DEVICE_MARKUP_MAX_BYTES } from "@plannotator/shared/inbox/markups";
 import { INBOX_UPLOAD_MAX_BYTES } from "@plannotator/shared/inbox/uploads";
 import { runTailscale, serveStatusProxy, TAILSCALE_SERVE_TIMEOUT_MS, type TailscaleRunner } from "@plannotator/shared/tailscale";
 import { createInboxLan, LanUnavailableError } from "./inbox-lan";
@@ -169,7 +169,7 @@ const ALLOWLIST: readonly DoorRoute[] = [
   { method: "GET", route: /^skills\/content$/, window: () => "/api/inbox/skills/content" },
   // Uploads and drawings (7.48, 7.49): raw bodies, the key in the query; never through the relay.
   { method: "POST", route: /^uploads$/, window: () => "/api/inbox/uploads", raw: { max: INBOX_UPLOAD_MAX_BYTES, code: "upload_too_large", what: "a file" } },
-  { method: "POST", route: /^markups$/, window: () => "/api/inbox/markups", raw: { max: INBOX_MARKUP_MAX_BYTES, code: "markup_too_large", what: "a drawing" } },
+  { method: "POST", route: /^markups$/, window: () => "/api/inbox/markups", raw: { max: INBOX_DEVICE_MARKUP_MAX_BYTES, code: "markup_too_large", what: "a drawing" } },
 ];
 
 /** Where a pairing attempt reached the door: the Wi-Fi's listener, the tailnet's, or this computer's own port (the simulator). */

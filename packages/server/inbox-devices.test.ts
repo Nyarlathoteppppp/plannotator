@@ -1177,7 +1177,7 @@ describe("the door's parity routes, in process (7.39 to 7.49)", () => {
     expect((await door("markups?idempotency_key=mk-2", { raw: "<svg/>" })).status).toBe(422);
   });
 
-  test("a raw body past its bound is refused promptly and never buffered whole: a chunked drawing past 32 MB, an upload declaring more than 100 MB; neither is recorded under its key", async () => {
+  test("a raw body past its bound is refused promptly and never buffered whole: a chunked drawing past the door's 32 MB, an upload declaring more than 100 MB; neither is recorded under its key; the window's drawing route keeps the 128 MiB request bound", async () => {
     const { base, token, door } = await world();
     // A chunked body (no Content-Length) of 1 MiB chunks, up to 400 MiB, made only as the server reads it.
     const chunk = new Uint8Array(1024 * 1024);
@@ -1200,45 +1200,56 @@ describe("the door's parity routes, in process (7.39 to 7.49)", () => {
     // Not recorded: the same key with a drawing that fits is applied, not answered 413 again.
     const fits = await door("markups?idempotency_key=big-1", { raw: ONE_PIXEL_PNG, headers: { "Content-Type": "image/png" }, fresh: true });
     expect([fits.status, fits.headers.get("idempotent-replayed")]).toEqual([200, null]);
-    // The window's own markup route has the same bound (it buffers the image whole).
-    const windowBig = await fetch(`${base}/api/inbox/markups`, { method: "POST", body: new Uint8Array(33 * 1024 * 1024), keepalive: false });
-    expect([windowBig.status, ((await windowBig.json()) as Json).code]).toEqual([413, "markup_too_large"]);
+    // The window's own markup route keeps its ceiling (the request bound, 128 MiB): a 40 MB full-size drawing is kept.
+    const fullSize = new Uint8Array(40 * 1024 * 1024);
+    fullSize.set(ONE_PIXEL_PNG);
+    const windowBig = await fetch(`${base}/api/inbox/markups`, { method: "POST", body: fullSize, keepalive: false });
+    expect(windowBig.status).toBe(200);
+    expect(((await windowBig.json()) as Json).name).toBe(`${createHash("sha256").update(fullSize).digest("hex")}.png`);
+    // The same 40 MB through the door is past the phone's 32 MB.
+    const doorBig = await door("markups?idempotency_key=big-3", { raw: fullSize, headers: { "Content-Type": "image/png" }, fresh: true });
+    expect([doorBig.status, ((await doorBig.json()) as Json).code]).toEqual([413, "markup_too_large"]);
 
     // An upload that declares 110 MB (past the 100 MB bound, under Bun's 128 MiB request bound): refused from its headers.
     const port = Number(new URL(base).port);
-    const answer = await new Promise<string>((resolve, reject) => {
-      const socket = createConnection({ host: "127.0.0.1", port });
-      let data = "";
-      const done = () => resolve(data);
-      const timer = setTimeout(() => {
-        socket.destroy();
-        done();
-      }, 5_000);
-      socket.on("data", (d) => {
-        data += d.toString("latin1");
-        // The whole answer is here (headers and the Content-Length body): stop sending. Bun reads and drops the rest of a body
-        // the handler stopped reading, so it does not close the socket itself.
-        const head = data.indexOf("\r\n\r\n");
-        const length = /content-length: (\d+)/i.exec(data);
-        if (head >= 0 && length && data.length - head - 4 >= Number(length[1])) {
-          clearTimeout(timer);
+    /** A POST that declares `length` bytes and sends 64 KiB of them, over a raw socket: the answer, as text. */
+    const declare = (path: string, length: number, headers: string) =>
+      new Promise<string>((resolve, reject) => {
+        const socket = createConnection({ host: "127.0.0.1", port });
+        let data = "";
+        const done = () => resolve(data);
+        const timer = setTimeout(() => {
           socket.destroy();
           done();
-        }
+        }, 5_000);
+        socket.on("data", (d) => {
+          data += d.toString("latin1");
+          // The whole answer is here (headers and the Content-Length body): stop sending. Bun reads and drops the rest of a body
+          // the handler stopped reading, so it does not close the socket itself.
+          const head = data.indexOf("\r\n\r\n");
+          const answered = /content-length: (\d+)/i.exec(data);
+          if (head >= 0 && (answered ? data.length - head - 4 >= Number(answered[1]) : true)) {
+            clearTimeout(timer);
+            socket.destroy();
+            done();
+          }
+        });
+        socket.on("close", () => {
+          clearTimeout(timer);
+          done();
+        });
+        socket.on("error", reject);
+        socket.write(`POST ${path} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n${headers}Content-Length: ${length}\r\n\r\n`);
+        socket.write(Buffer.alloc(64 * 1024));
       });
-      socket.on("close", () => {
-        clearTimeout(timer);
-        done();
-      });
-      socket.on("error", reject);
-      socket.write(
-        `POST /api/inbox/device/uploads?name=big.bin&idempotency_key=big-2 HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nAuthorization: Bearer ${token}\r\nContent-Type: application/octet-stream\r\nContent-Length: ${110 * 1024 * 1024}\r\n\r\n`,
-      );
-      socket.write(Buffer.alloc(64 * 1024));
-    });
+    // An upload that declares 110 MB (past the 100 MB bound, under the 128 MiB request bound): refused by the door from its headers.
+    const answer = await declare("/api/inbox/device/uploads?name=big.bin&idempotency_key=big-2", 110 * 1024 * 1024, `Authorization: Bearer ${token}\r\nContent-Type: application/octet-stream\r\n`);
     expect(answer).toMatch(/^HTTP\/1\.1 413/);
     expect(answer).toContain('"code":"upload_too_large"');
     expect(answer.toLowerCase()).toContain("connection: close");
+    // The window's drawing route: past the request bound (128 MiB) it is refused too.
+    const windowOver = await declare("/api/inbox/markups", 129 * 1024 * 1024, "Content-Type: image/png\r\n");
+    expect(windowOver).toMatch(/^HTTP\/1\.1 413/);
   });
 
   test("a raw upload over the tailnet's door listener, replayed by its key through the window port's door", async () => {

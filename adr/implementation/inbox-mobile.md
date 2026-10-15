@@ -1140,7 +1140,7 @@ curl -sS -X POST "$INBOX/api/inbox/device/uploads?name=notes.txt&idempotency_key
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: text/plain' --data-binary @notes.txt
 ```
 
-`{ "upload": { "upload_id": "upl_01K70000000000000000000048", "name": "notes.txt", "size": 19, "kind": "text", "sha256": "aaaa…", "created_at": "2026-10-15T11:00:00.000Z" } }`. The same key again: the same `upl_` id, `Idempotent-Replayed: true`, and the bytes sent are read and dropped. No key: `422 { "field": "idempotency_key" }`. `.env`: `422 upload_refused`. Over 100 MB, declared or counted as it streams: `413 upload_too_large` with `Connection: close`, nothing recorded under the key. An upload no message names is forgotten after a day. Through the relay: `413 relay_upload_unavailable`.
+`{ "upload": { "upload_id": "upl_01K70000000000000000000048", "name": "notes.txt", "size": 19, "kind": "text", "sha256": "aaaa…", "created_at": "2026-10-15T11:00:00.000Z" } }`. The same key again: the same `upl_` id and `Idempotent-Replayed: true`; of the bytes sent again the door reads and drops at most 1 MiB or 2 s, then answers with `Connection: close`. No key: `422 { "field": "idempotency_key" }`. `.env`: `422 upload_refused`. Over 100 MB, declared or counted as it streams: `413 upload_too_large` with `Connection: close`, nothing recorded under the key. An upload no message names is forgotten after a day. Through the relay: `413 relay_upload_unavailable`.
 
 ### 7.49 Upload a drawing
 
