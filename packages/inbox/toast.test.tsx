@@ -61,7 +61,7 @@ let root: Root | null = null;
 let host: HTMLElement | null = null;
 
 afterEach(() => {
-  delete (document.documentElement as { clientWidth?: number }).clientWidth;
+  if (hasDom) delete (document.documentElement as { clientWidth?: number }).clientWidth;
   act(() => root?.unmount());
   host?.remove();
   root = null;
