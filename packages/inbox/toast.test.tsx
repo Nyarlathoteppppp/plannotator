@@ -178,6 +178,65 @@ test.skipIf(!hasDom)('a file beside the thread: still the window\'s center, abov
   expect(toast.classList.contains('ib-toast-file')).toBe(false);
 });
 
+/** An image's comment row inside a file view, from `top` to the given bottom. */
+function commentRow(view: HTMLElement, top: number, bottom: number): HTMLElement {
+  const row = document.createElement('div');
+  row.setAttribute('data-image-composer', '');
+  boxAt(row, 620, top, 780, bottom - top);
+  view.appendChild(row);
+  return row;
+}
+
+test.skipIf(!hasDom)('a file beside the thread with an image\'s comment row: above the row, and it rises as the row grows', async () => {
+  const win = windowWith(true);
+  const view = document.createElement('section');
+  view.className = 'ib-view';
+  boxAt(view, 620, 0, 780, 900);
+  const foot = document.createElement('div');
+  foot.setAttribute('data-view-foot', '');
+  boxAt(foot, 620, 841, 780, 59);
+  view.appendChild(foot);
+  // Two images: the comment row (776..841) sits on the stepping strip, above the thread's foot (820).
+  const row = commentRow(view, 776, 841);
+  win.querySelector('main')!.appendChild(view);
+  const toast = show({ icon: 'check', lead: 'Archived', onUndo: () => {} }, false, win);
+  expect(toast.style.left).toBe('700px');
+  expect(toast.style.bottom).toBe(`${900 - 776 + TOAST_FOOT_GAP}px`);
+
+  // The person types a few lines: the row grows upward (top 715) and the toast follows.
+  boxAt(row, 620, 715, 780, 126);
+  act(() => row.setAttribute('class', 'grown'));
+  await nextFrame();
+  expect(toast.style.bottom).toBe(`${900 - 715 + TOAST_FOOT_GAP}px`);
+
+  // One image, no strip: the row alone is the file's foot.
+  foot.remove();
+  boxAt(row, 620, 820, 780, 80);
+  await nextFrame();
+  expect(toast.style.bottom).toBe(`${80 + TOAST_LIST_GAP}px`);
+});
+
+test.skipIf(!hasDom)('a full-screen file with its strip and an image\'s comment row: above the row, not on it', async () => {
+  const win = windowWith(true);
+  const view = document.createElement('section');
+  view.className = 'ib-view ib-full';
+  boxAt(view, 0, 0, 1400, 900);
+  const foot = document.createElement('div');
+  foot.setAttribute('data-view-foot', '');
+  boxAt(foot, 0, 841, 1400, 59);
+  view.appendChild(foot);
+  const row = commentRow(view, 776, 841);
+  win.querySelector('main')!.appendChild(view);
+  const toast = show({ icon: 'check', lead: 'Archived', onUndo: () => {} }, false, win);
+  expect(toast.style.left).toBe('700px');
+  expect(toast.style.bottom).toBe(`${900 - 776 + TOAST_FOOT_GAP}px`);
+  expect(toast.classList.contains('ib-toast-file')).toBe(true);
+  boxAt(row, 0, 700, 1400, 141);
+  act(() => row.setAttribute('class', 'grown'));
+  await nextFrame();
+  expect(toast.style.bottom).toBe(`${900 - 700 + TOAST_FOOT_GAP}px`);
+});
+
 test.skipIf(!hasDom)('with no thread open it sits centered on the window, near the list\'s bottom; it rises above a thread that opens', async () => {
   const win = windowWith(false);
   const toast = show({ icon: 'check', lead: 'Moved to Quiet', detail: '“Invoice list layout”', onUndo: () => {} }, false, win);

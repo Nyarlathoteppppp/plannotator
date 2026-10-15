@@ -164,12 +164,19 @@ function placeOver(host: HTMLElement, threadRouted: boolean): Placement {
   }
   const view = host.querySelector('.ib-view');
   const viewBox = shown(view);
-  // The file's foot: its strip, or in full view (no strip) an image's or a film's comment row (`--ib-fvfoot`, AttachmentPane).
+  // The file's foot: whichever is higher of its stepping strip and an image's or a film's comment row
+  // ([data-image-composer], which grows as the person types), else full view's `--ib-fvfoot` (AttachmentPane).
   const fileFoot = (view: Element, viewBox: DOMRect) => {
     const foot = view.querySelector('[data-view-foot]');
     const footBox = shown(foot);
-    const fvfoot = footBox ? 0 : parseFloat(getComputedStyle(view).getPropertyValue('--ib-fvfoot')) || 0;
-    return { top: footBox?.top ?? viewBox.bottom - fvfoot, gap: footBox ? TOAST_FOOT_GAP : TOAST_LIST_GAP, watch: footBox ? [view, foot!] : [view] };
+    const row = view.querySelector('[data-image-composer]');
+    const rowBox = shown(row);
+    const watch = [view, ...(footBox ? [foot!] : []), ...(rowBox ? [row!] : [])];
+    const gap = footBox ? TOAST_FOOT_GAP : TOAST_LIST_GAP;
+    if (rowBox && (!footBox || rowBox.top < footBox.top)) return { top: rowBox.top, gap, watch };
+    if (footBox) return { top: footBox.top, gap, watch };
+    const fvfoot = parseFloat(getComputedStyle(view).getPropertyValue('--ib-fvfoot')) || 0;
+    return { top: viewBox.bottom - fvfoot, gap, watch };
   };
   if (view && viewBox && (view.classList.contains('ib-full') || !pane)) {
     const file = fileFoot(view, viewBox);
