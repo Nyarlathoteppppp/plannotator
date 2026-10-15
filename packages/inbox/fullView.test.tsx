@@ -23,6 +23,7 @@ import { attachmentSequence, type AttachmentStep } from './stepping';
 const hasDom = typeof document !== 'undefined';
 const { AttachmentPane } = (hasDom ? await import('./components/AttachmentPane') : {}) as typeof import('./components/AttachmentPane');
 const { getShortcutPlatform } = (hasDom ? await import('@plannotator/ui/shortcuts') : {}) as typeof import('@plannotator/ui/shortcuts');
+const { resetFullViewEyeLabelForTests } = (hasDom ? await import('./components/FullViewBar') : {}) as typeof import('./components/FullViewBar');
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
@@ -34,6 +35,8 @@ afterEach(() => {
   root = null;
   host = null;
   globalThis.fetch = realFetch;
+  if (hasDom) resetFullViewEyeLabelForTests();
+  for (const stray of document.querySelectorAll('[data-test-stray]')) stray.remove();
 });
 
 const M1 = 'msg_01K7M1MMMMMMMMMMMMMMMMMMMM';
@@ -93,18 +96,19 @@ function stubViews() {
 }
 
 interface Harness {
+  versions: string[];
   back: number;
   reply: number;
   fullView: boolean[];
 }
 
 /** The pane as the thread drives it: `full` and `fullView` live in the thread, a step opens the next file in place. */
-function Pane({ start, harness, startFull = true, startFullView = false, phone = false, records = [RECORD] }: { start: InboxAttachmentState; harness: Harness; startFull?: boolean; startFullView?: boolean; phone?: boolean; records?: InboxAnnotationRecord[] }) {
+function Pane({ start, harness, startFull = true, startFullView = false, phone = false, records = [RECORD], steps = STEPS, version = 'current' }: { start: InboxAttachmentState; harness: Harness; startFull?: boolean; startFullView?: boolean; phone?: boolean; records?: InboxAnnotationRecord[]; steps?: AttachmentStep[]; version?: 'current' | 'sent' }) {
   const [open, setOpen] = useState(start);
   const [full, setFull] = useState(startFull);
   const [fullView, setFullView] = useState(startFullView);
   const noop = () => {};
-  const all = STEPS.map((s) => s.attachment);
+  const all = steps.map((s) => s.attachment);
   return (
     <AttachmentPane
       attachment={open}
@@ -113,8 +117,8 @@ function Pane({ start, harness, startFull = true, startFullView = false, phone =
       agent="Claude Code"
       projectName="shop"
       projectRoot="/work/shop"
-      version="current"
-      onVersion={noop}
+      version={version}
+      onVersion={(v) => harness.versions.push(v)}
       full={full || phone}
       fullLocked={phone}
       onToggleFull={() => setFull((v) => !v)}
@@ -131,7 +135,7 @@ function Pane({ start, harness, startFull = true, startFullView = false, phone =
       onOpenAt={noop}
       onClose={noop}
       strip={{ picks: 0, annotations: records.length, onBack: () => harness.back++, onWriteReply: () => harness.reply++ }}
-      steps={STEPS}
+      steps={steps}
       phone={phone}
       onStep={(id) => setOpen(all.find((a) => a.id === id)!)}
     />
@@ -163,7 +167,7 @@ async function key(target: EventTarget, init: KeyboardEventInit): Promise<Keyboa
   return event;
 }
 
-const harnessOf = (): Harness => ({ back: 0, reply: 0, fullView: [] });
+const harnessOf = (): Harness => ({ versions: [], back: 0, reply: 0, fullView: [] });
 const pane = () => host!.querySelector<HTMLElement>('[data-attachment-pane]')!;
 const bar = () => host!.querySelector<HTMLElement>('[data-full-view-bar]');
 const headerEye = () => host!.querySelector<HTMLButtonElement>('.ib-vhead [data-html-tools-toggle]');
@@ -349,4 +353,103 @@ test.skipIf(!hasDom)('a phone: the eye is in the header; the bar holds pen, coun
   await click(pos);
   // The peek is the phone's bottom sheet, drawn in the Inbox's root.
   expect(document.querySelector('.pn-inbox-peek [role="grid"]')).not.toBeNull();
+});
+
+test.skipIf(!hasDom)('full view keeps the changed line as a chip at the top left, with the same action; the sent version and a file that is gone say so', async () => {
+  stubViews();
+  // Its own id: the stubbed view route answers the unchanged notes.md, whose record would win.
+  const changed = { ...notes, id: 'att_01K7ZZZZZZZZZZZZZZZZZZZZZZ', changed_since_sent: true };
+  const harness = harnessOf();
+  await render(<Pane start={changed} harness={harness} startFullView steps={attachmentSequence([message(M1, '2026-10-10T10:42:00.000Z')], [changed])} />);
+  const chip = () => host!.querySelector<HTMLElement>('[data-full-view-changed]');
+  expect(chip()!.querySelector('.ib-fvver-t')!.textContent).toBe('Changed since sent');
+  expect(chip()!.querySelector('button')!.textContent).toBe('Open the version it sent');
+  expect(chip()!.getAttribute('title')).toMatch(/^Changed since Claude Code sent it at /);
+  await click(chip()!.querySelector('button'));
+  expect(harness.versions).toEqual(['sent']);
+
+  act(() => root?.unmount());
+  host?.remove();
+  const sent = harnessOf();
+  await render(<Pane start={changed} harness={sent} startFullView version="sent" />);
+  expect(chip()!.querySelector('.ib-fvver-t')!.textContent).toBe('Showing the sent version');
+  await click(chip()!.querySelector('button'));
+  expect(sent.versions).toEqual(['current']);
+
+  act(() => root?.unmount());
+  host?.remove();
+  const gone = { ...notes, current: null, unavailable: { code: 'attachment_missing' as const, message: 'The file is no longer there.' } };
+  await render(<Pane start={gone} harness={harnessOf()} startFullView />);
+  expect(chip()!.querySelector('.ib-fvver-t')!.textContent).toBe('The file is gone; showing the sent copy');
+  expect(chip()!.querySelector('button')).toBeNull();
+  // The chip is not there with the tools showing (the changed line is).
+  act(() => root?.unmount());
+  host?.remove();
+  await render(<Pane start={changed} harness={harnessOf()} />);
+  expect(chip()).toBeNull();
+  expect(host!.querySelector('[data-changed-line]')).not.toBeNull();
+});
+
+test.skipIf(!hasDom)('a file that OPENS in full view says once how the tools come back, and the eye says "Show tools" on its first appearance in the session only', async () => {
+  stubViews();
+  await render(<Pane start={page} harness={harnessOf()} startFullView />);
+  await settle();
+  expect(host!.querySelector('[data-step-live]')!.textContent).toMatch(/^Tools hidden\. Press the eye or .+X to show them\.$/);
+  expect(host!.querySelector('[data-full-view-eye-label]')!.textContent).toBe('Show tools');
+  // Not again in this session.
+  act(() => root?.unmount());
+  host?.remove();
+  await render(<Pane start={notes} harness={harnessOf()} startFullView />);
+  await settle();
+  expect(host!.querySelector('[data-step-live]')!.textContent).toBe('Tools hidden. Press the eye to show them.');
+  expect(host!.querySelector('[data-full-view-eye-label]')).toBeNull();
+});
+
+test.skipIf(!hasDom)('the eye label fades after its moment', async () => {
+  stubViews();
+  const { EYE_LABEL_MS } = await import('./components/FullViewBar');
+  await render(<Pane start={notes} harness={harnessOf()} startFullView />);
+  expect(host!.querySelector('[data-full-view-eye-label]')).not.toBeNull();
+  await settle(EYE_LABEL_MS + 600);
+  expect(host!.querySelector('[data-full-view-eye-label]')).toBeNull();
+});
+
+test.skipIf(!hasDom)('a one-file thread: the chip names the file once as full view starts', async () => {
+  stubViews();
+  await render(<Pane start={page} harness={harnessOf()} startFullView steps={attachmentSequence([message(M1, '2026-10-10T10:42:00.000Z')], [page])} />);
+  const chip = host!.querySelector<HTMLElement>('[data-full-view-chip]')!;
+  expect(chip.getAttribute('data-full-view-chip')).toBe('shown');
+  expect(chip.textContent).toBe('turnkey.html');
+  expect(host!.querySelector('[data-full-view-position]')).toBeNull();
+});
+
+test.skipIf(!hasDom)('⌘⇧X typed in a text field (the reply box) is not the eye', async () => {
+  stubViews();
+  const harness = harnessOf();
+  await render(<Pane start={page} harness={harness} />);
+  const field = document.createElement('textarea');
+  field.setAttribute('data-test-stray', '');
+  document.body.appendChild(field);
+  field.focus();
+  await key(field, chord());
+  expect(harness.fullView).toEqual([]);
+  expect(bar()).toBeNull();
+});
+
+test.skipIf(!hasDom)('a press outside closes the peek from the bar without pulling focus back to N/M', async () => {
+  stubViews();
+  await render(<Pane start={notes} harness={harnessOf()} startFullView />);
+  const pos = host!.querySelector<HTMLButtonElement>('[data-full-view-position]')!;
+  await click(pos);
+  expect(pos.getAttribute('aria-expanded')).toBe('true');
+  const outside = document.createElement('button');
+  outside.setAttribute('data-test-stray', '');
+  document.body.appendChild(outside);
+  await act(async () => {
+    outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    outside.focus();
+  });
+  await settle();
+  expect(pos.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(outside);
 });

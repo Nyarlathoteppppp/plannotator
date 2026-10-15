@@ -162,6 +162,8 @@ async function close() {
 }
 
 test.skipIf(!hasDom)('an HTML file opens straight into full view by default; the eye shows the tools and writes the cookie plan review reads', async () => {
+  // Plan review's own halves of the record (its sidebar and its annotations drawer) are left as they were.
+  saveHtmlChromeState({ sidebarOpen: true, panelOpen: true, toolsHidden: true });
   const el = await renderThread();
   await openTile('page.html');
   await until(inFullView, 'full view');
@@ -172,7 +174,7 @@ test.skipIf(!hasDom)('an HTML file opens straight into full view by default; the
   await act(async () => el.querySelector<HTMLButtonElement>('[data-full-view-eye]')!.click());
   await until(() => !inFullView(), 'the tools back');
   expect(view()!.classList.contains('ib-full')).toBe(true);
-  expect(getHtmlChromeState().toolsHidden).toBe(false);
+  expect(getHtmlChromeState()).toEqual({ sidebarOpen: true, panelOpen: true, toolsHidden: false });
 
   // Remembered: the next HTML file opens full screen with the tools.
   await close();

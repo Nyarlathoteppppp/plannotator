@@ -168,6 +168,10 @@ test('an HTML file opens full screen straight into full view: the page fills the
   await expect(bar().locator('[data-full-view-pen]')).toHaveAttribute('aria-pressed', 'true');
   await expect(bar().locator('[data-full-view-comments]')).toHaveAccessibleName('Comments, 0');
   await expect(bar().locator('[data-full-view-position]')).toHaveText('1/3');
+  // The first full view of the session: the eye says what it does, and the live region says how the tools come back.
+  await expect(bar().locator('[data-full-view-eye-label]')).toHaveText('Show tools');
+  await expect(page.locator('[data-step-live]')).toHaveText(/^Tools hidden\. Press the eye or .+X to show them\.$/);
+  await expect(pane().locator('[data-full-view-changed]')).toHaveCount(0);
   await shot(page, 'html-full-view');
 });
 
@@ -283,6 +287,27 @@ test('the eye is the choice plan review shares: shown is remembered across a rel
   const again = (await world.context.cookies(world.url)).find((c) => c.name === 'plannotator-html-chrome');
   expect(JSON.parse(decodeURIComponent(again!.value)).toolsHidden).toBe(true);
   expect(world.errors).toEqual([]);
+});
+
+test('a file that changed since it was sent says so in full view: the chip at the top left opens the version it sent', async () => {
+  const page = world.page;
+  writeFileSync(join(world.project, 'docs', 'rollout.md'), PLAN.replace('Ship the step log', 'Hold the step log'));
+  await page.goto(`${world.url}#thread=${world.threadId}`);
+  await page.reload();
+  await page.getByRole('button', { name: 'Open turnkey.html' }).click();
+  await expect(pane()).toHaveAttribute('data-full-view', '');
+  await bar().locator('[data-full-view-eye]').focus();
+  await page.keyboard.press(']');
+  await expect(pane()).toHaveAttribute('data-attachment-pane', world.ids['rollout.md']!);
+  const changed = pane().locator('[data-full-view-changed]');
+  await expect(changed.locator('.ib-fvver-t')).toHaveText('Changed since sent');
+  await expect(pane().locator('.ib-docscroll')).toContainText('Hold the step log');
+  await page.waitForTimeout(1800);
+  await shot(page, 'markdown-changed-full-view', ['dark']);
+  await changed.getByRole('button', { name: 'Open the version it sent' }).click();
+  await expect(changed.locator('.ib-fvver-t')).toHaveText('Showing the sent version');
+  await expect(pane().locator('.ib-docscroll')).toContainText('Ship the step log');
+  await expect(pane()).toHaveAttribute('data-full-view', '');
 });
 
 test('on an iPhone (WebKit): full view with the bar bottom right, 44 px targets; the count opens the sheet with the position', async () => {

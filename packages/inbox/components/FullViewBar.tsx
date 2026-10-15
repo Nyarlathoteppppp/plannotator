@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Tooltip } from '@plannotator/ui/components/Tooltip';
 import { formatShortcutBindingText, formatShortcutBindingTokens } from '@plannotator/ui/shortcuts';
 import { Icon } from '../icons';
@@ -34,8 +34,8 @@ export interface FullViewBarProps {
     open: boolean;
     peekId: string;
     onOpenChange: (open: boolean) => void;
-    /** The peek, drawn under the bar while open. */
-    peek: ReactNode;
+    /** The peek, drawn under the bar while open; it closes through `close` with its reason. */
+    renderPeek: (close: (reason: 'key' | 'outside') => void) => ReactNode;
   } | null;
   /** The eye's chord (`Mod+Shift+X`, HTML only), shown in its tooltip. */
   chord: string | null;
@@ -43,6 +43,15 @@ export interface FullViewBarProps {
   eyeRef: RefObject<HTMLButtonElement | null>;
   /** The Comments sheet is open over the file's right edge (desktop): the bar steps left of it. */
   shifted: boolean;
+}
+
+/** How long the eye's "Show tools" label stays on its first appearance (then it fades). */
+export const EYE_LABEL_MS = 4000;
+/** The label shows once per page session, on the first full view. */
+let eyeLabelSeen = false;
+/** Tests: show the eye's label again. */
+export function resetFullViewEyeLabelForTests() {
+  eyeLabelSeen = false;
 }
 
 function Keys({ binding }: { binding: string }) {
@@ -92,6 +101,24 @@ export function FullViewBar(props: FullViewBarProps) {
   }, [peekOpen]);
 
   const eyeText = 'Show tools';
+  // A first-time reader finds the way back: the eye says "Show tools" the first time the bar appears in this page session.
+  const [eyeLabel, setEyeLabel] = useState<'on' | 'fading' | null>(() => (eyeLabelSeen ? null : 'on'));
+  useEffect(() => {
+    if (eyeLabel === null) return;
+    eyeLabelSeen = true;
+    const fade = setTimeout(() => setEyeLabel('fading'), EYE_LABEL_MS);
+    const gone = setTimeout(() => setEyeLabel(null), EYE_LABEL_MS + 450);
+    return () => {
+      clearTimeout(fade);
+      clearTimeout(gone);
+    };
+    // Once per mount: the timers run from the first appearance.
+  }, []);
+  const closePeek = (reason: 'key' | 'outside') => {
+    // A press elsewhere on a desktop leaves focus where it went; Esc, Tab or a choice put it back on N/M.
+    if (reason === 'outside' && !phone) refocus.current = false;
+    position?.onOpenChange(false);
+  };
   return (
     <div
       className={`ib-fvbar${phone ? ' ib-fvbar-phone' : ''}${props.shifted ? ' ib-shift' : ''}`}
@@ -165,7 +192,7 @@ export function FullViewBar(props: FullViewBarProps) {
           </button>
           {position.open && (
             <div className="ib-fvpeek" data-step-list="">
-              {position.peek}
+              {position.renderPeek(closePeek)}
             </div>
           )}
         </span>
@@ -183,6 +210,11 @@ export function FullViewBar(props: FullViewBarProps) {
           data-full-view-eye=""
         >
           <Icon name="eyeOff" size={phone ? 19 : 16} />
+          {eyeLabel && (
+            <span className={`ib-fveye-label${eyeLabel === 'fading' ? ' ib-gone' : ''}`} aria-hidden="true" data-full-view-eye-label="">
+              {eyeText}
+            </span>
+          )}
         </button>
       </Tip>
     </div>

@@ -44,7 +44,7 @@ import { ImageAttachmentView } from './ImageAttachmentView';
 import { VideoAttachmentView, type VideoAttachmentViewHandle } from './VideoAttachmentView';
 import { OpenInControl, type OpenInSurface } from './OpenIn';
 import { AttachmentStepper, type StepSource } from './AttachmentStepper';
-import { FIRST_NOTE, LAST_NOTE, stepAnnouncement, stepKeyIntent, type AttachmentStep } from '../stepping';
+import { FIRST_NOTE, LAST_NOTE, isEditableTarget, stepAnnouncement, stepKeyIntent, type AttachmentStep } from '../stepping';
 import { Icon } from '../icons';
 import { FileName } from './FileName';
 import { useNarrowerThan } from '../narrower';
@@ -403,13 +403,25 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
   };
   const toggleFullViewRef = useRef(toggleFullView);
   toggleFullViewRef.current = toggleFullView;
+  const wasFullView = useRef(false);
   useEffect(() => {
-    if (!toggledFullView.current) return;
+    const was = wasFullView.current;
+    wasFullView.current = fullView;
+    const toggled = toggledFullView.current;
     toggledFullView.current = false;
+    if (fullView === was) return;
+    const chord = kind === 'html' ? formatShortcutBindingText(TOOLS_CHORD) : null;
     if (fullView) {
-      eyeRef.current?.focus({ preventScroll: true });
-      announce(kind === 'html' ? `Tools hidden. Press ${formatShortcutBindingText(TOOLS_CHORD)} or the eye to bring them back.` : 'Tools hidden. Press the eye to bring them back.');
-    } else {
+      if (toggled) {
+        eyeRef.current?.focus({ preventScroll: true });
+        announce(chord ? `Tools hidden. Press ${chord} or the eye to bring them back.` : 'Tools hidden. Press the eye to bring them back.');
+      } else {
+        // The file OPENED in full view (an HTML file, the shared hidden-tools choice): say once how the tools come back.
+        announce(chord ? `Tools hidden. Press the eye or ${chord} to show them.` : 'Tools hidden. Press the eye to show them.');
+      }
+      // A one-file thread has no step to name the file: the chip names it once as full view starts.
+      if (stepsRef.current.length < 2) showChipRef.current(null);
+    } else if (toggled) {
       sectionRef.current?.querySelector<HTMLElement>('.ib-vhead [data-html-tools-toggle]')?.focus({ preventScroll: true });
       announce('Tools shown.');
     }
@@ -566,7 +578,8 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
   useHtmlAnnotateShortcuts({
     handlers: {
       toggleTools: {
-        when: () => isHtml && props.onFullView !== undefined && !document.querySelector('dialog[open]'),
+        // Never while typing (the reply box beside the file, a comment), nor under a modal dialog.
+        when: (event) => isHtml && props.onFullView !== undefined && !document.querySelector('dialog[open]') && !isEditableTarget(event.composedPath()[0] ?? event.target),
         handle: () => toggleFullViewRef.current(),
       },
     },
@@ -724,6 +737,31 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
       </>
     );
   }
+  /**
+   * The changed line, compact, for full view (which drops the line): the same
+   * facts and actions as a persistent chip at the file's top left, so a file
+   * that opens in full view still says it changed, or which version is shown.
+   */
+  let versionChip: { text: string; action: { label: string; to: 'current' | 'sent' } | null; full: string } | null = null;
+  if (currentUnavailable) {
+    versionChip = {
+      text: attachment.unavailable!.code === 'attachment_missing' ? 'The file is gone; showing the sent copy' : 'The file is not that kind any more; showing the sent copy',
+      action: null,
+      full: `${attachment.unavailable!.message} ${onOpen ? `This is the copy taken when you first opened it, ${firstOpened}.` : `This is the version ${sender} sent at ${sentAt}.`}`,
+    };
+  } else if (effectiveVersion === 'sent') {
+    versionChip = {
+      text: onOpen ? 'Showing the copy from when you first opened it' : 'Showing the sent version',
+      action: { label: 'Open the file as it is now', to: 'current' },
+      full: onOpen ? `The copy taken when you first opened it, ${firstOpened}.` : `The version ${sender} sent at ${sentAt}.`,
+    };
+  } else if ((view?.attachment ?? attachment).changed_since_sent) {
+    versionChip = {
+      text: onOpen ? 'Changed since you first opened it' : 'Changed since sent',
+      action: { label: onOpen ? 'Open the version you first saw' : props.fromPerson ? 'Open the version you sent' : 'Open the version it sent', to: 'sent' },
+      full: onOpen ? 'Changed since you first opened it.' : `Changed since ${sender} sent it at ${sentAt}.`,
+    };
+  }
 
   const annotationCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -780,14 +818,14 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
                     if (open) setSheet(false);
                     setMenuOpen(open);
                   },
-                  peek: (
+                  renderPeek: (closePeek) => (
                     <FilePeek
                       id={fullViewPeekId}
                       steps={steps}
                       index={index}
                       phone={false}
                       annotationCounts={annotationCounts}
-                      onClose={() => setMenuOpen(false)}
+                      onClose={closePeek}
                       onGo={(target) => goTo(target, 'menu')}
                     />
                   ),
@@ -881,7 +919,19 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
         )}
       </div>
       )}
-      {fullView ? null : line ? (
+      {fullView ? (
+        versionChip && (
+          <div className="ib-fvver" role="status" title={versionChip.full} data-full-view-changed="">
+            <Icon name="info" size={13} />
+            <span className="ib-fvver-t">{versionChip.text}</span>
+            {versionChip.action && (
+              <button type="button" className="ib-vlink" onClick={() => chooseVersion(versionChip!.action!.to)}>
+                {versionChip.action.label}
+              </button>
+            )}
+          </div>
+        )
+      ) : line ? (
         <div className="ib-changed" data-changed-line="">
           <Icon name="info" size={14} />
           {line}
@@ -1268,17 +1318,19 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
       ) : fullView ? null : (
         <div />
       )}
-      {fullView && multi && (
-        // The step chip (full view only): names the new file for a moment, the end note at the ends. The live region says it.
+      {fullView && (
+        // The step chip (full view only): names the new file for a moment, the end note at the ends (a one-file thread: its name once, as full view starts). The live region says it.
         <div className={`ib-fvchip${chip ? ' ib-on' : ''}`} aria-hidden="true" data-full-view-chip={chip ? 'shown' : 'hidden'}>
-          <span className="ib-stepn">
-            {index + 1} of {steps.length}
-          </span>
+          {multi && (
+            <span className="ib-stepn">
+              {index + 1} of {steps.length}
+            </span>
+          )}
           <b className="ib-fvchip-nm">
             <FileName name={attachment.name} />
           </b>
           {chip?.note && <span className="ib-fvchip-note">{chip.note}</span>}
-          {!phone && (
+          {multi && !phone && (
             <span className="ib-fvchip-keys">
               <kbd>[</kbd>
               <kbd>]</kbd>
