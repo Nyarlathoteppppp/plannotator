@@ -318,6 +318,10 @@ test('two Inbox tabs ring once between them; any tab in front keeps both quiet',
   await settled(page, more.thread_id);
   await page.waitForTimeout(800);
   expect((await rings(page)) + (await rings(second))).toBe(quiet);
+  // It goes to the back before it closes, as a tab does when the person moves on: a tab still
+  // "in front" (the page's last word, if its goodbye is lost in a headless close) keeps the other
+  // tab's notifications for itself for up to 15 s.
+  await setFront(second, false, false);
   await second.close();
 });
 

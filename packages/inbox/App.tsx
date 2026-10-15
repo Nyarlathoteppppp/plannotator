@@ -434,8 +434,10 @@ function Inbox() {
     settings: settings?.notifications ?? null,
     // New questions ring the doorbell on their own rules (sound.ts), whatever notifications say.
     onQuestions: sound.questionsArrived,
-    // Silent only when the bell can ring: on, and armed by a click in this tab.
-    silent: () => sound.settings.enabled && sound.armed,
+    // The bell owns a question's sound when it is on and armed and no other Inbox tab is in front (notify.ts adds: this tab away).
+    bellCovers: () => sound.settings.enabled && sound.armed && !sound.otherTabInFront(),
+    // Another Inbox tab in front raises what arrives; this one stays quiet.
+    otherTabInFront: () => sound.otherTabInFront(),
     // A question in the thread the person has open and visible raises nothing (the tab in front is notify.ts's check).
     threadOnScreen: (threadId) => {
       const pane = threadOnScreenRef.current;

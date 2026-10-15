@@ -66,6 +66,7 @@ function fakeSound(over: Partial<InboxSound> = {}) {
     playing: false,
     preview: (volume) => void seen.push(`preview:${volume ?? 'saved'}`),
     questionsArrived: () => {},
+    otherTabInFront: () => false,
     setEnabled: async (next) => (seen.push(`enabled:${next}`), true),
     setVolume: async (next) => (seen.push(`volume:${next}`), true),
     ...over,
