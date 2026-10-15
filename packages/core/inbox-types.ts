@@ -347,8 +347,10 @@ export const INBOX_ACK_LABEL = "Looks good";
 export interface InboxAck {
   label: string;
   at: string;
-  /** The Mark read this ack made (the root's `person_read_seq`), for its Undo; null when the thread was already read. */
+  /** The Mark read this ack stands on (the root's `person_read_seq`): Move back on that read withdraws the ack. */
   read_seq: number | null;
+  /** This ack made that Mark read (the thread was not read before), so its Undo undoes the read too. */
+  made_read?: boolean;
   /**
    * Set once the Undo window passed with the ack standing (the seq of that
    * line, and when): agents see it from then on (read_thread, and

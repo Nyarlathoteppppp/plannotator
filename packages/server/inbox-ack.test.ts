@@ -154,6 +154,11 @@ describe("POST /api/inbox/messages/:id/ack", () => {
     const person = await ack(server, replyId);
     expect(person.status).toBe(422);
     expect(((await person.json()) as { code: string }).code).toBe("ack_not_allowed");
+    // The person already replied after the agent's latest message: the reply is the answer, and the row stays Sent.
+    const afterReply = await ack(server, later.message_id);
+    expect(afterReply.status).toBe(409);
+    expect(((await afterReply.json()) as { code: string }).code).toBe("ack_after_reply");
+    expect((await rowOf(server, threadId)).section).toBe("sent");
 
     expect((await post(server, `/api/inbox/messages/${later.message_id}/ack`,{}, { Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" })).status).toBe(403);
     expect((await ack(server, later.message_id, true, { serverSession: "an-older-inbox" })).status).toBe(409);
@@ -165,6 +170,20 @@ describe("POST /api/inbox/messages/:id/ack", () => {
     const archived = await ack(server, later.message_id);
     expect(archived.status).toBe(409);
     expect(((await archived.json()) as { code: string }).code).toBe("thread_resolved");
+  });
+
+  test("Move back on the thread withdraws the 👍 too: the agent never sees it", async () => {
+    const { server, client, threadId, messageId } = await setup();
+    await ack(server, messageId);
+    const back = await post(server, `/api/inbox/threads/${threadId}/unread`, { serverSession: server.serverSession });
+    expect(back.status).toBe(200);
+    expect((await windowMessage(server, threadId, messageId)).ack).toBeNull();
+    const row = await rowOf(server, threadId);
+    expect(row.read_at ?? null).toBeNull();
+    expect(row.ack ?? null).toBeNull();
+    await Bun.sleep(DELAY + 400);
+    expect((await readThread(client, threadId)).structuredContent.thread.messages[0]!.ack ?? null).toBeNull();
+    expect((await waitForReply(client, threadId)).structuredContent.status).toBe("waiting");
   });
 
   test("an already-read thread stays read when the 👍 is taken back", async () => {
@@ -216,6 +235,30 @@ describe("what the agent sees", () => {
       arguments: { thread_id: threadId, agent_session: SESSION, timeout_seconds: 1, cursor: waited.structuredContent.cursor },
     })) as { structuredContent: { status: string } };
     expect(next.structuredContent.status).toBe("waiting");
+  });
+
+  test("a 👍 already given never answers a later wait across every thread (no thread, no cursor)", async () => {
+    const { server, client, messageId } = await setup("Deploy done.");
+    await ack(server, messageId);
+    await Bun.sleep(DELAY + 400);
+    const waitAll = async () =>
+      (await client.callTool({ name: "wait_for_reply", arguments: { agent_session: SESSION, timeout_seconds: 1 } })) as {
+        structuredContent: { status: string; thread_id?: string };
+      };
+    // The first wait across threads gets the 👍 (the agent had not seen it).
+    expect((await waitAll()).structuredContent.status).toBe("acknowledged");
+    // Then the agent asks something in another thread and waits on everything it asked: the old 👍 is not the answer.
+    const asked = (await client.callTool({
+      name: "send_message",
+      arguments: {
+        project_path: server.store.project(server.store.message(messageId)!.project_id)!.root,
+        agent_session: SESSION,
+        thread: "db",
+        body: [":::question", "Which database?", "", "- [ ] Postgres", "- [ ] SQLite", ":::"].join("\n"),
+      },
+    })) as { structuredContent: { thread_id: string } };
+    expect(asked.structuredContent.thread_id).not.toBe(messageId);
+    expect((await waitAll()).structuredContent.status).toBe("waiting");
   });
 
   test("an Undo inside the window: wait_for_reply never sees it, read_thread neither", async () => {

@@ -671,7 +671,9 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   // (open or picked) and the thread is not archived.
   const ackTarget = agentMessages.at(-1) ?? null;
   const questionWaits = agentMessages.some((m) => (m.questions ?? []).some((q) => q.state === 'open' || q.state === 'picked'));
-  const ackOffered = onAck !== undefined && ackTarget !== null && !archived && !questionWaits;
+  // Nor once the person wrote back after it (their reply is the answer; its Sent / Delivered line stays).
+  const personWroteLast = lastNonNote(thread.messages)?.author.kind === 'person';
+  const ackOffered = onAck !== undefined && ackTarget !== null && !archived && !questionWaits && !personWroteLast;
   const ackOn = ackTarget?.ack != null;
 
   // Picks saved at once; shown before the server answers, then from the server.

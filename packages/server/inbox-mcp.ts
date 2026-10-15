@@ -630,10 +630,15 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
             if (caller && message.author.session !== caller) return false;
             return store.messageCursor(message.id) === lastAgentCursor(store, message.thread_id, caller);
           };
+          // A wait across every thread the caller asked, with no cursor, is not answered by a 👍
+          // it was already given (seen): the agent never writes in a finished thread again, so that
+          // old 👍 would answer every such wait. A wait on one named thread keeps answering it.
+          const acrossThreads = !single && input.cursor === undefined;
           const findAck = (): InboxMessage | null => {
             for (const threadId of thresholds.keys()) {
               for (const message of store.thread(threadId)?.messages ?? []) {
                 const settled = message.ack?.settled_seq;
+                if (acrossThreads && message.ack?.seen_at) continue;
                 if (settled != null && ackCounts(message, settled)) return message;
               }
             }

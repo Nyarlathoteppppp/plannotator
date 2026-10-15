@@ -920,13 +920,21 @@ export class InboxStore {
       const closed = records.filter((r) => this.closedByThisRead(r, root));
       if (root.person_read_seq != null || closed.length > 0) {
         const at = this.stamp();
+        // Move back withdraws a 👍 standing on this Mark read too, so the agent never sees a 👍
+        // on a thread the person moved back to the top.
+        for (const message of members) {
+          if (message.author.kind === "agent" && message.ack && root.person_read_seq != null && message.ack.read_seq === root.person_read_seq) {
+            this.appendMessage({ ...message, ack: null }, at);
+          }
+        }
         if (root.person_read_seq != null) {
           // While the read still holds (no message since), the look it counted
           // is taken back too, so news it hid is news again.
           const restoreLook = this.readAt(root, members) !== null && root.person_seen_before_read !== undefined;
           this.appendMessage(
             {
-              ...root,
+              // Read again: in a one-message thread the root is the agent message whose ack was just withdrawn.
+              ...this.messages.get(threadId)!,
               person_read_seq: null,
               person_read_at: null,
               ...(restoreLook ? { person_seen_seq: root.person_seen_before_read } : {}),
@@ -1102,6 +1110,12 @@ export class InboxStore {
       if (latest?.id !== message.id) {
         throw new InboxError("ack_stale", "A newer message arrived in this thread; read it first.", { latest: latest?.id ?? null });
       }
+      // The person already wrote back (their reply, a New message): that reply is the answer, and
+      // a 👍 would hide its Sent / Delivered state. The Inbox's own notes do not count.
+      const after = members.slice(members.findIndex((m) => m.id === message.id) + 1);
+      if (after.some((m) => m.author.kind === "person" && !isInboxNote(m))) {
+        throw new InboxError("ack_after_reply", "You already replied in this thread after this message.");
+      }
       const open = members
         .filter((m) => m.author.kind === "agent")
         .flatMap((m) => this.questionRecords(m.id))
@@ -1111,11 +1125,19 @@ export class InboxStore {
         });
       if (open.length > 0) throw new InboxError("question_open", "A question here waits on you: answer it, or Mark read.");
       if (!message.ack) {
-        const before = root.person_read_seq ?? null;
+        const readBefore = root.person_read_seq ?? null;
         this.markRead(threadId, true);
-        const after = this.messages.get(threadId)!.person_read_seq ?? null;
+        const readSeq = this.messages.get(threadId)!.person_read_seq ?? null;
         const at = this.stamp();
-        const ack: InboxAck = { label: INBOX_ACK_LABEL, at, read_seq: after !== before ? after : null, settled_seq: null, settled_at: null, seen_at: null };
+        const ack: InboxAck = {
+          label: INBOX_ACK_LABEL,
+          at,
+          read_seq: readSeq,
+          made_read: readSeq !== readBefore,
+          settled_seq: null,
+          settled_at: null,
+          seen_at: null,
+        };
         this.appendMessage({ ...this.messages.get(messageId)!, ack }, at);
       }
     } else if (message.ack) {
@@ -1123,8 +1145,8 @@ export class InboxStore {
       const at = this.stamp();
       this.appendMessage({ ...message, ack: null }, at);
       const current = this.messages.get(threadId)!;
-      // Undo the Mark read this ack made, while it is still the thread's.
-      if (ack.read_seq != null && current.person_read_seq === ack.read_seq && current.resolved_at === null) this.markRead(threadId, false);
+      // Undo the Mark read this ack made (not an earlier one it stood on), while it is still the thread's.
+      if (ack.made_read && ack.read_seq != null && current.person_read_seq === ack.read_seq && current.resolved_at === null) this.markRead(threadId, false);
     }
     const row = this.listRow(threadId);
     if (!row) throw new InboxError("thread_not_found", `No thread ${threadId}.`);

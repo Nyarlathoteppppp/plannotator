@@ -765,8 +765,8 @@ interface ModelMessage {
   replyKeys: Set<string>;
   /** A thread the person started: addressed to a session, until that session's connection delivers it. */
   addressed?: { delivered: boolean };
-  /** The person's 👍 on this agent message: the step of the Mark read it made (null: the thread was already read). */
-  ack?: { readTick: number | null } | null;
+  /** The person's 👍 on this agent message: the step of the Mark read it stands on, and whether the 👍 made it. */
+  ack?: { readTick: number | null; made: boolean } | null;
 }
 
 interface ModelThread {
@@ -1136,6 +1136,8 @@ class ThreadStateModel {
         const own = (q: ModelQuestion) => q.setAside !== null && q.setAside.by === ownRead;
         const closed = live.flatMap((m) => m.questions).filter(own);
         if (ownRead === null && closed.length === 0) return "ok";
+        // Move back withdraws a 👍 standing on this Mark read.
+        if (ownRead !== null) for (const m of thread.messages) if (m.ack && m.ack.readTick === ownRead) m.ack = null;
         if (ownRead !== null) {
           if (this.readHolds(thread) && thread.seenBeforeRead !== undefined) thread.seen = thread.seenBeforeRead;
           thread.read = null;
@@ -1189,7 +1191,7 @@ class ThreadStateModel {
           if (!ack) return "ok";
           message.ack = null;
           // Undo the Mark read the ack made, while it is still the thread's.
-          if (ack.readTick !== null && thread.read === ack.readTick && !thread.resolved) {
+          if (ack.made && ack.readTick !== null && thread.read === ack.readTick && !thread.resolved) {
             this.event({ op: "read", target: op.target, read: false }, target, store, tick);
           }
           return "ok";
@@ -1198,6 +1200,8 @@ class ThreadStateModel {
         if (thread.resolved) return "refused:thread_resolved";
         const latest = [...thread.messages].reverse().find((m) => m.author === "agent");
         if (latest !== message) return "refused:ack_stale";
+        // The person already wrote back after it (the Inbox's own notes aside).
+        if (thread.messages.some((m) => m.tick > message.tick && m.author === "person" && m.note === null)) return "refused:ack_after_reply";
         const waiting = thread.messages
           .filter((m) => m.author === "agent")
           .flatMap((m) => m.questions)
@@ -1209,7 +1213,7 @@ class ThreadStateModel {
         if (message.ack) return "ok";
         const before = thread.read;
         this.event({ op: "read", target: op.target, read: true }, target, store, tick);
-        message.ack = { readTick: thread.read !== before ? thread.read : null };
+        message.ack = { readTick: thread.read, made: thread.read !== before };
         return "ok";
       }
       case "personStart":

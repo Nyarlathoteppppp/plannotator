@@ -1287,11 +1287,11 @@ function Inbox() {
       say('Looks good taken back.');
       return;
     }
-    const place = routeRef.current.thread === threadId ? 'open' : 'list';
+    // Only the open thread's foot offers 👍, so the toast always speaks of that thread.
     showToast({
       icon: 'thumb',
       lead: 'Looks good',
-      detail: place === 'open' ? `Moves to Quiet · not sent to ${agent}` : `Not sent to ${agent}`,
+      detail: `Moves to Quiet · not sent to ${agent}`,
       onUndo: () => void acknowledge(threadId, messageId, false, agent),
     });
   };

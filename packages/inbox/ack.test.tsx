@@ -64,7 +64,7 @@ async function serverRow(threadId: string) {
   return model.sections.flatMap((s) => s.threads).find((r) => r.thread_id === threadId)!;
 }
 
-const TESTS = 4;
+const TESTS = 6;
 
 beforeAll(async () => {
   if (!hasDom) return;
@@ -220,6 +220,41 @@ test.skipIf(!hasDom)('a click is silent: the button presses, the pill and the to
   await until(async () => (await serverMessages(thread)).at(-1)!.ack === null, 'the Undo');
   expect((await serverRow(thread)).read_at ?? null).toBeNull();
   expect(posted.filter((p) => p.path.endsWith('/ack')).at(-1)!.body).toMatchObject({ ack: false });
+}, 30_000);
+
+test.skipIf(!hasDom)('after the person replies, Looks good is gone: the reply is the answer', async () => {
+  const thread = world.news[0]!;
+  const el = await renderApp(`#thread=${thread}`);
+  await until(() => ackButton(el) !== null, 'the Looks good button');
+  const reply = [...el.querySelectorAll('section.ib-pane .ib-pfoot button')].find((b) => b.textContent?.trim() === 'Reply') as HTMLButtonElement;
+  act(() => reply.click());
+  await settle();
+  const text = el.querySelector('textarea') as HTMLTextAreaElement;
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+  act(() => {
+    setter.call(text, 'Thanks, carry on.');
+    text.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const send = [...el.querySelectorAll('section.ib-pane .ib-pfoot button')].find((b) => b.textContent?.trim() === 'Send') as HTMLButtonElement;
+  act(() => send.click());
+  await until(() => el.querySelector('textarea') === null, 'the Send');
+  await settle();
+  expect(ackButton(el)).toBeNull();
+  expect(footButtons(el)).toEqual(['Reply']);
+  expect((await serverRow(thread)).section).toBe('sent');
+}, 30_000);
+
+test.skipIf(!hasDom)('Move back withdraws the 👍: the button releases and the pill goes', async () => {
+  const thread = world.news[1]!;
+  const el = await renderApp(`#thread=${thread}`);
+  await until(() => ackButton(el) !== null, 'the Looks good button');
+  act(() => ackButton(el)!.click());
+  await until(() => ackButton(el)?.getAttribute('aria-pressed') === 'true', 'the pressed button');
+  act(() => (el.querySelector('[data-move-back]') as HTMLButtonElement).click());
+  await until(() => ackButton(el)?.getAttribute('aria-pressed') === 'false', 'the button released');
+  expect(el.querySelector('[data-ack-pill]')).toBeNull();
+  expect((await serverMessages(thread)).at(-1)!.ack).toBeNull();
+  expect((await serverRow(thread)).read_at ?? null).toBeNull();
 }, 30_000);
 
 test.skipIf(!hasDom)('the pressed button takes it back; the pill names when the agent saw it, never "Delivered"', async () => {

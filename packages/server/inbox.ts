@@ -342,6 +342,7 @@ const ERROR_STATUS: Record<string, number> = {
   // 👍 Looks good: refused on a person's message, on an older agent message, and while a question is open.
   ack_not_allowed: 422,
   ack_stale: 409,
+  ack_after_reply: 409,
   question_open: 409,
   idempotency_key_reused: 409,
   // The project menu: a batch_id already answered another project or action.
