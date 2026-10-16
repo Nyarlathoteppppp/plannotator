@@ -6,7 +6,7 @@
  * (tests/helpers/fake-agents.ts); config.json lives in the scratch data dir.
  */
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "@plannotator/shared/config";
 import { createFakeAgents, type FakeAgents } from "../../tests/helpers/fake-agents";
@@ -98,6 +98,32 @@ test("the first-run screen's plugin field: Claude Code found on PATH without the
   const after = (await get(s)) as Model & { agents: (AgentRow & { plugin?: { installed: boolean } | null })[] };
   expect(after.agents.find((agent) => agent.id === "claude-code")).toMatchObject({ detected: true, reach: { kind: "tool", on: true }, plugin: { installed: true } });
   expect(fake.calls()).toEqual([]);
+});
+
+test("Claude Code's plugin is found in every scope the Inbox can read: settings.local.json, the plugin registry; an explicit false in settings wins over the registry", async () => {
+  const claude = join(fake.home, ".claude");
+  mkdirSync(join(claude, "plugins"), { recursive: true });
+  const s = await start();
+  const plugin = async () => ((await get(s)) as Model & { agents: (AgentRow & { plugin?: { installed: boolean } | null })[] }).agents.find((a) => a.id === "claude-code")!.plugin;
+  expect(await plugin()).toEqual({ installed: false });
+  writeFileSync(join(claude, "settings.local.json"), JSON.stringify({ enabledPlugins: { "plannotator@plannotator": true } }));
+  expect(await plugin()).toEqual({ installed: true });
+  rmSync(join(claude, "settings.local.json"));
+  // The registry (v2: { plugins: { id: [records] } }) records it: installed, unless a settings scope turns it off.
+  writeFileSync(join(claude, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "plannotator@plannotator": [{ scope: "user" }] } }));
+  expect(await plugin()).toEqual({ installed: true });
+  writeFileSync(join(claude, "settings.json"), JSON.stringify({ enabledPlugins: { "plannotator@plannotator": false } }));
+  expect(await plugin()).toEqual({ installed: false });
+});
+
+test("a tool turned off by name in config.json is chosen_off; the host default is not", async () => {
+  mkdirSync(join(fake.home, ".pi", "agent"), { recursive: true });
+  writeFileSync(join(fake.home, ".pi", "agent", "settings.json"), JSON.stringify({ packages: ["npm:@plannotator/pi-extension"] }));
+  const s = await start();
+  const pi = async () => ((await get(s)) as Model & { agents: (AgentRow & { tool?: { on: boolean; chosen_off?: boolean } | null })[] }).agents.find((a) => a.id === "pi")!.tool;
+  expect(await pi()).toMatchObject({ on: false, chosen_off: false });
+  await post(s, "/api/inbox/agents", { agent: "pi", reach: false });
+  expect(await pi()).toMatchObject({ on: false, chosen_off: true });
 });
 
 test("reach off removes Plannotator's entry and stays off at the next run; on adds it again", async () => {

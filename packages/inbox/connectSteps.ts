@@ -23,7 +23,8 @@ export const PLUGIN_WORD: Readonly<Record<PluginHost, 'plugin' | 'extension'>> =
 /**
  * How one agent stands:
  *  - ready: Plannotator's plugin is installed and its Inbox tool is on.
- *  - tool-off: the plugin is installed, its Inbox tool is off (`locked` when PLANNOTATOR_INBOX_TOOL decides).
+ *  - tool-off: the plugin is installed, its Inbox tool is off (`locked` when PLANNOTATOR_INBOX_TOOL decides,
+ *    `chosenOff` when config.json turns it off by name: both are left alone, never offered as a step).
  *  - mcp-only: a plugin host without the plugin, connected through MCP (replies don't wake it).
  *  - missing: a plugin host without the plugin, not connected.
  *  - mcp: another agent, connected through MCP.
@@ -38,18 +39,27 @@ export interface ConnectRow {
   label: string;
   state: ConnectState;
   locked: boolean;
+  /** The person turned the tool off (config.json says false by name). */
+  chosenOff: boolean;
   reason: string | null;
 }
 
-/** One agent's state; null for an agent that is not here, or that the person turned off or connected their own way. */
-export function connectRowOf(row: InboxAgentRow): ConnectRow | null {
-  const base = { id: row.id, label: row.label, locked: false, reason: row.reach.reason };
+/**
+ * One agent's state; null for an agent that is not here, or that the person
+ * turned off or connected their own way. `live`: a session of this host is
+ * polling the Inbox now, which only Plannotator's own connection does, so the
+ * host is connected whatever the files the Inbox can read say (a project's own
+ * `.claude/settings.json`, `claude --plugin-dir`).
+ */
+export function connectRowOf(row: InboxAgentRow, live = false): ConnectRow | null {
+  const base = { id: row.id, label: row.label, locked: false, chosenOff: false, reason: row.reach.reason };
   if (isPluginHost(row.id)) {
+    if (live) return { ...base, state: 'ready' };
     if (!row.detected) return { ...base, state: 'absent' };
     // The plugin is installed exactly when the agent reaches the Inbox through its tool (`plugin` says so too, on a newer Inbox).
     const installed = row.plugin ? row.plugin.installed : row.reach.kind === 'tool';
     if (installed && row.reach.kind === 'tool') {
-      return row.reach.on ? { ...base, state: 'ready' } : { ...base, state: 'tool-off', locked: row.reach.locked };
+      return row.reach.on ? { ...base, state: 'ready' } : { ...base, state: 'tool-off', locked: row.reach.locked, chosenOff: row.tool?.chosen_off === true };
     }
     if (row.reach.kind === 'mcp' && row.reach.on) return { ...base, state: 'mcp-only' };
     return { ...base, state: 'missing' };
@@ -67,9 +77,9 @@ export function isDone(row: ConnectRow): boolean {
   return row.state === 'ready' || row.state === 'mcp' || row.state === 'mcp-only';
 }
 
-/** A step the screen can offer: something left that the person can act on (a locked tool is not one). */
+/** A step the screen can offer: something left that the person can act on (a locked tool, or one the person turned off, is not one). */
 export function isStep(row: ConnectRow): boolean {
-  if (row.state === 'tool-off') return !row.locked;
+  if (row.state === 'tool-off') return !row.locked && !row.chosenOff;
   return row.state === 'missing' || row.state === 'mcp-only' || row.state === 'connect' || row.state === 'manual';
 }
 
@@ -90,24 +100,24 @@ export interface ConnectPlan {
   /** The one next step, or null (nothing left, or nothing found). */
   next: ConnectRow | null;
   done: ConnectRow[];
-  /** Left, after the next step: the other steps, the ones put off, the locked tools. */
+  /** Left, after the next step: the other steps, the ones put off, the tools locked or turned off. */
   later: ConnectRow[];
   /** Plugin hosts not on this computer. */
   absent: ConnectRow[];
 }
 
-export function connectPlan(model: InboxAgentsModel, skipped: readonly string[] = []): ConnectPlan {
+export function connectPlan(model: InboxAgentsModel, skipped: readonly string[] = [], live: ReadonlySet<string> = new Set()): ConnectPlan {
   // Plannotator's own connections first, then the others, each in INBOX_AGENT_IDS order.
   const rank = (row: ConnectRow) => (isPluginHost(row.id) ? PLUGIN_HOSTS.indexOf(row.id) : PLUGIN_HOSTS.length + INBOX_AGENT_IDS.indexOf(row.id));
   const rows = model.agents
-    .map(connectRowOf)
+    .map((row) => connectRowOf(row, live.has(row.id)))
     .filter((row): row is ConnectRow => row !== null)
     .sort((a, b) => rank(a) - rank(b));
   const found = rows.filter((row) => row.state !== 'absent');
   const all = found.filter(isStep).sort((a, b) => stepOrder(a) - stepOrder(b));
   const steps = all.filter((row) => !skipped.includes(row.id));
   const next = steps[0] ?? null;
-  const locked = found.filter((row) => row.state === 'tool-off' && row.locked);
+  const locked = found.filter((row) => row.state === 'tool-off' && (row.locked || row.chosenOff));
   const putOff = all.filter((row) => skipped.includes(row.id));
   return {
     rows,
@@ -183,6 +193,7 @@ export function doneNote(row: ConnectRow, opts: { live: boolean; turnedOn: boole
 /** What the "Left to do" line says after the name. */
 export function laterNote(row: ConnectRow, opts: { skipped: boolean; toolEnv: boolean | null }): string {
   if (row.state === 'tool-off' && row.locked) return `locked by PLANNOTATOR_INBOX_TOOL=${opts.toolEnv ? '1' : '0'}`;
+  if (row.state === 'tool-off' && row.chosenOff) return 'off';
   if (opts.skipped) return 'later';
   if (row.state === 'tool-off') return 'turn on';
   if (row.state === 'connect') return 'connect';

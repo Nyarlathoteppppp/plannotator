@@ -413,8 +413,8 @@ describe("questions end to end: MCP send, window picks and Send, agent reads", (
     // question block the store reads, the Inbox-only lines, and `plannotator inbox --help` for the rest.
     const agentTool = inboxAgentTool(parseInboxToolList({ tools: tools.tools }))!;
     const agentBody = (agentTool.inputSchema.properties as Record<string, { description: string }>).body!.description;
-    expect(agentBody).toContain(INBOX_AGENT_FIELD_DESCRIPTIONS.body!);
-    for (const part of [":::question-multi", ":::question-text", "`Stopped: <why>`", "never `Stopped: no`", "`Holds up: <work>`", "Recommended:"]) expect(agentBody).toContain(part);
+    expect(agentBody).toContain(INBOX_AGENT_FIELD_DESCRIPTIONS.send_message!.body!);
+    for (const part of [":::question-multi", ":::question-text", "never add an Other choice", "`Stopped: <why>`", "never `Stopped: no`", "`Holds up: <work>`", "Recommended:"]) expect(agentBody).toContain(part);
     const [example] = parseInboxQuestionBlocks(agentBody);
     expect(example).toMatchObject({ stopped: null, holds_up: ["sync release"] });
     expect(example!.parsed.choices.map((choice) => choice.recommended)).toEqual([true, false]);

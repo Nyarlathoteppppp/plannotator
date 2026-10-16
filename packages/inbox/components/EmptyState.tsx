@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { InboxAgentId, InboxAgentsModel } from '@plannotator/core/inbox-types';
 import { inboxApi, type ComposeSessionsModel } from '../api';
 import { OTHER_HARNESSES, harnessPanel, hostMcpSnippet, type ConnectContext } from '../harnesses';
@@ -170,8 +170,15 @@ export interface EmptyStateProps {
   context: ConnectContext | null;
   /** GET /api/inbox/agents; null while it loads or where it is refused (a page opened over the tailnet). */
   agents: InboxAgentsModel | null;
-  /** The agents could not be read here: the screen offers the commands without this computer's state. */
-  agentsUnavailable: boolean;
+  /**
+   * The agents could not be read: `tailnet`, a page opened over the tailnet
+   * (the agents route is local only); `failed`, a read on this computer that
+   * did not answer. The screen then offers the commands without this
+   * computer's state.
+   */
+  agentsUnavailable: 'tailnet' | 'failed' | null;
+  /** Read the agents again (after `failed`). */
+  onRetry?: () => void;
   /** The live sessions (GET /api/inbox/sessions), for "running now" and "Message <host>". */
   sessions: ComposeSessionsModel | null;
   onAgents: (next: InboxAgentsModel) => void;
@@ -190,7 +197,7 @@ export interface EmptyStateProps {
  * plugin is a command to copy, and the screen moves on by itself once the
  * agents are read again (App re-reads them while this screen shows).
  */
-export function EmptyState({ context, agents, agentsUnavailable, sessions, onAgents, onMessage }: EmptyStateProps) {
+export function EmptyState({ context, agents, agentsUnavailable, onRetry, sessions, onAgents, onMessage }: EmptyStateProps) {
   const [skipped, setSkipped] = useState<string[]>([]);
   const [busy, setBusy] = useState<InboxAgentId | null>(null);
   const [error, setError] = useState<{ id: InboxAgentId; text: string } | null>(null);
@@ -198,11 +205,23 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
   const [said, setSaid] = useState('');
   const [firstPick, setFirstPick] = useState<PluginHost>('claude-code');
   const pickerId = useId();
+  const stepHeading = useRef<HTMLHeadingElement | null>(null);
+  const tryHeading = useRef<HTMLHeadingElement | null>(null);
+  // After Turn on, Connect or Not now the card is rebuilt for the next step: focus goes to its heading
+  // (or to Try it once nothing is left), never to the page.
+  const [focusTick, setFocusTick] = useState(0);
 
-  const plan = agents ? connectPlan(agents, skipped) : null;
+  const live = liveByHost(sessions);
+  // A host with a session polling the Inbox now is connected, whatever the files the Inbox can read say.
+  const plan = agents ? connectPlan(agents, skipped, new Set(live.keys())) : null;
   // The agents are read once more before anything shows, so the screen never opens on a guess.
   const loading = !agents && !agentsUnavailable;
-  const live = liveByHost(sessions);
+  const allSet = !!plan && plan.found.length > 0 && !plan.next;
+
+  useLayoutEffect(() => {
+    if (focusTick === 0) return;
+    (allSet ? tryHeading.current : stepHeading.current)?.focus();
+  }, [focusTick, allSet]);
 
   const act = async (row: ConnectRow) => {
     if (busy) return;
@@ -215,6 +234,7 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
         setError({ id: row.id, text: next.error });
         return;
       }
+      setFocusTick((tick) => tick + 1);
       if (isPluginHost(row.id)) {
         setTurnedOn((current) => new Set([...current, row.id]));
         setSaid(`${row.label}'s Inbox tool is on. ${APPLIES[row.id]}`);
@@ -236,7 +256,9 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
         <div className="ib-cn-eb">
           <span className="ib-cn-ebl">First step</span>
         </div>
-        <h3>Connect your first agent</h3>
+        <h3 ref={stepHeading} tabIndex={-1}>
+          Connect your first agent
+        </h3>
         <p>Plannotator&apos;s own connections bring your replies back into the session by themselves. Which agent do you use?</p>
         <div className="ib-cn-acts">
           <Choice
@@ -249,7 +271,17 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
         <div className="ib-cn-blk ib-cn-body">
           <InstallBlock key={firstPick} host={firstPick} />
           {context && <McpFold key={`mcp-${firstPick}`} host={firstPick} context={context} />}
-          {agentsUnavailable && <p className="ib-cn-hint">Open the Inbox on the computer to connect agents with one click.</p>}
+          {agentsUnavailable === 'tailnet' && <p className="ib-cn-hint">Open the Inbox on the computer to connect agents with one click.</p>}
+          {agentsUnavailable === 'failed' && (
+            <p className="ib-cn-hint" data-agents-failed="">
+              The Inbox could not read the agents on this computer.{' '}
+              {onRetry && (
+                <button type="button" className="ib-lnk ib-cn-retry" onClick={onRetry}>
+                  Try again
+                </button>
+              )}
+            </p>
+          )}
         </div>
       </div>
     );
@@ -260,7 +292,14 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
     const failed = error?.id === next.id ? error.text : null;
     const oneClick = next.state === 'tool-off' || next.state === 'connect';
     const skip = (
-      <button type="button" className="ib-btn ib-ghost" onClick={() => setSkipped((current) => [...current, next.id])}>
+      <button
+        type="button"
+        className="ib-btn ib-ghost"
+        onClick={() => {
+          setSkipped((current) => [...current, next.id]);
+          setFocusTick((tick) => tick + 1);
+        }}
+      >
         Not now
       </button>
     );
@@ -270,7 +309,9 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
         <div className="ib-cn-eb">
           <span className="ib-cn-ebl">{eyebrow.label}</span> · {eyebrow.count}
         </div>
-        <h3>{stepTitle(next)}</h3>
+        <h3 ref={stepHeading} tabIndex={-1}>
+          {stepTitle(next)}
+        </h3>
         <p>
           {text.text}
           {text.cost && (
@@ -286,7 +327,14 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
         )}
         {oneClick ? (
           <div className="ib-cn-acts">
-            <button type="button" className="ib-btn ib-pri" aria-busy={busy === next.id || undefined} disabled={busy !== null} onClick={() => void act(next)}>
+            {/* aria-disabled, not disabled, while it saves: a disabled button drops keyboard focus to the page. */}
+            <button
+              type="button"
+              className="ib-btn ib-pri"
+              aria-busy={busy === next.id || undefined}
+              aria-disabled={busy !== null || undefined}
+              onClick={() => void act(next)}
+            >
               {busy === next.id ? (next.state === 'connect' ? 'Connecting…' : 'Turning on…') : failed ? 'Try again' : next.state === 'connect' ? 'Connect' : 'Turn on'}
             </button>
             {skip}
@@ -315,7 +363,9 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
         <div className="ib-cn-eb">
           <span className="ib-cn-ebl">All set</span>
         </div>
-        <h3>Your agents reach the Inbox</h3>
+        <h3 ref={stepHeading} tabIndex={-1}>
+          Your agents reach the Inbox
+        </h3>
         <p>Ask one of them for a test message below.</p>
       </div>
     );
@@ -390,7 +440,9 @@ export function EmptyState({ context, agents, agentsUnavailable, sessions, onAge
           {lists}
           {!loading && (
           <div className="ib-try">
-            <h3>Try it</h3>
+            <h3 ref={tryHeading} tabIndex={-1}>
+              Try it
+            </h3>
             {running && runningIn ? (
               <>
                 <div className="ib-try-row">

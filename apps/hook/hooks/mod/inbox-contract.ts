@@ -147,6 +147,7 @@ export const INBOX_TOOL_HELP_NOTE = "Every field and the full question syntax: `
  * OpenCode request carries it).
  */
 export const INBOX_AGENT_ACTION_LEADS: Readonly<Record<string, string>> = {
+  list_decisions: 'List the decisions that hold in this project (`state`: current, the default, replaced, retired or all).',
   get_guide_brief: "Get Plannotator's method, the guide's JSON shape and the rules for writing a guided review, with a worked submit_guide call.",
 }
 
@@ -155,31 +156,37 @@ export const INBOX_AGENT_ACTION_LEADS: Readonly<Record<string, string>> = {
  * (the MCP server's are written for a raw MCP client, which has no other
  * guide): every Pi and OpenCode request carries the tool whole, so these keep
  * only what an agent needs to call it well, and `plannotator inbox --help`
- * keeps the rest. Applied only to a field the running Inbox offers.
+ * keeps the rest. Keyed by action, then field: applied only to a field that
+ * action of the running Inbox offers (a field several actions share is
+ * described once, from the first action that has it, `send_message` for `body`).
  */
-export const INBOX_AGENT_FIELD_DESCRIPTIONS: Readonly<Record<string, string>> = {
-  body: [
-    'The message, markdown. Ask what only the person can decide as a question block, which renders as an answerable card:',
-    '',
-    ':::question',
-    'Where should the edit that loses a sync conflict go?',
-    '',
-    'Context in one to three plain sentences: what it affects, what you know, why you recommend one. The person switches in cold.',
-    '',
-    '- [ ] Local only, purged after 30 days — cheap',
-    '- [ ] Server-side per user — needs a retention policy',
-    '',
-    'Recommended: Local only, purged after 30 days',
-    'Holds up: sync release',
-    ':::',
-    '',
-    '`:::question-multi` takes several choices, `:::question-text` free text. `Stopped: <why>` only when you cannot go on until it is answered (never `Stopped: no`); `Holds up: <work>` names work that waits while you go on. Ask only what you cannot decide alone, about 8 a round at most. Answers come back in the reply under "Answers to your questions".',
-  ].join('\n'),
-  thread: "A short thread name, one line, to keep separate work apart: the same name in this project is the same open thread, across sessions. Without it, your messages join your session's open thread. Ignored with reply_to.",
-  supersedes: 'Your own questions in this thread that are still open (read_thread state open or picked) and no longer apply: a newer message replaces them, or the reply settled them in words. "<message id>/<key>" for one, "<message id>" for all of that message\'s; send with reply_to into their thread. With one question in this message it replaces them, otherwise they read "No longer applies".',
-  attachments: 'Files to show the person beside the message, absolute or relative to project_path: a plan, a screenshot, an HTML mock, code, a video, any file. Link one from the body (`[the mock](mock.html)`) to open it beside the thread. Their comments on the files come back in the reply. Folders and .env files are refused.',
-  guide: "The guide in get_guide_brief's output_schema, as an object or its JSON.",
-  snapshot: 'Instead of guide and patch: a complete Plannotator guide snapshot, as an object or its JSON.',
+export const INBOX_AGENT_FIELD_DESCRIPTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  send_message: {
+    body: [
+      'The message, markdown. Ask what only the person can decide as a question block, which renders as an answerable card:',
+      '',
+      ':::question',
+      'Where should the edit that loses a sync conflict go?',
+      '',
+      'Context in one to three plain sentences: what it affects, what you know, why you recommend one. The person switches in cold.',
+      '',
+      '- [ ] Local only, purged after 30 days — cheap',
+      '- [ ] Server-side per user — needs a retention policy',
+      '',
+      'Recommended: Local only, purged after 30 days',
+      'Holds up: sync release',
+      ':::',
+      '',
+      '`:::question-multi` takes several choices, `:::question-text` free text. The person can always answer Other, add a note or skip, so never add an Other choice yourself. `Stopped: <why>` only when you cannot go on until it is answered (never `Stopped: no`); `Holds up: <work>` names work that waits while you go on. Ask only what you cannot decide alone, about 8 a round at most. Answers come back in the reply under "Answers to your questions".',
+    ].join('\n'),
+    thread: "A short thread name, one line, to keep separate work apart: the same name in this project is the same open thread, across sessions. Without it, your messages join your session's open thread. Ignored with reply_to.",
+    supersedes: 'Your own questions in this thread that are still open (read_thread state open or picked) and no longer apply: a newer message replaces them, or the reply settled them in words. "<message id>/<key>" for one, "<message id>" for all of that message\'s; send with reply_to into their thread. With one question in this message it replaces them, otherwise they read "No longer applies".',
+    attachments: 'Files to show the person beside the message, absolute or relative to project_path: a plan, a screenshot, an HTML mock, code, a video, any file. Link one from the body (`[the mock](mock.html)`) to open it beside the thread. Their comments on the files come back in the reply. Folders and .env files are refused.',
+  },
+  submit_guide: {
+    guide: "The guide in get_guide_brief's output_schema, as an object or its JSON.",
+    snapshot: 'Instead of guide and patch: a complete Plannotator guide snapshot, as an object or its JSON.',
+  },
 }
 
 /**
@@ -249,7 +256,7 @@ export function inboxAgentTool(
         continue
       }
       // The agent tool's own short words where the Inbox's are long; the rest is the Inbox's.
-      const own = INBOX_AGENT_FIELD_DESCRIPTIONS[name]
+      const own = INBOX_AGENT_FIELD_DESCRIPTIONS[tool.name]?.[name]
       properties[name] = { ...schema, description: (own ?? (typeof schema.description === 'string' ? schema.description : '')).trim() }
     }
   }

@@ -367,7 +367,14 @@ function Inbox() {
   const [decisionsError, setDecisionsError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SettingsModel | null>(null);
   /** The agents on this computer (GET /api/inbox/agents): the agent-note dialog and Settings → Agents. Null on an older Inbox. */
-  const [agents, setAgents] = useState<InboxAgentsModel | null>(null);
+  const [agents, setAgentsState] = useState<InboxAgentsModel | null>(null);
+  // Every read and every save of the agents takes a number; a read answered after a newer read or save
+  // started (a re-read in flight while Turn on saved) never replaces the newer model.
+  const agentsSeq = useRef(0);
+  const setAgents = useCallback((next: InboxAgentsModel) => {
+    agentsSeq.current += 1;
+    setAgentsState(next);
+  }, []);
   const agentsRef = useRef(agents);
   agentsRef.current = agents;
   /** The first read of the agents is done (a run that opened the window has finished connecting): the agent-note dialog may decide. */
@@ -702,8 +709,9 @@ function Inbox() {
   /** Read the agents; while `plannotator inbox` is still connecting them, read again until it is done. */
   const refreshAgents = useCallback(async () => {
     try {
+      const mine = ++agentsSeq.current;
       const next = await inboxApi.agents();
-      setAgents(next);
+      if (mine === agentsSeq.current) setAgentsState(next);
       return next;
     } catch {
       return null;
@@ -1709,8 +1717,10 @@ function Inbox() {
   // once an agent is installed or turned on: it reads the agents again when the window comes back
   // into focus (the person ran the install command in a terminal) and every few seconds while shown.
   const { model: firstRunSessions } = useComposeSessions(firstRun);
+  // Over the tailnet the agents route is local only: nothing to read again.
+  const overTailnet = settings?.via === 'tailnet';
   useEffect(() => {
-    if (!firstRun) return;
+    if (!firstRun || overTailnet) return;
     let last = Date.now();
     const again = () => {
       if (document.visibilityState !== 'visible' || Date.now() - last < FIRST_RUN_AGENTS_MIN_GAP_MS) return;
@@ -1725,7 +1735,7 @@ function Inbox() {
       window.removeEventListener('focus', again);
       document.removeEventListener('visibilitychange', again);
     };
-  }, [firstRun, refreshAgents]);
+  }, [firstRun, overTailnet, refreshAgents]);
   // A file beside the thread takes the list's and the sidebar's room (record 2.2).
   const fileOpen = route.page === 'inbox' && !!route.thread && !!route.file;
   const guideMessage =
@@ -2010,7 +2020,8 @@ function Inbox() {
       <EmptyState
         context={context}
         agents={agents}
-        agentsUnavailable={agentsSettled && agents === null}
+        agentsUnavailable={overTailnet ? 'tailnet' : agentsSettled && agents === null ? 'failed' : null}
+        onRetry={() => void refreshAgents()}
         sessions={firstRunSessions}
         onAgents={setAgents}
         onMessage={(session, opener) => openCompose({ session }, opener)}

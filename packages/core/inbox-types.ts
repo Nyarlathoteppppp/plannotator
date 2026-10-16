@@ -1003,8 +1003,11 @@ export interface InboxAgentRow {
     locked: boolean;
     reason: string | null;
   };
-  /** Claude Code, Pi and OpenCode only: their `plannotator_inbox` tool switch (`inboxTool`), shown whether or not the agent was found. */
-  tool?: { on: boolean; locked: boolean } | null;
+  /**
+   * Claude Code, Pi and OpenCode only: their `plannotator_inbox` tool switch (`inboxTool`), shown whether or not the agent was found.
+   * `chosen_off`: config.json turns it off by name (not the host's default), so the first-run screen never offers turning it on.
+   */
+  tool?: { on: boolean; locked: boolean; chosen_off?: boolean } | null;
   /** Claude Code, Pi and OpenCode only. `needs_tool`: the tool is off, so there is no reminder. */
   reminder: { on: boolean; locked: boolean; needs_tool: boolean } | null;
   note: InboxAgentNoteStatus | null;
@@ -1042,23 +1045,27 @@ export type InboxToolCostHost = "pi" | "opencode";
 
 /**
  * What turning the Inbox tool on adds to every request on Pi and OpenCode 2,
- * measured on the real hosts (apps/pi-extension/inbox.test.ts and
+ * measured on the real hosts: apps/pi-extension/inbox.test.ts and
  * apps/opencode-plugin/inbox-v2.test.ts read the request the host sends a
- * scripted model, and fail when the tool's entry drifts more than 5% from
- * `bytes`). `tokens` was counted from the same entry with the o200k_base
- * tokenizer and rounded to the nearest 50. The window shows `tokens`
- * (Settings → Agents, the first-run screen). Before the tool's long field
- * descriptions were shortened (INBOX_AGENT_FIELD_DESCRIPTIONS) its entry was
- * 11,736 bytes, about 2,800 tokens, on both hosts.
+ * scripted model and fail when the tool's entry drifts more than 5% from
+ * `bytes`. Tokens depend on the model's tokenizer: the same entry counts
+ * 1,661 with o200k_base (GPT-4o and later), and Claude's tokenizer counts
+ * JSON and code higher, so `tokens` is a rounded, deliberately high estimate,
+ * stated as "roughly". The window states both (`inboxToolCostText`: the
+ * first-run screen, Settings → Agents), as does `plannotator inbox --help`.
+ * Before the long field descriptions were shortened
+ * (INBOX_AGENT_FIELD_DESCRIPTIONS) the entry was 11,736 bytes (2,796 tokens
+ * with o200k_base) on both hosts.
  */
 export const INBOX_TOOL_COST: Readonly<Record<InboxToolCostHost, { bytes: number; tokens: number }>> = {
-  pi: { bytes: 6993, tokens: 1650 },
-  opencode: { bytes: 6993, tokens: 1650 },
+  pi: { bytes: 7058, tokens: 2000 },
+  opencode: { bytes: 7058, tokens: 2000 },
 };
 
-/** "about 1,200 tokens" for a host's measured cost. */
+/** "about 7 KB, roughly 2,000 tokens" for a host's measured cost. */
 export function inboxToolCostText(host: InboxToolCostHost): string {
-  return `about ${INBOX_TOOL_COST[host].tokens.toLocaleString("en-US")} tokens`;
+  const cost = INBOX_TOOL_COST[host];
+  return `about ${Math.round(cost.bytes / 1000)} KB, roughly ${cost.tokens.toLocaleString("en-US")} tokens`;
 }
 
 /** "Codex, Gemini CLI and Pi" for note agents. */

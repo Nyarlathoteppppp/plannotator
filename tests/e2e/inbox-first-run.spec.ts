@@ -191,7 +191,7 @@ test('typical: turn on Pi\'s Inbox tool (its measured cost named), Claude Code r
     const page = await openWindow(browser, c, errors);
     await expect(hero(page).locator('h3')).toHaveText("Turn on Pi's Inbox tool");
     await expect(hero(page).locator('.ib-cn-eb')).toHaveText('Next step · 1 of 2');
-    await expect(hero(page).locator('p b')).toHaveText(/^about [\d,]+ tokens$/);
+    await expect(hero(page).locator('p b')).toHaveText(/^about \d+ KB, roughly [\d,]+ tokens$/);
     await expect(listItems(page, 'Already connected')).toHaveText(['Claude Code plugin · running now', 'Codex MCP', 'Cursor MCP']);
     await expect(listItems(page, 'Left to do')).toHaveText(['Pi now', 'OpenCode install']);
     await expect(page.getByRole('button', { name: 'Message Claude Code' })).toBeVisible();
@@ -200,6 +200,8 @@ test('typical: turn on Pi\'s Inbox tool (its measured cost named), Claude Code r
 
     await hero(page).getByRole('button', { name: 'Turn on' }).click();
     await expect(hero(page).locator('h3')).toHaveText("Connect OpenCode with Plannotator's plugin");
+    // Focus moved to the next card's heading, never dropped to the page.
+    await expect(hero(page).locator('h3')).toBeFocused();
     expect(JSON.parse(readFileSync(join(c.dataDir, 'config.json'), 'utf8')).inboxTool).toEqual({ pi: true });
     await expect(listItems(page, 'Already connected')).toContainText(['Pi next session']);
     // Message opens compose, addressed to the live Claude Code session.

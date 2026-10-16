@@ -85,6 +85,18 @@ test('an older Inbox without the plugin field: the tool means the plugin is inst
 });
 
 test('the cost the screen states is the measured one', () => {
-  expect(inboxToolCostText('pi')).toBe(`about ${INBOX_TOOL_COST.pi.tokens.toLocaleString('en-US')} tokens`);
+  // The size is measured; tokens depend on the model, so the window says "roughly".
+  expect(inboxToolCostText('pi')).toBe(`about ${Math.round(INBOX_TOOL_COST.pi.bytes / 1000)} KB, roughly ${INBOX_TOOL_COST.pi.tokens.toLocaleString('en-US')} tokens`);
   expect(INBOX_TOOL_COST.pi.tokens).toBeGreaterThan(0);
+});
+
+test('a live session of a Plannotator host counts as connected; a tool turned off by name is left to the person', () => {
+  const plan = connectPlan(SCENARIOS.missing(), [], new Set(['claude-code']));
+  expect(plan.next?.id).toBe('pi');
+  expect(ids(plan.done)).toEqual(['claude-code', 'pi', 'codex']);
+  const model = agentsModel({ pi: { ...toolOff(), tool: { on: false, locked: false, chosen_off: true } } });
+  const off = connectPlan(model);
+  expect(off.next).toBeNull();
+  expect(ids(off.later)).toEqual(['pi']);
+  expect(laterNote(off.later[0]!, { skipped: false, toolEnv: null })).toBe('off');
 });

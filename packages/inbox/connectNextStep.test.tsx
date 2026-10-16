@@ -14,7 +14,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { inboxToolCostText, type InboxAgentsModel } from '@plannotator/core/inbox-types';
 import type { ComposeSessionsModel } from './api';
-import { SCENARIOS, ready } from './connectSteps.fixtures';
+import { SCENARIOS, ready, toolOff } from './connectSteps.fixtures';
 
 const hasDom = typeof document !== 'undefined';
 const { EmptyState } = (hasDom ? await import('./components/EmptyState') : {}) as typeof import('./components/EmptyState');
@@ -49,7 +49,7 @@ interface Mounted {
   model: () => InboxAgentsModel | null;
 }
 
-function mount(start: InboxAgentsModel | null, options: { unavailable?: boolean; sessions?: ComposeSessionsModel | null } = {}): Mounted {
+function mount(start: InboxAgentsModel | null, options: { unavailable?: 'tailnet' | 'failed' | null; sessions?: ComposeSessionsModel | null; onRetry?: () => void } = {}): Mounted {
   host = document.createElement('div');
   host.className = 'pn-inbox';
   document.body.appendChild(host);
@@ -61,7 +61,8 @@ function mount(start: InboxAgentsModel | null, options: { unavailable?: boolean;
       <EmptyState
         context={context}
         agents={current}
-        agentsUnavailable={options.unavailable ?? false}
+        agentsUnavailable={options.unavailable ?? null}
+        onRetry={options.onRetry}
         sessions={options.sessions ?? null}
         onAgents={(next) => {
           current = next;
@@ -236,7 +237,7 @@ test.skipIf(!hasDom)('all set: nothing left, a quiet card, and Message is the pr
 });
 
 test.skipIf(!hasDom)('the agents cannot be read here (a page over the tailnet): the first step with the commands, and where to connect in one click', () => {
-  const m = mount(null, { unavailable: true });
+  const m = mount(null, { unavailable: 'tailnet' });
   expect(text(card(m.el).querySelector('h3'))).toBe('Connect your first agent');
   expect(text(card(m.el))).toContain('Open the Inbox on the computer to connect agents with one click.');
 });
@@ -246,4 +247,80 @@ test.skipIf(!hasDom)('while the agents load, nothing but the heading shows', () 
   expect(m.el.querySelector('.ib-cn')).toBeNull();
   expect(m.el.querySelector('.ib-try')).toBeNull();
   expect(text(m.el.querySelector('h2'))).toBe('No agent has written yet');
+});
+
+test.skipIf(!hasDom)('a read of the agents that failed on this computer says so, with Try again; never the tailnet line', async () => {
+  let retried = 0;
+  const m = mount(null, { unavailable: 'failed', onRetry: () => retried++ });
+  expect(text(card(m.el).querySelector('h3'))).toBe('Connect your first agent');
+  expect(text(card(m.el))).not.toContain('Open the Inbox on the computer');
+  expect(text(card(m.el).querySelector('[data-agents-failed]'))).toBe('The Inbox could not read the agents on this computer. Try again');
+  await click(button(card(m.el), 'Try again')!);
+  expect(retried).toBe(1);
+});
+
+test.skipIf(!hasDom)('keyboard focus follows the card: after Turn on to the next step\'s heading, after Not now too, and to Try it once nothing is left', async () => {
+  const m = mount(SCENARIOS.typical());
+  globalThis.fetch = (async () => {
+    const next = SCENARIOS.typical();
+    next.agents = next.agents.map((row) => (row.id === 'pi' ? { ...row, ...ready() } : row));
+    return new Response(JSON.stringify({ ...next, error: null }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as unknown as typeof fetch;
+  const turnOn = button(card(m.el), 'Turn on')!;
+  turnOn.focus();
+  await click(turnOn);
+  // Never the page: the new card's heading.
+  expect(document.activeElement).not.toBe(document.body);
+  expect(document.activeElement?.tagName).toBe('H3');
+  expect(text(document.activeElement)).toBe("Connect OpenCode with Plannotator's plugin");
+  // Not now on the last step: nothing is left to offer, so focus goes to Try it.
+  const notNow = button(card(m.el), 'Not now')!;
+  notNow.focus();
+  await click(notNow);
+  expect(text(document.activeElement)).toBe('Try it');
+});
+
+test.skipIf(!hasDom)('while it saves, Turn on keeps focus (aria-disabled, never disabled) and a second click is ignored', async () => {
+  const m = mount(SCENARIOS.typical());
+  let calls = 0;
+  let release: () => void = () => {};
+  globalThis.fetch = (async () => {
+    calls++;
+    await new Promise<void>((resolve) => (release = resolve));
+    return new Response(JSON.stringify({ ...SCENARIOS.typical(), error: 'nope' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as unknown as typeof fetch;
+  const turnOn = button(card(m.el), 'Turn on')!;
+  turnOn.focus();
+  await click(turnOn);
+  const saving = button(card(m.el), 'Turning on…')!;
+  expect(saving.disabled).toBe(false);
+  expect(saving.getAttribute('aria-disabled')).toBe('true');
+  expect(document.activeElement).toBe(saving);
+  await click(saving);
+  expect(calls).toBe(1);
+  await act(async () => {
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(document.activeElement).toBe(button(card(m.el), 'Try again')!);
+});
+
+test.skipIf(!hasDom)('a Claude Code session running now counts as connected, even when no settings file the Inbox reads enables the plugin (a project setting, --plugin-dir)', () => {
+  const m = mount(SCENARIOS.missing(), { sessions: live });
+  expect(card(m.el).getAttribute('data-connect-step')).toBe('pi');
+  expect([...listOf(m.el, 'Already connected')].map(text)).toContain('Claude Code plugin · running now');
+  expect(button(m.el, 'Message Claude Code')).toBeDefined();
+});
+
+test.skipIf(!hasDom)('a tool the person turned off by name (config.json false) is not offered as the step: Left to do says off', () => {
+  const model = SCENARIOS.typical();
+  model.agents = model.agents.map((row) => (row.id === 'pi' ? { ...row, ...toolOff(), tool: { on: false, locked: false, chosen_off: true } } : row));
+  const m = mount(model);
+  expect(card(m.el).getAttribute('data-connect-step')).toBe('opencode');
+  expect([...listOf(m.el, 'Left to do')].map(text)).toEqual(['OpenCode now', 'Pi off']);
+});
+
+test.skipIf(!hasDom)('the cost on the card: the measured size, and the tokens said as roughly', () => {
+  const m = mount(SCENARIOS.typical());
+  expect(text(card(m.el).querySelector('p b'))).toMatch(/^about \d+ KB, roughly [\d,]+ tokens$/);
 });
