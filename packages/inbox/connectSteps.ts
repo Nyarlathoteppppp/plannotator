@@ -39,8 +39,12 @@ export interface ConnectRow {
   label: string;
   state: ConnectState;
   locked: boolean;
-  /** The person turned the tool off (config.json says false by name). */
+  /** The person turned the tool off (config.json says false by name, the Claude Code plugin disabled, or its mod off). */
   chosenOff: boolean;
+  /** What "Left to do" says for a tool the person turned off another way than inboxTool (the plugin disabled, the mod off). */
+  offNote?: string;
+  /** OpenCode: the version on PATH, for the plugin line that version reads. */
+  generation?: '1' | '2';
   reason: string | null;
 }
 
@@ -52,14 +56,19 @@ export interface ConnectRow {
  * `.claude/settings.json`, `claude --plugin-dir`).
  */
 export function connectRowOf(row: InboxAgentRow, live = false): ConnectRow | null {
-  const base = { id: row.id, label: row.label, locked: false, chosenOff: false, reason: row.reach.reason };
+  const base: Omit<ConnectRow, 'state'> = { id: row.id, label: row.label, locked: false, chosenOff: false, reason: row.reach.reason, ...(row.plugin?.generation ? { generation: row.plugin.generation } : {}) };
   if (isPluginHost(row.id)) {
     if (live) return { ...base, state: 'ready' };
     if (!row.detected) return { ...base, state: 'absent' };
+    // Claude Code's plugin installed and turned off by name (`claude plugin disable`): the person's choice, never a step.
+    if (row.plugin?.disabled) return { ...base, state: 'tool-off', chosenOff: true, offNote: 'plugin turned off' };
     // The plugin is installed exactly when the agent reaches the Inbox through its tool (`plugin` says so too, on a newer Inbox).
     const installed = row.plugin ? row.plugin.installed : row.reach.kind === 'tool';
     if (installed && row.reach.kind === 'tool') {
-      return row.reach.on ? { ...base, state: 'ready' } : { ...base, state: 'tool-off', locked: row.reach.locked, chosenOff: row.tool?.chosen_off === true };
+      if (row.reach.on) return { ...base, state: 'ready' };
+      // The Claude Code mod turned off (it registers the tool): no tool whatever inboxTool says, and the person's choice.
+      if (row.tool?.mod_off) return { ...base, state: 'tool-off', locked: row.reach.locked, chosenOff: true, offNote: 'Plannotator mod turned off' };
+      return { ...base, state: 'tool-off', locked: row.reach.locked, chosenOff: row.tool?.chosen_off === true };
     }
     if (row.reach.kind === 'mcp' && row.reach.on) return { ...base, state: 'mcp-only' };
     return { ...base, state: 'missing' };
@@ -91,6 +100,8 @@ export function stepOrder(row: ConnectRow): number {
 }
 
 export interface ConnectPlan {
+  /** Agents were found, nothing is left to offer, and none reaches the Inbox (tools locked or turned off, or every step put off). */
+  blocked: boolean;
   /** Every agent the screen speaks about: Plannotator's hosts first, then the others in INBOX_AGENT_IDS order. */
   rows: ConnectRow[];
   /** The agents on this computer (absent plugin hosts left out). */
@@ -119,12 +130,14 @@ export function connectPlan(model: InboxAgentsModel, skipped: readonly string[] 
   const next = steps[0] ?? null;
   const locked = found.filter((row) => row.state === 'tool-off' && (row.locked || row.chosenOff));
   const putOff = all.filter((row) => skipped.includes(row.id));
+  const done = found.filter(isDone);
   return {
+    blocked: found.length > 0 && !next && done.length === 0,
     rows,
     found,
     steps,
     next,
-    done: found.filter(isDone),
+    done,
     later: [...steps.slice(1), ...putOff, ...locked],
     absent: rows.filter((row) => row.state === 'absent'),
   };
@@ -168,6 +181,9 @@ export function stepText(row: ConnectRow): { text: string; cost?: string } {
       return { text: `Replies don't wake the session. Plannotator's ${word} does, and lets you message a running session.` };
     case 'missing':
       if (row.id === 'claude-code') return { text: "Plannotator's plugin connects it: your replies come back into the session by themselves." };
+      if (row.id === 'opencode' && row.generation === '1') {
+        return { text: "Plannotator's plugin connects it. OpenCode 1 checks for your replies itself; on OpenCode 2 they come back into the session by themselves." };
+      }
       if (row.id === 'opencode') return { text: "Plannotator's plugin connects it: on OpenCode 2 your replies come back into the session by themselves." };
       return { text: `Plannotator's ${word} connects it.` };
     case 'connect':
@@ -177,6 +193,31 @@ export function stepText(row: ConnectRow): { text: string; cost?: string } {
     default:
       return { text: '' };
   }
+}
+
+/**
+ * Why nothing reaches the Inbox when agents were found and nothing is left to
+ * offer (`plan.blocked`): the tools PLANNOTATOR_INBOX_TOOL locks, the ones
+ * the person turned off, the steps put off with Not now. Sentences, in that order.
+ */
+export function blockedText(plan: ConnectPlan, opts: { skipped: readonly string[]; toolEnv: boolean | null }): { text: string; settings: boolean } {
+  const names = (rows: readonly ConnectRow[]) => {
+    const labels = rows.map((row) => row.label);
+    return labels.length <= 1 ? labels.join('') : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+  };
+  const off = plan.found.filter((row) => row.state === 'tool-off' && (row.chosenOff || row.offNote));
+  const locked = plan.found.filter((row) => row.state === 'tool-off' && row.locked && !off.includes(row));
+  const putOff = plan.found.filter((row) => opts.skipped.includes(row.id));
+  const parts: string[] = [];
+  if (locked.length) parts.push(`PLANNOTATOR_INBOX_TOOL=${opts.toolEnv ? '1' : '0'} keeps the Inbox tool off for ${names(locked)}.`);
+  for (const row of off) {
+    if (row.offNote === 'plugin turned off') parts.push(`Plannotator's plugin is turned off in ${row.label} (claude plugin enable plannotator@plannotator turns it back on).`);
+    else if (row.offNote) parts.push(`Plannotator's ${row.label} mod is turned off (PLANNOTATOR_CLAUDE_MOD or claudeCodeMod), so ${row.label} has no Inbox tool.`);
+  }
+  const toolOff = off.filter((row) => !row.offNote);
+  if (toolOff.length) parts.push(`You turned the Inbox tool off for ${names(toolOff)}.`);
+  if (putOff.length) parts.push(`You put ${names(putOff)} off for later.`);
+  return { text: parts.join(' '), settings: toolOff.length > 0 };
 }
 
 /** What the "Already connected" line says after the name. */
@@ -192,6 +233,7 @@ export function doneNote(row: ConnectRow, opts: { live: boolean; turnedOn: boole
 
 /** What the "Left to do" line says after the name. */
 export function laterNote(row: ConnectRow, opts: { skipped: boolean; toolEnv: boolean | null }): string {
+  if (row.state === 'tool-off' && row.offNote) return row.offNote;
   if (row.state === 'tool-off' && row.locked) return `locked by PLANNOTATOR_INBOX_TOOL=${opts.toolEnv ? '1' : '0'}`;
   if (row.state === 'tool-off' && row.chosenOff) return 'off';
   if (opts.skipped) return 'later';
