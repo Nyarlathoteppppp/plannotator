@@ -25,7 +25,16 @@ import type {
 } from '@plannotator/core/inbox-types';
 import type { QuestionAnswer } from '@plannotator/core/question-block';
 import type { InboxSearchAnswer, InboxSearchFrom, InboxSearchGroupId, InboxSearchStatus } from '@plannotator/core/inbox-search';
-import type { InboxAgentId, InboxAgentsModel, InboxAnnotationRecord, InboxAttachmentState, InboxMessageWire, InboxNoteAgentId } from '@plannotator/core/inbox-types';
+import type {
+  InboxAgentId,
+  InboxAgentsModel,
+  InboxAnnotationRecord,
+  InboxAttachmentState,
+  InboxMessageWire,
+  InboxNoteAgentId,
+  InboxNotifyReach,
+  InboxWindowPermission,
+} from '@plannotator/core/inbox-types';
 
 export type AgentToolHost = 'claude-code' | 'pi' | 'opencode';
 
@@ -203,6 +212,10 @@ export interface SettingsModel {
   data_dir: string;
   inbox_tool: { hosts: Record<AgentToolHost, boolean>; env: boolean | null };
   notifications: NotificationSettings;
+  /** Whether a notification can reach the person now (open windows, how many may notify). Absent from an older Inbox. */
+  notify_reach?: InboxNotifyReach;
+  /** The window's one address on this computer (`http://localhost:<port>/`). Absent from an older Inbox. */
+  canonical_url?: string;
   /** The question sound (config.json inboxSound). Absent from an Inbox that predates it. */
   sound?: InboxSoundSettings;
   /** Settings → About: update notices and automatic updates (`env`: the env var decides). Absent from an older Inbox. */
@@ -572,6 +585,9 @@ export const inboxApi = {
     post<{ inbox_tool: SettingsModel['inbox_tool'] }>('/api/inbox/settings', { inbox_tool: hosts }),
   saveNotifications: (change: Partial<NotificationSettings>) =>
     post<{ notifications: NotificationSettings }>('/api/inbox/settings', { notifications: change }),
+  /** This window's notification permission for its own origin (notify.ts); an older Inbox answers 404. */
+  reportWindow: (report: { window: string; permission: Exclude<InboxWindowPermission, 'unknown'>; origin: string }) =>
+    post<{ notify_reach: InboxNotifyReach }>('/api/inbox/window', report),
   saveSound: (change: { enabled?: boolean; volume?: number }) => post<{ sound: InboxSoundSettings }>('/api/inbox/settings', { sound: change }),
   /** Ask to show the one-time sound dialog: `show` is true for the first page that ever asks after an update, and only that one. */
   claimSoundDialog: () => post<{ show: boolean; sound: InboxSoundSettings }>('/api/inbox/sound/dialog', {}),
@@ -678,9 +694,26 @@ export function subscribeInboxEvents(
     onRecord: (event: InboxEvent | null) => void;
     /** `updated` is undefined from an Inbox older than the field (the "What's new in X" link stays as the list said). */
     onStatus: (update: InboxHealth['update'], updated?: string | null) => void;
+    /** Whether a notification can reach the person now (inbox-windows.ts); never called by an older Inbox. */
+    onReach?: (reach: InboxNotifyReach) => void;
   },
+  /** This window, so the server counts it (and what its browser allows) while the stream is open. */
+  win?: { id: string; permission: InboxWindowPermission; origin: string },
 ): () => void {
-  const source = new EventSource(`/api/inbox/events?cursor=${cursor}`);
+  const query = new URLSearchParams({ cursor: String(cursor) });
+  if (win) {
+    query.set('window', win.id);
+    query.set('permission', win.permission);
+    query.set('origin', win.origin);
+  }
+  const source = new EventSource(`/api/inbox/events?${query}`);
+  source.addEventListener('reach', (event) => {
+    try {
+      handlers.onReach?.(JSON.parse((event as MessageEvent<string>).data) as InboxNotifyReach);
+    } catch {
+      // A malformed frame changes nothing.
+    }
+  });
   source.addEventListener('record', (event) => {
     let parsed: InboxEvent | null = null;
     try {

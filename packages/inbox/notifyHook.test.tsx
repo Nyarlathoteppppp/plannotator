@@ -16,6 +16,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import type { InboxAuthor, InboxListRow, InboxMessage, InboxQuestion, InboxSectionId } from '@plannotator/core/inbox-types';
 import type { InboxEvent, ListModel } from './api';
 import type { InboxNotifications } from './notify';
+import { FROZEN_NOTICE_MS, NOTICE_CLAIMS_KEY, TEST_NOTIFICATION_TAG } from './notify';
 
 const hasDom = typeof document !== 'undefined';
 const { useInboxNotifications } = (hasDom ? await import('./notify') : {}) as typeof import('./notify');
@@ -311,5 +312,109 @@ describe.if(hasDom)('useInboxNotifications', () => {
     otherTabInFront = true;
     await batch([message('t3', 't3')], list([{ id: 't3', section: 'new' }]), [tabs[0]!]);
     expect(raised).toHaveLength(2);
+  });
+
+  test('a tab that may not notify claims nothing, so it never swallows an item a tab that may would show', async () => {
+    const Recording = (window as unknown as { Notification: { permission: NotificationPermission } }).Notification;
+    Recording.permission = 'default';
+    away();
+    await batch([message('t1', 't1'), question('t1', 'q-1')], list([{ id: 't1', section: 'waiting' }]));
+    expect(raised).toEqual([]);
+    expect(window.localStorage.getItem(NOTICE_CLAIMS_KEY)).toBeNull();
+    Recording.permission = 'denied';
+    await batch([message('t2', 't2'), question('t2', 'q-2')], list([{ id: 't2', section: 'waiting' }]));
+    expect(window.localStorage.getItem(NOTICE_CLAIMS_KEY)).toBeNull();
+    // The same item, in a tab allowed to notify: it raises it.
+    Recording.permission = 'granted';
+    act(() => window.dispatchEvent(new Event('focus')));
+    away();
+    await batch([message('t3', 't3'), question('t3', 'q-3')], list([{ id: 't3', section: 'waiting' }]));
+    expect(raised).toHaveLength(1);
+    expect(window.localStorage.getItem(NOTICE_CLAIMS_KEY)).toContain('q-3');
+  });
+
+  test('the permission is read again when the tab comes back (a change made in site settings)', () => {
+    const Recording = (window as unknown as { Notification: { permission: NotificationPermission } }).Notification;
+    expect(tabs[0]!.permission).toBe('granted');
+    Recording.permission = 'denied';
+    back();
+    expect(tabs[0]!.permission).toBe('denied');
+    Recording.permission = 'granted';
+  });
+
+  test('the ask stays on every load until resolved: a list with threads is enough, no new question needed', async () => {
+    const Recording = (window as unknown as { Notification: { permission: NotificationPermission } }).Notification;
+    Recording.permission = 'default';
+    act(() => root?.unmount());
+    host?.remove();
+    tabs.length = 0;
+    mountTabs(1);
+    expect(tabs[0]!.ask).toBeNull();
+    await batch([], list([]));
+    expect(tabs[0]!.ask).toBeNull();
+    await batch([], list([{ id: 'old', section: 'quiet' }]));
+    expect(tabs[0]!.ask).toBe('ask');
+    Recording.permission = 'granted';
+    back();
+    expect(tabs[0]!.ask).toBeNull();
+  });
+
+  test('Send a test notification: raised on its own tag when allowed, refused when not', async () => {
+    let result: string | undefined;
+    await act(async () => {
+      result = await tabs[0]!.sendTest();
+    });
+    expect(result).toBe('sent');
+    expect(raised).toHaveLength(1);
+    expect(raised[0]!.tag).toBe(TEST_NOTIFICATION_TAG);
+    expect(raised[0]!.title).toContain('test notification');
+    const Recording = (window as unknown as { Notification: { permission: NotificationPermission } }).Notification;
+    Recording.permission = 'default';
+    await act(async () => {
+      result = await tabs[0]!.sendTest();
+    });
+    expect(result).toBe('not-allowed');
+    expect(raised).toHaveLength(1);
+    Recording.permission = 'granted';
+  });
+
+  test('a tab the browser froze for a minute or more, or discarded, says so once', () => {
+    expect(tabs[0]!.slept).toBeNull();
+    const realNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      act(() => document.dispatchEvent(new Event('freeze')));
+      now += 10_000;
+      act(() => document.dispatchEvent(new Event('resume')));
+      expect(tabs[0]!.slept).toBeNull();
+      act(() => document.dispatchEvent(new Event('freeze')));
+      now += FROZEN_NOTICE_MS + 1;
+      act(() => document.dispatchEvent(new Event('resume')));
+      expect(tabs[0]!.slept).toBe('frozen');
+      act(() => tabs[0]!.dismissSlept());
+      expect(tabs[0]!.slept).toBeNull();
+    } finally {
+      Date.now = realNow;
+    }
+    // A reload after Memory Saver discarded the tab.
+    act(() => root?.unmount());
+    host?.remove();
+    tabs.length = 0;
+    Object.defineProperty(document, 'wasDiscarded', { configurable: true, value: true });
+    try {
+      mountTabs(1);
+      expect(tabs[0]!.slept).toBe('discarded');
+    } finally {
+      delete (document as unknown as Record<string, unknown>).wasDiscarded;
+    }
+  });
+
+  test('the window report carries this tab: one id per page, its permission and origin', () => {
+    const report = tabs[0]!.windowReport();
+    expect(report.id.length).toBeGreaterThanOrEqual(8);
+    expect(report.permission).toBe('granted');
+    expect(report.origin).toBe(window.location.origin);
+    expect(tabs[0]!.windowReport().id).toBe(report.id);
   });
 });
