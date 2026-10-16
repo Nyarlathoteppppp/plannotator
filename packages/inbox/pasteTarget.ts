@@ -22,7 +22,7 @@
  *
  * Nothing changes when focus is already in a text field or inside a frame (an
  * attached HTML page), when text is selected in an attached file's viewer or
- * a selection toolbar shows (the person is about to comment on it), or when
+ * a guided review, or a selection toolbar shows (the person is about to comment on it), or when
  * no remembered field is on screen: gone, hidden, disabled, read-only,
  * scrolled out of view (out of the window, or clipped by its pane), behind a
  * modal dialog, under a full-screen file or a guided review, or with
@@ -149,7 +149,8 @@ function usable(field: TextField): boolean {
  * at a field then. A selection toolbar showing counts (ui's viewer draws the
  * selected words as a pending highlight and clears the browser's own
  * selection while its toolbar, Delete, Comment and labels, shows), and so
- * does a browser selection inside an attached file's viewer. A selection
+ * does a browser selection inside an attached file's viewer or a guided
+ * review (code selected in its diff opens a comment there). A selection
  * anywhere else (a word double-clicked in a thread message, a choice's label)
  * comments on nothing, so it never turns the paste off.
  */
@@ -160,12 +161,15 @@ function pageSelection(doc: Document): boolean {
   return fileViewSelection(doc);
 }
 
-/** Where text can be selected to comment on it: an attached file's viewer. */
-const ANNOTATABLE_VIEW = '.ib-view';
+/** Where text can be selected to comment on it: an attached file's viewer, and a guided review. */
+const ANNOTATABLE_VIEW = '.ib-view, .ib-viewer';
 
 function fileViewSelection(doc: Document): boolean {
   const selection = doc.getSelection?.();
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+  if (!selection || selection.rangeCount === 0) return false;
+  // The words decide, not isCollapsed: code selected in a guided review's diff lives in Pierre's
+  // shadow root, and Chromium and WebKit report that selection on the document as collapsed at the
+  // shadow host's parent (anchorNode retargeted there), while toString() still holds the words.
   if (!selection.toString().trim()) return false;
   const node = selection.anchorNode;
   const el = node instanceof Element ? node : (node?.parentElement ?? null);

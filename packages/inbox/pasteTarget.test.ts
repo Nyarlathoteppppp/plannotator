@@ -205,6 +205,51 @@ test.skipIf(!hasDom)('text selected in an attached file to comment on: the paste
   expect(document.activeElement).toBe($('#reply'));
 });
 
+test.skipIf(!hasDom)("code selected in a guided review (inside its diff's shadow root) keeps the paste out of a comment box left open", () => {
+  page(`
+    <textarea id="reply"></textarea>
+    <div class="ib-viewer">
+      <div class="review-toolbar"><textarea id="guide-comment"></textarea></div>
+      <div id="diff"><diffs-container id="host"></diffs-container></div>
+    </div>
+  `);
+  const code = $('#host').attachShadow({ mode: 'open' });
+  code.innerHTML = '<pre><code><span id="line">const retryWithSameKey = true;</span></code></pre>';
+  const comment = $<HTMLTextAreaElement>('#guide-comment');
+  $<HTMLTextAreaElement>('#reply').focus();
+  comment.focus();
+  comment.blur(); // the reviewer leaves the inline comment open and selects other code
+  // What headless Chromium and WebKit report for a selection inside the shadow root: on the document
+  // it is collapsed, anchored at the shadow host's parent, yet toString() holds the selected words.
+  const getSelection = document.getSelection.bind(document);
+  const shadowSelection = {
+    rangeCount: 1,
+    isCollapsed: true,
+    anchorNode: $('#diff'),
+    toString: () => 'retryWithSameKey',
+  } as unknown as Selection;
+  document.getSelection = () => shadowSelection;
+  try {
+    commandV();
+    expect(document.activeElement).not.toBe(comment);
+    expect(document.activeElement).not.toBe($('#reply'));
+    // The same report outside a guided review or a file view (a word in a thread message) does not count.
+    document.getSelection = () => ({ ...shadowSelection, anchorNode: document.body, toString: () => 'retryWithSameKey' }) as unknown as Selection;
+    $('.ib-viewer').remove();
+    commandV();
+    expect(document.activeElement).toBe($('#reply'));
+  } finally {
+    document.getSelection = getSelection;
+  }
+  // Text selected in the guide's light DOM (a section's overview) counts too.
+  page(`<textarea id="reply"></textarea><div class="ib-viewer"><p id="overview">Retry with the same key.</p></div><button id="b">x</button>`);
+  $<HTMLTextAreaElement>('#reply').focus();
+  $<HTMLButtonElement>('#b').focus();
+  selectText($('#overview'), 0, 5);
+  commandV();
+  expect(document.activeElement).toBe($('#b'));
+});
+
 test.skipIf(!hasDom)('a word selected in a thread message or a choice label (double-click) does not turn the paste off', () => {
   page(`
     <textarea id="reply"></textarea>
