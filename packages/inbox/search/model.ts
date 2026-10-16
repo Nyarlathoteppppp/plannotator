@@ -220,7 +220,9 @@ export function rowThread(row: InboxSearchRow): RowThread | null {
   const name = threadChipName(row.thread_name, subject);
   const first = sameText(row.type === 'message' ? row.snippet.text : row.type === 'decision' ? row.text : row.name);
   const wanted = sameText(subject);
-  const shown = wanted.length > 0 && (first.includes(wanted) || (first.length >= SHOWN_MIN && wanted.includes(first)));
+  // Shown only when the first line is the subject, begins with it, or is a long enough start of it (a cut subject):
+  // never a word or two met inside the text ("Deploy" in "We should deploy tomorrow").
+  const shown = wanted.length > 0 && (first.startsWith(wanted) || (first.length >= SHOWN_MIN && wanted.startsWith(first)));
   if (shown && !name) return null;
   return { subject: shown ? null : subject, name };
 }

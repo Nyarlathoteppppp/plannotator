@@ -110,7 +110,7 @@ export async function seedSearchWorld(input: { binary: string; env: Record<strin
     await windowPost(input.url, `/api/inbox/messages/${msg(northwind)}/reply`, { idempotency_key: 'k-northwind-pin', questions: [{ key: question.key, revision: 1 }] });
   }
   await pause();
-  const japanese =await opencode.send({ project_path: projects.japanese, subject: 'デプロイ後の決済エラーの調査（deploy 2026-10-12）', thread: 'deploy', body: '昨夜の deploy の後、決済APIのタイムアウトが3倍に増えました。原因は接続プールの上限です。修正版を用意しました。' });
+  const japanese = await opencode.send({ project_path: projects.japanese, subject: 'デプロイ後の決済エラーの調査（deploy 2026-10-12）', thread: 'deploy', body: '昨夜の deploy の後、決済APIのタイムアウトが3倍に増えました。原因は接続プールの上限です。修正版を用意しました。' });
   await pause();
   const ranking = await pi.send({ project_path: projects.workspaces, subject: 'Search ranking: current-workspace boost', thread: 'search', body: `Should hits from the workspace you are in rank above others, or only win ties?${ask('How strong is the current-workspace boost?', ['Wins ties only', 'One tier', 'A filter'])}` });
   await personReply(input.url, msg(ranking), 'Keep the boost small, never a filter. Ties only.');

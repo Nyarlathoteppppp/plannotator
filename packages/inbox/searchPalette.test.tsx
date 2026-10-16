@@ -487,7 +487,8 @@ test.skipIf(!hasDom)('a result in a thread names its thread: the name chip and t
   expect(subject('msg_a')!.getAttribute('dir')).toBe('auto');
   // The option's name says it is the thread, and the project and time still follow.
   expect(row('msg_a').textContent).toContain(`in thread nightly-deploy: ${longSubject}`);
-  expect(row('msg_a').textContent).toMatch(/Claude Code·.*in thread.*·plannotator·/);
+  // A screen reader hears ", " where a "·" is drawn.
+  expect(row('msg_a').textContent).toMatch(/Claude Code·, in thread .*·, plannotator·, /);
   // A repeated subject is left out; the chip stays when there is one.
   expect(name('msg_b')!.textContent).toBe('relay');
   expect(subject('msg_b')).toBeNull();
@@ -501,4 +502,26 @@ test.skipIf(!hasDom)('a result in a thread names its thread: the name chip and t
   expect(subject('dec_1')!.textContent).toBe(longSubject);
   expect(thread('dec_2')).toBeNull();
   expect(row('dec_2').textContent).toContain('Settled');
+});
+
+test.skipIf(!hasDom)('a short subject met inside the text is still named; only a first line that is, begins with or starts the subject leaves it out', async () => {
+  const { rowThread } = await import('./search/model');
+  const where = { project, section: 'quiet' as const, archived: false, at: '2026-10-09T14:03:00Z' };
+  const message = (title: string, text: string, thread_name: string | null = null): InboxSearchRow => ({
+    type: 'message', id: 'msg_x', thread_id: 'msg_t', ...where, author: { kind: 'agent', name: 'Pi' }, title, thread_name, snippet: { text, marks: [] }, question: null,
+  });
+  const decision = (title: string, text: string): InboxSearchRow => ({ type: 'decision', id: 'dec_x', ...where, text, text_marks: [], state: 'current', from: 'me', thread_id: 'msg_t', title, thread_name: null });
+  // A word inside the text is not the subject being shown.
+  expect(rowThread(message('Deploy', 'We should deploy tomorrow morning'))).toEqual({ subject: 'Deploy', name: null });
+  expect(rowThread(message('Tests', 'All tests pass now'))).toEqual({ subject: 'Tests', name: null });
+  expect(rowThread(message('Auth bug', '…the auth bug is in the session check…'))).toEqual({ subject: 'Auth bug', name: null });
+  expect(rowThread(decision('Auth bug', 'Fix the auth bug before the release'))).toEqual({ subject: 'Auth bug', name: null });
+  // Is, begins with, or is a long enough start of the subject: left out.
+  expect(rowThread(message('Keep the rate limit?', 'Keep the rate limit?'))).toBeNull();
+  expect(rowThread(message('Schema migration', 'Schema migration for the comments table runs in 4 s'))).toBeNull();
+  expect(rowThread(message('Investigate why the nightly deploy fails on the second retry', 'Investigate why the nightly…'))).toBeNull();
+  // A start shorter than 12 characters is not enough.
+  expect(rowThread(message('Investigate why the nightly deploy fails', 'Investigate…'))).toEqual({ subject: 'Investigate why the nightly deploy fails', name: null });
+  // Left out with a name: the chip stays.
+  expect(rowThread(message('Keep the rate limit?', 'Keep the rate limit?', 'relay'))).toEqual({ subject: null, name: 'relay' });
 });

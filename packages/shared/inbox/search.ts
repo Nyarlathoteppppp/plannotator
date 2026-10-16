@@ -1029,9 +1029,10 @@ export class InboxSearchIndex {
           if (query.status || query.from) return null;
           return { group: "projects", facts: null };
       }
-      // A decision recorded from no thread (an agent's record_decision) has no section.
-      if (doc.type === "decision" && !doc.threadId) return query.status ? null : fromOk(doc, null) ? { group, facts: null } : null;
       const facts = doc.threadId ? this.factsOf(doc.threadId) : null;
+      // A decision recorded from no thread (an agent's record_decision), or whose thread was deleted since, has no
+      // section: it stays searchable, as on the Decisions page, and its row names no thread.
+      if (doc.type === "decision" && !facts) return query.status ? null : fromOk(doc, null) ? { group, facts: null } : null;
       if (doc.threadId && !facts) return null;
       if (!statusOk(facts) || !fromOk(doc, facts)) return null;
       return { group, facts };

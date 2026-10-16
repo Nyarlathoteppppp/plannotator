@@ -2195,7 +2195,7 @@ dialog.ib-sp::backdrop { background: oklch(0 0 0 / 0.45); }
 /* A result that belongs to a thread names it (ThreadLine): what it is · the thread (a mark, the name chip,
    the subject) · project · time, on one line. The subject gives way first, then the chip, then the project;
    the lead and the time keep their place. Every part cuts at its own end (a right-to-left part included). */
-.ib-sp-s.ib-sp-tl { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ib-sp-s.ib-sp-tl { position: relative; display: flex; align-items: center; gap: 5px; min-width: 0; }
 .ib-sp-tl > *, .ib-sp-tl .ib-sp-th > bdi { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ib-sp-tl bdi { max-width: none; }
 .ib-sp-tl .ib-sp-dot { flex: none; overflow: visible; }
@@ -2256,8 +2256,8 @@ dialog.ib-sp::backdrop { background: oklch(0 0 0 / 0.45); }
   dialog.ib-sp[data-phone] .ib-sp-row { min-height: 56px; padding: 8px 8px; }
   dialog.ib-sp[data-phone] .ib-sp-p { font-size: 15px; }
   dialog.ib-sp[data-phone] .ib-sp-s { font-size: 12.5px; }
-  /* A phone keeps more of the thread: the project gives way sooner. */
-  dialog.ib-sp[data-phone] .ib-sp-tl .ib-sp-pj { max-width: 18%; }
+  /* A phone gives the thread the room: beside a thread the project is not drawn (a screen reader still hears it). */
+  dialog.ib-sp[data-phone] .ib-sp-tl .ib-sp-th ~ .ib-sp-dot-pj, dialog.ib-sp[data-phone] .ib-sp-tl .ib-sp-th ~ .ib-sp-pj { position: absolute; width: 1px; height: 1px; min-width: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   dialog.ib-sp[data-phone] .ib-sp-menu { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto; max-width: none; max-height: 60vh; padding: 6px; border-radius: 12px; }
   dialog.ib-sp[data-phone] .ib-sp-mi { height: 44px; font-size: 15px; }
 }

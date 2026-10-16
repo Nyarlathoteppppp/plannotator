@@ -137,14 +137,17 @@ function Secondary({ parts }: { parts: readonly (ReactNode | null | false)[] }) 
  * thread it is in (a thread mark, the name chip as the list shows it, the
  * subject), then the project and the time. One line: the subject gives way
  * first, then the chip, then the project; the lead and the time keep their
- * place. Each user-written part is its own `<bdi dir="auto">`, cut with "…" at
- * its own end, with its whole text in `title` (and in the DOM, so the
- * option's name holds it).
+ * place. On a phone the project is not drawn beside a thread (inbox.css). Each
+ * user-written part is its own `<bdi dir="auto">`, cut with "…" at its own
+ * end, with its whole text in `title` (and in the DOM, so the option's name
+ * holds it); a screen reader hears ", " where a "·" is drawn.
  */
 function ThreadLine({ lead, thread, project, at }: { lead: ReactNode; thread: RowThread | null; project: string; at: string | null }) {
-  const dot = (
-    <span className="ib-sp-dot" aria-hidden="true">
-      ·
+  // The "·" is drawn; a screen reader hears ", " in its place.
+  const dot = (extra?: string) => (
+    <span className={`ib-sp-dot${extra ? ` ${extra}` : ''}`}>
+      <span aria-hidden="true">·</span>
+      <span className="ib-sr">, </span>
     </span>
   );
   return (
@@ -152,7 +155,7 @@ function ThreadLine({ lead, thread, project, at }: { lead: ReactNode; thread: Ro
       <span className="ib-sp-lead">{lead}</span>
       {thread && (
         <>
-          {dot}
+          {dot()}
           <span className="ib-sp-th" data-result-thread="">
             <Icon name="comment" className="ib-sp-thi" />
             <span className="ib-sr">in thread </span>
@@ -170,13 +173,13 @@ function ThreadLine({ lead, thread, project, at }: { lead: ReactNode; thread: Ro
           </span>
         </>
       )}
-      {dot}
+      {dot("ib-sp-dot-pj")}
       <bdi className="ib-sp-pj" dir="auto" title={project}>
         {project}
       </bdi>
       {at && (
         <>
-          {dot}
+          {dot()}
           <span className="ib-sp-at">{at}</span>
         </>
       )}
