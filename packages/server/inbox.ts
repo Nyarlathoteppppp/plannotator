@@ -783,7 +783,10 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
               ...(modOff ? { mod_off: true } : {}),
             }
           : null;
-        const reminder = host ? { on: resolveInboxReminder(config, env, host), locked: toolEnv !== undefined, needs_tool: !resolveInboxTool(config, env, host) } : null;
+        // No tool (the inboxTool switch, or Claude Code's mod off): no reminder.
+        const reminder = host
+          ? { on: !modOff && resolveInboxReminder(config, env, host), locked: toolEnv !== undefined, needs_tool: modOff || !resolveInboxTool(config, env, host) }
+          : null;
         // With PLANNOTATOR_INBOX_NOTES=0 only a note already written is listed, so it can still be turned off.
         const status = (INBOX_NOTE_AGENT_IDS as readonly string[]).includes(id) ? noteStatus(id as InboxNoteAgentId, dataDir, agentEnvironment) : null;
         const note = status && (!notesOff || status.state === "added" || status.state === "edited") ? status : null;

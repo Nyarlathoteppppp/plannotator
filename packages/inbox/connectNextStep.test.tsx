@@ -376,3 +376,24 @@ test.skipIf(!hasDom)('only OpenCode 1 on PATH: its plugin line ("plugin", not V2
   const v2 = mount(agentsModel({ opencode: { ...missing('opencode'), plugin: { installed: false, generation: '2' } } }));
   expect(text(card(v2.el).querySelector('pre'))).toBe('"plugins": [{ "package": "@plannotator/opencode@latest" }]');
 });
+
+test.skipIf(!hasDom)('the OpenCode plugin line follows a later read that learns the version', () => {
+  let current = agentsModel({ opencode: { ...missing('opencode'), plugin: { installed: false } } });
+  host = document.createElement('div');
+  host.className = 'pn-inbox';
+  document.body.appendChild(host);
+  const render = () =>
+    root!.render(
+      <SidebarProvider>
+        <EmptyState context={context} agents={current} agentsUnavailable={null} sessions={null} onAgents={() => {}} onMessage={() => {}} />
+      </SidebarProvider>,
+    );
+  act(() => {
+    root = createRoot(host!);
+    render();
+  });
+  expect(text(card(host).querySelector('pre'))).toBe('"plugins": [{ "package": "@plannotator/opencode@latest" }]');
+  current = agentsModel({ opencode: { ...missing('opencode'), plugin: { installed: false, generation: '1' } } });
+  act(() => render());
+  expect(text(card(host).querySelector('pre'))).toBe('"plugin": ["@plannotator/opencode@latest"]');
+});

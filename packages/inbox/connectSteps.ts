@@ -60,14 +60,17 @@ export function connectRowOf(row: InboxAgentRow, live = false): ConnectRow | nul
   if (isPluginHost(row.id)) {
     if (live) return { ...base, state: 'ready' };
     if (!row.detected) return { ...base, state: 'absent' };
-    // Claude Code's plugin installed and turned off by name (`claude plugin disable`): the person's choice, never a step.
-    if (row.plugin?.disabled) return { ...base, state: 'tool-off', chosenOff: true, offNote: 'plugin turned off' };
+    // Claude Code's plugin turned off by name (`claude plugin disable`, or managed settings), or its mod off: the person's
+    // choice, never a step. An MCP entry the person added by hand still reaches the Inbox, so it counts as connected.
+    if (row.plugin?.disabled || row.tool?.mod_off) {
+      if (row.reach.kind === 'mcp' && row.reach.on) return { ...base, state: 'mcp' };
+      const offNote = row.plugin?.disabled ? (row.plugin.managed ? 'plugin turned off by managed settings' : 'plugin turned off') : 'Plannotator mod turned off';
+      return { ...base, state: 'tool-off', locked: row.reach.locked, chosenOff: true, offNote };
+    }
     // The plugin is installed exactly when the agent reaches the Inbox through its tool (`plugin` says so too, on a newer Inbox).
     const installed = row.plugin ? row.plugin.installed : row.reach.kind === 'tool';
     if (installed && row.reach.kind === 'tool') {
       if (row.reach.on) return { ...base, state: 'ready' };
-      // The Claude Code mod turned off (it registers the tool): no tool whatever inboxTool says, and the person's choice.
-      if (row.tool?.mod_off) return { ...base, state: 'tool-off', locked: row.reach.locked, chosenOff: true, offNote: 'Plannotator mod turned off' };
       return { ...base, state: 'tool-off', locked: row.reach.locked, chosenOff: row.tool?.chosen_off === true };
     }
     if (row.reach.kind === 'mcp' && row.reach.on) return { ...base, state: 'mcp-only' };
@@ -212,6 +215,7 @@ export function blockedText(plan: ConnectPlan, opts: { skipped: readonly string[
   if (locked.length) parts.push(`PLANNOTATOR_INBOX_TOOL=${opts.toolEnv ? '1' : '0'} keeps the Inbox tool off for ${names(locked)}.`);
   for (const row of off) {
     if (row.offNote === 'plugin turned off') parts.push(`Plannotator's plugin is turned off in ${row.label} (claude plugin enable plannotator@plannotator turns it back on).`);
+    else if (row.offNote === 'plugin turned off by managed settings') parts.push(`Your organization's managed settings turn Plannotator's plugin off in ${row.label}.`);
     else if (row.offNote) parts.push(`Plannotator's ${row.label} mod is turned off (PLANNOTATOR_CLAUDE_MOD or claudeCodeMod), so ${row.label} has no Inbox tool.`);
   }
   const toolOff = off.filter((row) => !row.offNote);

@@ -149,3 +149,20 @@ test('OpenCode 1 on PATH: the step names the version, and the row carries it for
   expect(plan.next?.generation).toBe('1');
   expect(stepText(plan.next!).text).toContain('OpenCode 1 checks for your replies itself');
 });
+
+test('a hand-added MCP entry still counts when the plugin is disabled or its mod off: connected (MCP), never a step', () => {
+  for (const over of [{ plugin: { installed: false, disabled: true } }, { tool: { on: false, locked: false, mod_off: true }, plugin: { installed: true } }]) {
+    const plan = connectPlan(agentsModel({ 'claude-code': { ...viaMcp('claude-code'), ...over } }));
+    expect(plan.done.map((row) => [row.id, row.state])).toEqual([['claude-code', 'mcp']]);
+    expect(plan.next).toBeNull();
+    expect(plan.blocked).toBe(false);
+  }
+});
+
+test('the plugin turned off by managed settings: said so, and claude plugin enable is never suggested', () => {
+  const plan = connectPlan(agentsModel({ 'claude-code': { ...missing('claude-code'), plugin: { installed: false, disabled: true, managed: true } } }));
+  expect(laterNote(plan.later[0]!, { skipped: false, toolEnv: null })).toBe('plugin turned off by managed settings');
+  const why = blockedText(plan, { skipped: [], toolEnv: null }).text;
+  expect(why).toContain("managed settings turn Plannotator's plugin off");
+  expect(why).not.toContain('claude plugin enable');
+});

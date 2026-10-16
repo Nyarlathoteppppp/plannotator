@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { InboxAgentId, InboxAgentsModel } from '@plannotator/core/inbox-types';
 import { inboxApi, type ComposeSessionsModel } from '../api';
 import { OTHER_HARNESSES, harnessPanel, hostMcpSnippet, type ConnectContext } from '../harnesses';
@@ -83,6 +83,10 @@ function Choice<T extends string>({ label, value, options, onChange }: { label: 
 function InstallBlock({ host, generation }: { host: PluginHost; generation?: '1' | '2' }) {
   // The OpenCode on PATH decides which plugin line shows first: OpenCode 1 does not read `plugins`.
   const [version, setVersion] = useState<'2' | '1'>(generation ?? '2');
+  // The agents are read again every few seconds: follow what they say about the OpenCode on this computer.
+  useEffect(() => {
+    if (generation) setVersion(generation);
+  }, [generation]);
   if (host === 'claude-code') {
     return (
       <div className="ib-cn-blk" data-install="claude-code">

@@ -1017,11 +1017,12 @@ export interface InboxAgentRow {
    * extension is installed (Claude Code's plugin enabled, Pi's settings
    * `packages`, OpenCode's global `plugin`/`plugins`). Absent from an older
    * Inbox; null for every other agent. `disabled` (Claude Code): installed and
-   * turned off by name (`claude plugin disable`), the person's choice.
+   * turned off by name (`claude plugin disable`), the person's choice;
+   * `managed`, turned off by managed (enterprise) settings.
    * `generation` (OpenCode): the version on PATH (`opencode2`: 2, `opencode`
    * alone: 1), for the plugin line that version reads.
    */
-  plugin?: { installed: boolean; disabled?: boolean; generation?: "1" | "2" } | null;
+  plugin?: { installed: boolean; disabled?: boolean; managed?: boolean; generation?: "1" | "2" } | null;
 }
 
 export interface InboxAgentsModel {
