@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PERSON_THREAD_NAME_COLUMNS, PERSON_THREAD_NAME_WORDS, suggestPersonThreadName } from "./inbox-questions";
+import { derivePersonThreadSubject, PERSON_THREAD_NAME_COLUMNS, PERSON_THREAD_NAME_WORDS, suggestPersonThreadName } from "./inbox-questions";
 
 /** Display columns as the rule counts them (CJK and emoji two). */
 function columns(text: string): number {
@@ -52,6 +52,12 @@ const TABLE: [string, string][] = [
   ["¿Puedes arreglar el error de pegado en la caja de respuesta?", "Error de pegado"],
   ["Je voudrais un mode sombre pour les paramètres", "Mode sombre"],
   ["Kannst du dir den Login-Flow auf dem iPad ansehen?", "Login-Flow"],
+  // Junk the review found: markup, invisible characters, nothing but filler words, a plain statement first.
+  ["<script>alert(1)</script>", ""],
+  ["can you fix the pa\u200bste bug", "Paste bug"],
+  ["So I want to make the thing work better", "Thing work better"],
+  ["I think we should do it", ""],
+  ["日本語のテキストです。カンバンボードを追加したいです。", "カンバンボード"],
   // Images.
   ["![](./design/board-mock.png)", "Board mock"],
   ["Look at this ![Checkout drawer](./shots/c.png)", "Checkout drawer"],
@@ -83,6 +89,16 @@ describe("suggestPersonThreadName: compose fills the thread's chip with a short 
   test("a body with no words names itself from an attached file", () => {
     expect(suggestPersonThreadName("", { files: ["relay-retry-budget.md"] })).toBe("Relay retry budget");
     expect(suggestPersonThreadName("", { files: ["pasted-image-2026-10-16-1405.png"] })).toBe("");
+  });
+
+  test("a 1 MB line (an unclosed link, tag or image) is named in milliseconds, not minutes: the markdown rules read only its start", () => {
+    // Repeated unclosed openers backtracked quadratically before the cut: 24 KB of "![a](b" took 125 ms, so 1 MB took minutes.
+    for (const evil of ["[x](y".repeat(200_000), "<a ".repeat(330_000), "![a](b".repeat(170_000), "[".repeat(1_000_000), "word ".repeat(200_000)]) {
+      const started = performance.now();
+      suggestPersonThreadName(evil);
+      derivePersonThreadSubject(evil);
+      expect(performance.now() - started).toBeLessThan(500);
+    }
   });
 
   test("never throws on anything", () => {

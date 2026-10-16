@@ -2335,6 +2335,10 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-key.ib-cp-tname[data-invalid] { border-color: var(--destructive); border-style: solid; }
 .pn-inbox .ib-cp-tname-in { min-width: 0; max-width: 100%; border: 0; outline: none; background: transparent; color: inherit; font: inherit; font-size: 12px; padding: 0; }
 .pn-inbox .ib-cp-tname-in::placeholder { color: var(--muted-foreground); opacity: 0.8; }
+/* While it follows the message: muted words and a small "auto" (aria-describedby says the same). */
+.ib-key.ib-cp-tname[data-auto] .ib-cp-tname-in { font-style: italic; }
+.ib-cp-tname-auto { flex: none; margin-left: 6px; padding: 0 4px; border-radius: 3px; font-family: var(--font-sans, inherit); font-size: 10px; font-style: normal; line-height: 15px; letter-spacing: 0.02em; color: var(--muted-foreground); background: color-mix(in oklch, var(--muted) 80%, transparent); }
+.ib-cp-tname-note { font-size: 12.5px; line-height: 18px; padding-top: 4px; color: var(--muted-foreground); min-width: 0; flex: 1 1 200px; }
 .ib-cp-tname-err { font-size: 12.5px; line-height: 18px; padding-top: 4px; color: var(--destructive); min-width: 0; flex: 1 1 200px; }
 .ib-cp-error { padding: 0 16px 8px; font-size: 12.5px; color: var(--destructive); flex: none; }
 .ib-cp-conflict { display: inline-flex; gap: 12px; margin-left: 10px; }
@@ -2408,7 +2412,8 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   /* The thread row: 44 px to touch, 16 px so iOS does not zoom into the name. */
   .ib-cp-thread { min-height: 52px; padding-top: 9px; padding-bottom: 9px; }
   .ib-cp-thread .ib-cp-tol { line-height: 34px; }
-  .ib-cp-tname-err { padding-top: 0; flex-basis: 100%; }
+  .ib-cp-tname-err, .ib-cp-tname-note { padding-top: 0; flex-basis: 100%; }
+  .ib-cp-tname-auto { font-size: 11px; line-height: 17px; }
   .ib-key.ib-cp-tname { position: relative; height: 34px; padding: 0 9px; }
   .ib-key.ib-cp-tname::after { content: ''; position: absolute; inset: -5px -2px; }
   .pn-inbox .ib-cp-tname-in { font-size: 16px; position: relative; z-index: 1; }

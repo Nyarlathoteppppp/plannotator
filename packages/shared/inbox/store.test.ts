@@ -553,23 +553,27 @@ describe("InboxStore invariants", () => {
         const bySession = new Map<string, string>();
         // Every root of a name, oldest first: a name joins its newest OPEN one.
         const byName = new Map<string, string[]>();
-        // Each root's name now (an agent's name replaces compose's suggestion): a name routes only to roots that still have it.
+        // Each root's name now (an agent's name replaces compose's suggestion). Only agent-started roots and
+        // roots an AGENT named route by name; a compose name (typed or suggested) is only "taken".
         const current = new Map<string, string>();
+        const agentNamed = new Set<string>();
         const nameKey = inboxThreadNameKey;
         const rootsNamed = (key: string) => (byName.get(key) ?? []).filter((root) => current.get(root) === key);
+        const holders = (key: string) => [...current].filter(([, k]) => k === key).map(([root]) => root);
         for (const line of lines) {
           if (line.kind !== "message") continue;
           const m = line.record;
           if (threadOf.has(m.id)) {
             if (m.id === m.thread_id) resolved.set(m.id, m.resolved_at !== null);
             // A thread the person started gains a name when an agent names it: from that line on, the name routes to it.
-            if (m.id === m.thread_id && m.started_by_person && m.thread_name != null && current.get(m.id) !== `${m.project_id}\0${nameKey(m.thread_name)}`) {
+            if (m.id === m.thread_id && m.started_by_person && m.thread_name != null && m.named_by?.kind === "agent" && !agentNamed.has(m.id)) {
               const key = `${m.project_id}\0${nameKey(m.thread_name)}`;
               // Only compose's suggestion is ever replaced, and only by an agent's name.
               if (current.has(m.id)) expect(m.named_by?.kind).toBe("agent");
               // Naming never takes a name another open thread has (it would pull that thread's sends in).
-              expect(rootsNamed(key).filter((root) => root !== m.id && !resolved.get(root))).toEqual([]);
+              expect(holders(key).filter((root) => root !== m.id && !resolved.get(root))).toEqual([]);
               current.set(m.id, key);
+              agentNamed.add(m.id);
               byName.set(key, [...(byName.get(key) ?? []), m.id]);
             }
             continue;
@@ -597,9 +601,11 @@ describe("InboxStore invariants", () => {
             resolved.set(m.id, m.resolved_at !== null);
             if (m.thread_name != null) {
               const key = `${m.project_id}\0${nameKey(m.thread_name)}`;
-              // A name the person gave in compose (or compose's suggestion) is never one another open thread has.
-              if (m.started_by_person) expect(rootsNamed(key).filter((root) => !resolved.get(root))).toEqual([]);
+              // A name the person gave in compose (or compose's suggestion) is never one another open thread has,
+              // and it routes nothing.
+              if (m.started_by_person) expect(holders(key).filter((root) => !resolved.get(root))).toEqual([]);
               current.set(m.id, key);
+              if (m.started_by_person) continue;
               byName.set(key, [...(byName.get(key) ?? []), m.id]);
             }
             else if (m.author.kind === "agent" && m.author.session) bySession.set(`${m.project_id}\0${m.author.session}`, m.id);

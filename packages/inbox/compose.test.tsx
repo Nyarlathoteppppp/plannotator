@@ -339,9 +339,14 @@ test.skipIf(!hasDom)('the thread chip follows the message until typed in; typed,
   expect(dialog()!.querySelector('[data-compose-thread-row] .ib-cp-tol')!.textContent).toBe('Thread');
   expect(dialog()!.querySelector('[data-compose-subject]')).toBeNull();
 
-  // It follows the message, a short name, live.
+  // It follows the message, a short name, live, marked "auto" (seen, and heard through aria-describedby).
   type('can you fix the paste bug in the reply box');
   await until(() => chipInput().value === 'Paste bug', 'the chip named from the message');
+  expect(chip().hasAttribute('data-auto')).toBe(true);
+  expect(chip().querySelector('.ib-cp-tname-auto')?.textContent).toBe('auto');
+  const described = () => chipInput().getAttribute('aria-describedby')!.split(' ').map((id) => document.getElementById(id)?.textContent).join(' ');
+  expect(described()).toContain('Named from your message until you type here.');
+  expect(chipInput().hasAttribute('title')).toBe(false);
   type('I want to explore what adding a board would look like. Kanban specifically.');
   await until(() => chipInput().value === 'Kanban board', 'the chip follows the message');
   // A bare question has nothing to name: the placeholder again, nothing invented.
@@ -353,6 +358,8 @@ test.skipIf(!hasDom)('the thread chip follows the message until typed in; typed,
   await until(() => chipInput().value === 'Kanban board', 'named again');
   fillChip('Board ideas');
   expect(chip().getAttribute('data-compose-thread-name')).toBe('edited');
+  expect(chip().hasAttribute('data-auto')).toBe(false);
+  expect(described()).toContain('Your name for the thread.');
   type('can you fix the paste bug in the reply box');
   await new Promise((r) => setTimeout(r, 400));
   expect(chipInput().value).toBe('Board ideas');
@@ -471,4 +478,37 @@ test.skipIf(!hasDom)('a typed name another open thread has: refused (409) and sa
   await until(() => dialog() === null, 'sent anyway');
   const rows = (JSON.parse((await loopback('/api/inbox/threads')).text) as { sections: InboxListSection[] }).sections.flatMap((s) => s.threads);
   expect(rows.find((t) => t.subject === 'Thinking about the relay budget again')!.thread_name ?? null).toBeNull();
+});
+
+test.skipIf(!hasDom)('dictation or a paste into the chip that cannot be a name is never cut short: it goes to the message, and the chip says so', async () => {
+  await poll('ses_named', 'claude-code', projects[0]!);
+  const el = await renderApp();
+  await openCompose(el);
+  await until(() => dialog()!.querySelector('[data-compose-to^="ses_"]') !== null, 'To prefilled');
+  type('Kanban board idea.');
+  await until(() => chipInput().value !== '', 'named');
+  const before = chipInput().value;
+  const paste = (text: string) => {
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown };
+    Object.defineProperty(event, 'clipboardData', { value: { getData: (kind: string) => (kind === 'text/plain' ? text : ''), files: [], items: [], types: ['text/plain'] } });
+    act(() => {
+      chipInput().focus();
+      chipInput().dispatchEvent(event);
+    });
+    return event;
+  };
+  // A dictated sentence far longer than a name: into the message, whole.
+  const long = 'And the columns should follow every state a thread can be in, '.repeat(3).trim();
+  const event = paste(long);
+  expect(event.defaultPrevented).toBe(true);
+  const text = dialog()!.querySelector('textarea') as HTMLTextAreaElement;
+  await until(() => text.value === `Kanban board idea. ${long}`, 'the words in the message');
+  expect(chipInput().value).toBe(before);
+  expect(dialog()!.querySelector('[data-compose-thread-name-note]')!.textContent).toBe('Too long for a name, so it went into your message.');
+  // A paste with a line break goes there too; a short one is the name's.
+  paste('Line one\nline two');
+  await until(() => text.value.endsWith('\nLine one\nline two'), 'the lines in the message');
+  // A dictated sentence of eight words or more is a sentence, not a name, even when it would fit.
+  expect(paste('this is a sentence the person said out loud').defaultPrevented).toBe(true);
+  expect(paste('Short').defaultPrevented).toBe(false);
 });

@@ -473,6 +473,18 @@ export function ComposeDialog(props: ComposeDialogProps) {
             setNameError(null);
           }}
           onDone={() => textRef.current?.focus()}
+          onOverflow={(text) => {
+            setBody((current) => (current.trim() ? `${current.replace(/\s+$/, '')}${/[\r\n]/.test(text) ? '\n' : ' '}${text}` : text));
+            setError(null);
+            // Dictation goes on in the message from here.
+            requestAnimationFrame(() => {
+              const area = textRef.current;
+              if (!area) return;
+              area.focus();
+              area.setSelectionRange(area.value.length, area.value.length);
+            });
+          }}
+          idBase={`ib-cp-tname-${uid}`}
         />
       </div>
       {model && !anyLive && !endedNote && (

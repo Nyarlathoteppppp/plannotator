@@ -166,9 +166,9 @@ describe("naming a thread the person started", () => {
     store.sendMessage({ project_id: project.id, author: agent("ses_live"), body: "ok", reply_to: root.id, thread: "Board" });
     expect(store.sendMessage({ project_id: project.id, author: agent("ses_b"), body: "joins", thread: "BOARD" }).message.thread_id).toBe(root.id);
 
-    // A person-named thread routes the same way.
+    // A name the person typed in compose routes nothing: another session's send with it starts its own thread.
     const { message: named } = store.startPersonThread({ project_id: project.id, body: "another idea", to: claude, idempotency_key: "k2", thread_name: "Relay" });
-    expect(store.sendMessage({ project_id: project.id, author: agent("ses_c"), body: "x", thread: "relay" }).message.thread_id).toBe(named.id);
+    expect(store.sendMessage({ project_id: project.id, author: agent("ses_c"), body: "x", thread: "relay" }).message.thread_id).not.toBe(named.id);
 
     // The store reopened from its files routes the next sends the same.
     const copy = scratch();
@@ -233,9 +233,11 @@ describe("compose's suggested name (thread_name_auto)", () => {
     // A suggestion is not the person's name: the agent may still name it.
     expect(store.canNameThread(root.id, "ses_live")).toBe(true);
 
-    // The suggestion routes like any name until it is replaced.
-    const joined = store.sendMessage({ project_id: project.id, author: agent("ses_other"), body: "joining", thread: "kanban BOARD" });
-    expect(joined.message.thread_id).toBe(root.id);
+    // The suggestion routes nothing (the reviewer's repro: another session's send with it starts its own thread).
+    const elsewhere = store.sendMessage({ project_id: project.id, author: agent("ses_other"), body: "elsewhere", thread: "kanban BOARD" });
+    expect(elsewhere.message.thread_id).not.toBe(root.id);
+    // That thread now holds the name, so the agent names the person's thread something else.
+    store.resolveThread(elsewhere.message.thread_id, true);
 
     const named = store.sendMessage({ project_id: project.id, author: agent("ses_live"), body: "Sketch.", reply_to: root.id, thread: "Board columns" });
     expect(named.naming).toEqual({ status: "named", name: "Board columns" });
@@ -282,3 +284,19 @@ describe("compose's suggested name (thread_name_auto)", () => {
   });
 });
 
+
+describe("a retried reply whose `thread` could not name anything", () => {
+  test("is the same call: `thread` is compared only where the reply could name the thread", () => {
+    const { store, project } = world();
+    // An agent's own thread: a reply's `thread` is ignored there.
+    const root = store.sendMessage({ project_id: project.id, author: agent("ses_a"), body: "status" }).message;
+    const first = store.sendMessage({ project_id: project.id, author: agent("ses_a"), body: "more", reply_to: root.id, thread: "One", idempotency_key: "r1" });
+    const again = store.sendMessage({ project_id: project.id, author: agent("ses_a"), body: "more", reply_to: root.id, thread: "Two", idempotency_key: "r1" });
+    expect(again.replayed).toBe(true);
+    expect(again.message.id).toBe(first.message.id);
+    // A person's thread already named: the reply could not name it either.
+    const { message: person } = store.startPersonThread({ project_id: project.id, body: IDEA, to: claude, idempotency_key: "k", thread_name: "Board" });
+    const r = store.sendMessage({ project_id: project.id, author: agent("ses_live"), body: "ok", reply_to: person.id, idempotency_key: "r2" });
+    expect(store.sendMessage({ project_id: project.id, author: agent("ses_live"), body: "ok", reply_to: person.id, thread: "Other", idempotency_key: "r2" }).message.id).toBe(r.message.id);
+  });
+});

@@ -134,8 +134,18 @@ function firstLineSubject(body: string): string | null {
   return first === null ? null : cutColumns(first.replace(/\s+/g, " "), PERSON_THREAD_SUBJECT_COLUMNS);
 }
 
+/**
+ * How much of a line the markdown rules read: a subject or a name comes from
+ * its start, and the link and tag patterns below backtrack on a long
+ * unclosed `[x](y`, `<a ` or `![a](b`, so a 1 MB dictated line must never
+ * reach them whole.
+ */
+const PLAIN_LINE_MAX = 4096;
+
 /** One markdown line as plain words; the images on it are added to `images`. */
-function plainSubjectLine(line: string, images: { alt: string; src: string }[]): string {
+function plainSubjectLine(input: string, images: { alt: string; src: string }[]): string {
+  // Cut, and never leave half of a surrogate pair at the end.
+  const line = input.length > PLAIN_LINE_MAX ? input.slice(0, PLAIN_LINE_MAX).replace(/[\uD800-\uDBFF]$/, "") : input;
   let text = line
     .replace(/^(?:>\s*)+/, "")
     .replace(/^#{1,6}(?:\s+|$)/, "")
@@ -420,13 +430,26 @@ const KANA = /[぀-ヿ]/u;
 const HAN = /\p{Script=Han}/u;
 
 function nameFromLine(text: string): string {
-  const line = replaceLinks(text).replace(/\s+/g, " ").trim();
+  // Zero-width and other invisible characters never reach a name (nor split a word).
+  const line = replaceLinks(text.replace(/\p{Default_Ignorable_Code_Point}/gu, "")).replace(/\s+/g, " ").trim();
   if (!line) return "";
   const sentences = line.split(/(?<=[.!?。！？])\s*/u).map((part) => part.trim()).filter(Boolean);
   const first = sentences[0] ?? line;
-  if (!/\s/.test(first.trim()) && (KANA.test(first) || HAN.test(first))) return capped(nameFromUnspaced(first));
-  const runs = contentRuns(first);
-  const ordered = [...runs.filter((run) => run.length >= 2), ...runs.filter((run) => run.length < 2)];
+  if (!/\s/.test(first.trim()) && (KANA.test(first) || HAN.test(first))) {
+    // Text without spaces: the sentence that asks for something ("…を追加したい") over a plain statement before it.
+    const asking = sentences.find((sentence) => CJK_REQUEST.test(sentence)) ?? first;
+    return capped(nameFromUnspaced(asking));
+  }
+  // First pass: the topic words. Second, when nothing is left ("make the thing work better"): every
+  // word but function words, two at least, so a lone verb ("think") never names a thread.
+  return nameFromRuns(contentRuns(first), sentences, 1) || nameFromRuns(contentRuns(first, NAME_FUNCTION), sentences, 2);
+}
+
+/** A request in text written without spaces: Japanese "…たい", "…ください", "…ほしい"; Chinese "想", "要", "请", "帮". */
+const CJK_REQUEST = /たい|ください|下さい|ほしい|欲しい|しよう|ましょう|てくれ|想|要|请|帮|吗/u;
+
+function nameFromRuns(runs: string[][], sentences: string[], minWords: number): string {
+  const ordered = [...runs.filter((run) => run.length >= 2), ...runs.filter((run) => run.length < 2)].filter((run) => run.length >= minWords);
   for (const run of ordered) {
     let words = run.length > PERSON_THREAD_NAME_WORDS ? run.slice(0, 2) : run;
     // "Board. Kanban specifically." → "Kanban board".
@@ -438,6 +461,7 @@ function nameFromLine(text: string): string {
     while (words.length > 1 && columnsOf(words.join(" ")) > PERSON_THREAD_NAME_COLUMNS) words = words.slice(0, -1);
     // A connector never ends a name ("error de" → "error").
     while (words.length > 1 && NAME_CONNECTORS.has(words[words.length - 1]!.toLowerCase())) words = words.slice(0, -1);
+    if (words.length < minWords) continue;
     const name = capped(words.join(" ").replaceAll(LINK_JOIN, " "));
     if (name) return capitalizeName(name);
   }
@@ -509,7 +533,7 @@ function normalizeWord(word: string): string {
  * (and anything without a letter or digit) breaks a run, and so does a
  * comma, semicolon, colon or dash after a word.
  */
-function contentRuns(sentence: string): string[][] {
+function contentRuns(sentence: string, stop: ReadonlySet<string> = NAME_STOP): string[][] {
   const tokens = sentence.split(/\s+/).filter(Boolean);
   const runs: string[][] = [];
   let run: string[] = [];
@@ -528,7 +552,7 @@ function contentRuns(sentence: string): string[][] {
   for (let i = 0; i < tokens.length; i += 1) {
     const { word, breaks } = wordOf(tokens[i]!);
     const key = normalizeWord(word);
-    const content = isContentWord(word, key);
+    const content = isContentWord(word, key, stop);
     if (content) {
       run.push(word);
       if (breaks) end();
@@ -537,12 +561,12 @@ function contentRuns(sentence: string): string[][] {
     // "the build is failing" → "build failing": the auxiliary drops out.
     if (run.length > 0 && AUX_BEFORE_ING.has(key) && !breaks && i + 1 < tokens.length) {
       const next = wordOf(tokens[i + 1]!);
-      if (/ing$/i.test(next.word) && isContentWord(next.word, normalizeWord(next.word))) continue;
+      if (/ing$/i.test(next.word) && isContentWord(next.word, normalizeWord(next.word), stop)) continue;
     }
     // "error de pegado", "Postgres or SQLite": a connector between two words of a run joins them.
     if (run.length > 0 && NAME_CONNECTORS.has(key) && !breaks && i + 1 < tokens.length) {
       const next = wordOf(tokens[i + 1]!);
-      if (isContentWord(next.word, normalizeWord(next.word))) {
+      if (isContentWord(next.word, normalizeWord(next.word), stop)) {
         run.push(word);
         continue;
       }
@@ -553,11 +577,13 @@ function contentRuns(sentence: string): string[][] {
   return runs;
 }
 
-function isContentWord(word: string, key: string): boolean {
+function isContentWord(word: string, key: string, stop: ReadonlySet<string> = NAME_STOP): boolean {
   if (!word || !/[\p{L}\p{N}]/u.test(word)) return false;
   if (word.startsWith("@")) return false;
   if (/^\p{L}$/u.test(word)) return false;
-  if (NAME_STOP.has(key)) return false;
+  // Code, not a topic: "alert(1)", "a=b", "<div>".
+  if (/[()[\]{}<>=;]/.test(word)) return false;
+  if (stop.has(key)) return false;
   // A Korean verb or ending: "추가하고", "싶어요", "주세요".
   if (/\p{Script=Hangul}/u.test(word) && KOREAN_VERB.test(word)) return false;
   return true;
@@ -595,13 +621,15 @@ const AUX_BEFORE_ING = new Set(["is", "are", "was", "were", "keeps", "kept", "ke
 /** Words that join two words of one name: "error de pegado", "Postgres or SQLite", "state of the art" (not across "the"). */
 const NAME_CONNECTORS = new Set(["of", "or", "vs", "versus", "de", "del", "di", "du", "des", "da", "do", "von", "der"]);
 
+const words = (text: string): string[] => text.split(/\s+/).filter(Boolean);
+
 /**
- * What never names a thread: function words, request verbs, vague nouns and
- * adverbs, in English and (the commonest) in Spanish, French, German,
- * Portuguese and Italian.
+ * Words that carry no topic in any sentence: function words, greetings, the
+ * wish itself ("want", "need") and every listed language's function words.
+ * The second pass (`nameFromLine`) drops only these.
  */
-const NAME_STOP = new Set(
-  (
+const NAME_FUNCTION = new Set(
+  words(
     // English: articles, pronouns, auxiliaries, prepositions, conjunctions, question words.
     "a an the this that these those it its it's i i'm i've i'd i'll me my mine we we're we've we'd we'll us our ours you you're you've you'd you'll your yours " +
     "he she they them their his her him who whom whose which what what's whats where where's when when's why why's how how's whether if then than so " +
@@ -612,8 +640,19 @@ const NAME_STOP = new Set(
     "around against along among within without via per like as until till since because while though although " +
     // Request words, greetings and politeness.
     "please pls plz thanks thank thx hey hi hello yo hmm um uh lets let's let gonna wanna gotta claude codex opencode " +
+    "want wants wanted need needs needed like liked love would-like wish hope think thinking thought thoughts ok okay",
+  ),
+);
+
+/**
+ * What never names a thread in the first pass: NAME_FUNCTION, request verbs,
+ * vague nouns and adverbs, in English and (the commonest) in Spanish,
+ * French, German, Portuguese and Italian.
+ */
+const NAME_STOP = new Set([
+  ...NAME_FUNCTION,
+  ...words(
     // Request verbs (and their -ing forms): what the person asks for, never the topic.
-    "want wants wanted need needs needed like liked love would-like wish hope " +
     "explore exploring look looks looking see seeing check checking fix fixing add adding make making create creating try trying " +
     "think thinking know tell telling show showing help helping find finding figure figuring get getting got give go going went " +
     "start starting review reviewing investigate investigating debug debugging update updating change changing improve improving " +
@@ -630,7 +669,11 @@ const NAME_STOP = new Set(
     // Vague nouns.
     "thing things stuff something anything everything nothing someone anyone way ways idea ideas thought thoughts question questions " +
     "problem problems issue issue's part point case matter situation concern approach option options status update-on progress " +
-    "one ones time times today tomorrow yesterday morning afternoon tonight week day minute second " +
+    "one ones time times today tomorrow yesterday morning afternoon tonight week day minute second",
+  ),
+]);
+
+for (const word of words(
     // Spanish.
     "el la los las un una unos unas lo al y o e u pero que qué en con por para sin sobre como cómo cuando dónde donde se su sus mi mis tu tus " +
     "yo tú nos es son está están estar ser hay muy más puedes podrías puede quiero quisiera necesito querría arreglar revisar mirar ver hacer " +
@@ -646,8 +689,8 @@ const NAME_STOP = new Set(
     "machen hinzufügen ändern prüfen schauen " +
     // Portuguese and Italian.
     "os as um uma ao em no na nos nas com por para sem você podes pode podia quero preciso il lo gli un uno una e o ma che per con su " +
-    "puoi potresti voglio vorrei sistemare aggiungere guardare"
-  )
-    .split(/\s+/)
-    .filter(Boolean),
-);
+    "puoi potresti voglio vorrei sistemare aggiungere guardare",
+)) {
+  NAME_FUNCTION.add(word);
+  NAME_STOP.add(word);
+}

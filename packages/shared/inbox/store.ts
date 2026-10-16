@@ -317,6 +317,12 @@ export class InboxStore {
   private readonly threadMembers = new Map<string, string[]>();
   /** Every root of each thread name in seq order (`<project>\0<name key>`). */
   private readonly namedThreads = new Map<string, string[]>();
+  /**
+   * Threads the person started, by the name compose gave them (typed or the
+   * suggestion): never routes anything, only keeps a second open thread
+   * from taking the name (`threadNameTaken`).
+   */
+  private readonly personNamed = new Map<string, string[]>();
   /** Every decision, by id (step 3; the rules are packages/server/inbox-decisions.ts). */
   private readonly decisions = new Map<string, InboxDecision>();
   /** The person's annotations on attachments, by id. */
@@ -423,15 +429,16 @@ export class InboxStore {
         if (previous?.kind === "message" && line.record.started_by_person && previous.record.to && line.record.to && previous.record.to.session !== line.record.to.session) {
           this.readdressed.add(line.record.id);
         }
-        // A thread the person started gains a name when an agent names it (sendMessage), or a new one
-        // over compose's suggestion: indexed at that line, in seq order, so later sends with the name
-        // join it and a replay routes the same. The old name's entry stays; lookups check the root's
-        // current name (`rootsNamed`).
+        // A thread the person started routes by name only once an AGENT names it (sendMessage):
+        // indexed at that line, in seq order, so later sends with the name join it and a replay
+        // routes the same. A name the person typed, or compose's suggestion, never routes another
+        // session's send into the person's thread (`personNamed`, for de-duplication only).
         if (
           previous?.kind === "message" &&
           line.record.started_by_person &&
           line.record.thread_name &&
-          inboxThreadNameKey(previous.record.thread_name ?? "") !== inboxThreadNameKey(line.record.thread_name)
+          line.record.named_by?.kind === "agent" &&
+          previous.record.named_by?.kind !== "agent"
         ) {
           this.indexName(line.record.project_id, line.record.thread_name, line.record.id);
         }
@@ -464,9 +471,15 @@ export class InboxStore {
   /** Note a root's routing keys, from its first line only. */
   private indexRoot(message: InboxMessage): void {
     if (message.thread_id !== message.id) return;
-    // A thread the person started is no session's default thread; it is indexed only by a name it has (compose).
+    // A thread the person started is no session's default thread, and its compose name (typed, or
+    // the suggestion) routes nothing: it is noted only so no other thread takes the same name.
     if (message.author.kind !== "agent") {
-      if (message.started_by_person && message.thread_name) this.indexName(message.project_id, message.thread_name, message.id);
+      if (message.started_by_person && message.thread_name) {
+        const key = `${message.project_id}\0${inboxThreadNameKey(message.thread_name)}`;
+        const roots = this.personNamed.get(key);
+        if (roots) roots.push(message.id);
+        else this.personNamed.set(key, [message.id]);
+      }
       return;
     }
     const name = message.thread_name ?? null;
@@ -477,16 +490,9 @@ export class InboxStore {
     }
   }
 
-  /**
-   * The roots indexed under a name that still have it (an agent's name can
-   * replace compose's suggestion, which stays indexed), oldest first.
-   */
+  /** The roots a name routes to (agents' names: a name, once there, never changes), oldest first. */
   private rootsNamed(projectId: string, name: string): string[] {
-    const key = inboxThreadNameKey(name);
-    return (this.namedThreads.get(`${projectId}\0${key}`) ?? []).filter((rootId) => {
-      const root = this.messages.get(rootId);
-      return !!root && inboxThreadNameKey(root.thread_name ?? "") === key;
-    });
+    return this.namedThreads.get(`${projectId}\0${inboxThreadNameKey(name)}`) ?? [];
   }
 
   /** Add a root under a thread name; the last one added is the newest of that name. */
@@ -751,7 +757,12 @@ export class InboxStore {
    * this one, which is addressed to someone else.
    */
   private threadNameTaken(projectId: string, name: string, exceptRoot: string | null): boolean {
-    return this.rootsNamed(projectId, name).some((rootId) => rootId !== exceptRoot && !this.isResolved(rootId));
+    const key = inboxThreadNameKey(name);
+    // Threads the person started that still carry their compose name (an agent may have replaced a suggestion).
+    const personRoots = (this.personNamed.get(`${projectId}\0${key}`) ?? []).filter(
+      (rootId) => inboxThreadNameKey(this.messages.get(rootId)?.thread_name ?? "") === key,
+    );
+    return [...this.rootsNamed(projectId, name), ...personRoots].some((rootId) => rootId !== exceptRoot && !this.isResolved(rootId));
   }
 
   thread(threadId: string): InboxThread | null {
@@ -1571,9 +1582,11 @@ export class InboxStore {
         // names) and superseded ids. The thread it joined is the first
         // call's, whatever the routing would say now, and so is what its
         // naming came to.
+        // A reply's `thread` counts only where it could name the thread (the reply kept `thread_naming`):
+        // anywhere else it is ignored, and an older store never recorded it.
         const sameName =
           inboxThreadNameKey(message.thread_name ?? "") === inboxThreadNameKey(threadName ?? "") &&
-          inboxThreadNameKey(message.reply_thread ?? "") === inboxThreadNameKey(replyThread ?? "");
+          (!message.thread_naming || inboxThreadNameKey(message.reply_thread ?? "") === inboxThreadNameKey(replyThread ?? ""));
         const sameGuide = (message.guide?.input_sha256 ?? null) === (input.guide?.input_sha256 ?? null);
         const sameSupersedes = [...(message.supersedes ?? [])].sort().join("\n") === [...supersedes].sort().join("\n");
         if (message.body !== body || message.reply_to !== replyTo || !sameName || !sameGuide || !sameSupersedes) {
@@ -2552,6 +2565,7 @@ export class InboxStore {
     this.sessionThreads.clear();
     this.threadMembers.clear();
     this.namedThreads.clear();
+    this.personNamed.clear();
     this.decisions.clear();
     this.annotations.clear();
     this.tornFiles.clear();

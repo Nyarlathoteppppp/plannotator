@@ -175,9 +175,9 @@ describe("an agent names a thread the person started", () => {
     expect(answered.content[0]!.text).not.toMatch(/Named this thread|still needs a name from you/);
     expect((await thread(server, sent.message.id)).thread_name).toBe("Board");
 
-    // Later named sends join it.
-    const joined = await call(client, "send_message", { body: "joins", thread: "board", project_path: project, agent_session: "ses-x", agent_host: "pi" });
-    expect(joined.structuredContent.thread_id).toBe(sent.message.id);
+    // A name the person typed is the chip only: another session's send with it starts its own thread.
+    const joined = await call(client, "send_message", { body: "elsewhere", thread: "board", project_path: project, agent_session: "ses-x", agent_host: "pi" });
+    expect(joined.structuredContent.thread_id).not.toBe(sent.message.id);
   });
 
   test("a name another open thread has is refused, in the reply's result and in compose (409)", async () => {
