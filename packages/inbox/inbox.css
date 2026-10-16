@@ -51,7 +51,7 @@
     /* No hue (`none`): mixed into a colour, the ink moves its lightness and keeps its hue. */
     --ib-ink: oklch(from var(--ib-ground) calc(0.5 - sign(l - 0.6) * 0.5) 0 none);
     --ib-side-fg: color-mix(in oklch, var(--foreground) 88%, var(--ib-ink));
-    --ib-side-mfg: color-mix(in oklch, var(--muted-foreground) 82%, var(--ib-ink));
+    --ib-side-mfg: color-mix(in oklch, var(--muted-foreground) 78%, var(--ib-ink));
     /* The same step on a pane: toward black on a light card, white on a dark one. A Soft surface that is not
        the palette's own card (the raised question card and tiles), and the quiet text Soft draws where the
        window had full-strength text (the section headers, the chips), never cost a palette its contrast. */
