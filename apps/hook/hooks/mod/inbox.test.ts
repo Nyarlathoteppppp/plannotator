@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { inboxAgentTool, INBOX_MESSAGE_INSTRUCTION, INBOX_NEW_THREAD_INSTRUCTION, INBOX_TOOL_ACTIONS, INBOX_WAKE_INSTRUCTION, inboxRedirectedLine, inboxWakeText, mcpAnswerOf } from './inbox-contract'
+import { inboxAgentTool, inboxSentNowFollowUpText, INBOX_MESSAGE_INSTRUCTION, INBOX_NEW_THREAD_INSTRUCTION, INBOX_TOOL_ACTIONS, INBOX_WAKE_INSTRUCTION, inboxRedirectedLine, inboxWakeText, mcpAnswerOf } from './inbox-contract'
 import { ClaudeSession } from './testing/claude-session'
 import { removeStubbedHtml, stubBuiltHtml } from '../../../../tests/helpers/inbox-world'
 import { inboxEntryOf, isAlive, mustSignalInbox, stopProvenInboxes } from '../../../../tests/helpers/inbox-process'
@@ -630,5 +630,90 @@ describe('Claude Code ↔ Plannotator Inbox (real Inbox, real processes)', () =>
     const own = await send(session, w, 'Unrelated: the export is done.')
     expect(own.thread_id).not.toBe(message.thread_id)
     w.proof('the answer with reply_to landed in the person\'s thread; the session\'s next message without reply_to started its own thread')
+  }, 120_000)
+
+  test('Send now while Claude works: the session says it can, the window reads it as queued and busy, and the reply goes into the running turn at once (one user row, no turn); the next request carries it; Delivered', async () => {
+    const w = world('12-send-now-into-the-running-turn')
+    startInbox(w)
+    const session = await open(w, 'session-send-now')
+    const asked = await send(session, w, QUESTION)
+    const { port } = registry(w)
+
+    // Claude is working (a long turn: background subagents' notifications keep starting turns).
+    await session.startTurn('Refactor the webhook handler.')
+    const replyId = await personSends(w, asked.message_id, 'Retry with the same key.')
+    // What the window reads under the reply: queued, the session busy, Send now offered.
+    const connection = await waitFor('the busy connection', async () => {
+      const model = (await (await fetch(`http://127.0.0.1:${port}/api/inbox/threads/${asked.thread_id}/sessions?asker=session-send-now`)).json()) as {
+        asker: { connection: { busy: boolean | null; send_now: boolean } | null }
+      }
+      return model.asker.connection?.busy === true ? model.asker.connection : null
+    })
+    expect(connection).toMatchObject({ busy: true, send_now: true })
+    await Bun.sleep(2_500)
+    expect(session.host.submits).toEqual([])
+    expect(session.host.appended).toEqual([])
+    w.proof('Claude works: the reply is queued (0 submits, 0 rows after 2.5 s); the sessions route says busy, send_now')
+
+    // The person presses Send now.
+    const health = (await (await fetch(`http://127.0.0.1:${port}/api/inbox/health`)).json()) as { serverSession: string }
+    const pressed = await fetch(`http://127.0.0.1:${port}/api/inbox/messages/${replyId}/send-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${port}` },
+      body: JSON.stringify({ serverSession: health.serverSession }),
+    })
+    expect(pressed.status).toBe(200)
+    w.proof(`> the person presses Send now on ${replyId}`)
+    const row = await waitFor('the row in the running turn', () => session.host.appended[0])
+    const reply = (await thread(w, asked.thread_id)).messages.find((m) => m.id === replyId)!
+    expect(row).toBe(inboxWakeText({ id: replyId, subject: 'What should the worker do on a Stripe 409?', body: reply.body }))
+    expect(session.host.notices).toHaveLength(1)
+    expect(session.host.submits).toEqual([])
+    w.proof(`$.session.append (user row, into the running turn):\n${row}\n`)
+    const delivered = await waitFor('the delivery record', async () => (await thread(w, asked.thread_id)).messages.find((m) => m.id === replyId)?.delivery)
+    expect(delivered).toMatchObject({ host: 'claude-code', session: 'session-send-now' })
+
+    // The turn's next model request carries it, then the turn ends: no extra turn, no second delivery.
+    session.step()
+    session.endTurn()
+    await Bun.sleep(2_500)
+    expect(session.host.submits).toEqual([])
+    expect(session.host.appended).toHaveLength(1)
+    expect(session.host.aborted).toEqual([])
+    w.proof('the next request carried it; the turn ended: 0 submits, 1 row, 0 aborts')
+  }, 120_000)
+
+  test('Send now as the turn was making its last request: no request carried the row, so one short turn points Claude at it', async () => {
+    const w = world('13-send-now-as-the-turn-ends')
+    startInbox(w)
+    const session = await open(w, 'session-late')
+    const asked = await send(session, w, QUESTION)
+    const { port } = registry(w)
+    await session.startTurn('Write the summary.')
+    const replyId = await personSends(w, asked.message_id, 'Fail the job and alert.')
+    await waitFor('the busy connection', async () => {
+      const model = (await (await fetch(`http://127.0.0.1:${port}/api/inbox/threads/${asked.thread_id}/sessions?asker=session-late`)).json()) as {
+        asker: { connection: { busy: boolean | null } | null }
+      }
+      return model.asker.connection?.busy === true
+    })
+    const health = (await (await fetch(`http://127.0.0.1:${port}/api/inbox/health`)).json()) as { serverSession: string }
+    expect(
+      (
+        await fetch(`http://127.0.0.1:${port}/api/inbox/messages/${replyId}/send-now`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${port}` },
+          body: JSON.stringify({ serverSession: health.serverSession }),
+        })
+      ).status,
+    ).toBe(200)
+    await waitFor('the row in the running turn', () => session.host.appended[0])
+    // The turn ends with no model request after the row.
+    session.endTurn()
+    const follow = await waitFor('the follow-up turn', () => session.host.submits[0])
+    expect(follow).toBe(inboxSentNowFollowUpText({ id: replyId, subject: 'What should the worker do on a Stripe 409?', type: 'reply' }))
+    await Bun.sleep(2_000)
+    expect(session.host.submits).toHaveLength(1)
+    w.proof(`the turn ended before reading it: one follow-up turn:\n${follow}\n`)
   }, 120_000)
 })

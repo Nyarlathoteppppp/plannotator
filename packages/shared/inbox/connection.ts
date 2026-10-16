@@ -153,7 +153,7 @@ export const INBOX_TOOL_LEAD =
  * OpenCode 2 as a user message, and all three carry the wake's first line.
  */
 export const INBOX_TOOL_WAKE_NOTE =
-  "When the person replies to a message you sent, their reply arrives in this session by itself once it is idle, as a message headed `Plannotator Inbox: <subject> (<reply id>)`: end your turn, or go on with other work; do not call wait_for_reply. When they need to hear back, answer with send_message reply_to."
+  "When the person replies to a message you sent, their reply arrives in this session by itself once it is idle, as a message headed `Plannotator Inbox: <subject> (<reply id>)`: end your turn, or go on with other work; do not call wait_for_reply. When the person presses Send now, it arrives in the turn you are in: answer it before you go on. When they need to hear back, answer with send_message reply_to."
 
 /**
  * The one-line reminder a session that has `plannotator_inbox` gets once, at
@@ -405,6 +405,32 @@ export interface InboxReplyCommand {
    * Absent on every other command.
    */
   continues_thread?: boolean
+  /**
+   * The person pressed Send now in the Inbox: deliver it at once, into the
+   * running turn when one runs (Claude Code: `$.session.append`; Pi: a
+   * steer; OpenCode 2: `delivery: "steer"`), instead of waiting for the
+   * session to go idle. Only handed to a connection whose poll said it can
+   * (`INBOX_SEND_NOW_POLL_FIELD`). Absent on every other command.
+   */
+  now?: boolean
+}
+
+/**
+ * The poll field (`true`) by which a connection says it can deliver a reply
+ * into a running turn: the window offers Send now only for such a session.
+ * An older Inbox ignores it; an older connection never sends it, so it is
+ * never offered there.
+ */
+export const INBOX_SEND_NOW_POLL_FIELD = 'send_now'
+
+/**
+ * The turn a connection submits when a reply it put into a running turn
+ * arrived as that turn ended, so the model never read it: the reply is in
+ * the conversation already, so this only points at it.
+ */
+export function inboxSentNowFollowUpText(command: Pick<InboxReplyCommand, 'id' | 'subject' | 'type'>): string {
+  const subject = (command.subject ?? '').replace(/\s+/g, ' ').trim() || (command.type === 'message' ? 'a message' : 'a reply')
+  return `Plannotator Inbox: ${subject} (${command.id})\nThe person's ${command.type === 'message' ? 'message' : 'reply'} above (${command.id}) arrived as your last turn was ending. If you have not answered it yet, answer it now.`
 }
 
 export function parseInboxBridgeCommands(text: string): InboxReplyCommand[] {

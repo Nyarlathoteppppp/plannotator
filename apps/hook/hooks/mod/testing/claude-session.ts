@@ -33,6 +33,10 @@ export interface RealHostOptions {
 export interface RealHost extends Host {
   /** What `$.prompt.submit` was asked to send, in order. */
   submits: string[]
+  /** User rows `$.session.append` put into the conversation (Send now), in order. */
+  appended: string[]
+  /** Notices `$.session.append` put into the transcript, in order. */
+  notices: string[]
   toasts: string[]
   logs: string[]
   aborted: string[]
@@ -45,6 +49,8 @@ export interface RealHost extends Host {
 export function realHost(options: RealHostOptions): RealHost {
   const host: RealHost = {
     submits: [],
+    appended: [],
+    notices: [],
     toasts: [],
     logs: [],
     aborted: [],
@@ -105,6 +111,12 @@ export function realHost(options: RealHostOptions): RealHost {
     submit: async (text) => {
       host.submits.push(text)
       await host.onSubmit(text)
+    },
+    appendUserRow: async (text) => {
+      host.appended.push(text)
+    },
+    appendNotice: async (text) => {
+      host.notices.push(text)
     },
     suggest: async () => undefined,
     status: () => undefined,
@@ -194,6 +206,11 @@ export class ClaudeSession {
     this.turns.push({ id, text })
     await this.mod.onTurnStart(id, text)
     return id
+  }
+
+  /** A main-loop model request of the running turn goes out (`turn.step`). */
+  step(): void {
+    if (this.running) this.mod.onMainStep(this.running.id)
   }
 
   endTurn(answer = 'Done.'): void {

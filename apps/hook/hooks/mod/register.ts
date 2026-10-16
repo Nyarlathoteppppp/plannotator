@@ -113,6 +113,15 @@ function hostOf($: Engine, debugPath: string | null): Host {
     submit: async (text) => {
       await $.prompt.submit({ text })
     },
+    // An engine without `$.session.append` rejects: the Inbox link then stops offering Send now (inbox.ts).
+    appendUserRow: async (text) => {
+      const stored = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
+      if (stored && typeof stored.deny === 'string') throw new Error(stored.deny)
+    },
+    appendNotice: async (text) => {
+      const stored = await $.session.append({ message: { type: 'system', content: [{ type: 'text', text }] } })
+      if (stored && typeof stored.deny === 'string') throw new Error(stored.deny)
+    },
     suggest: async (text) => {
       await $.prompt.suggest({ text })
     },
@@ -447,13 +456,16 @@ export function register(on: On) {
   on('turn.start', async ($: Engine, e: any, next: Next) => {
     if (allowed && typeof e.turnId === 'string') {
       const instance = await currentMod($).catch(() => null)
-      if (instance) await instance.onTurnStart(e.turnId, typeof e.text === 'string' ? e.text : '')
+      // A subagent's start carries its id: the controller counts only the main loop's turns.
+      if (instance) await instance.onTurnStart(e.turnId, typeof e.text === 'string' ? e.text : '', typeof e.agentId === 'string' ? e.agentId : undefined)
     }
     return next(e)
   })
 
   on('turn.step', async function* ($: Engine, e: any, next: Next) {
     const instance = allowed ? mod : null
+    // A main-loop model request is going out: a reply Send now put into the turn is in it (inbox.ts).
+    if (instance && !instance.isDisposed && !e.agentId && typeof e.turnId === 'string') instance.onMainStep(e.turnId)
     if (!instance || !instance.turns.ownsTurn(e.turnId)) return yield* next(e)
     // A question's turn that someone else's prompt entered settles here: this
     // request carries their prompt, so nothing it says is the question's answer.

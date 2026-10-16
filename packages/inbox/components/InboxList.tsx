@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { inboxThreadNameKey, type InboxListRow, type InboxListSection } from '@plannotator/core/inbox-types';
 import { Tooltip, TooltipProvider } from '@plannotator/ui/components/Tooltip';
 import { agentName, formatCount, questionCount, shortTime } from '../format';
+import { sentRowLine } from '../deliveryLine';
 import { titleIfClipped } from '../clipTitle';
 import { AuthorMark, Icon } from '../icons';
 import { ListColumnEdge } from '../shell/ListColumnEdge';
@@ -62,10 +63,10 @@ function badgeOf(row: InboxListRow): string | null {
   return null;
 }
 
-/** The subject cell's words: a Sent row says where its reply is (the agent reads it when it checks). */
+/** The subject cell's words: a Sent row says where its reply is (queued for a turn, or saved until the agent reads the thread). */
 function subjectOf(row: InboxListRow): string {
   // A thread the person started keeps its own subject in Sent; its count cell says whom it went to.
-  if (row.section === 'sent' && !row.addressee) return `Saved for ${agentName(rowAgent(row))}. It sees it when it checks.`;
+  if (row.section === 'sent' && !row.addressee) return sentRowLine(agentName(rowAgent(row)), row.sent?.wakes);
   return row.subject ?? '(no subject)';
 }
 

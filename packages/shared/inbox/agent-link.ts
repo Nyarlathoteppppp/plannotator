@@ -40,6 +40,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import {
   INBOX_BRIDGE_EVENT_PATH,
   INBOX_BRIDGE_POLL_PATH,
+  INBOX_SEND_NOW_POLL_FIELD,
   inboxToolCall,
   inboxToolCallParams,
   inboxToolResultText,
@@ -350,6 +351,14 @@ export interface InboxWakeTarget {
   isBusy(): boolean | Promise<boolean>;
   /** Put the wake text into the session as a turn; resolves once it entered, rejects when it could not. */
   deliver(text: string, command: InboxReplyCommand): Promise<void>;
+  /**
+   * Send now, while a turn runs: put the wake text into that turn (Pi's
+   * steer, OpenCode 2's `delivery: "steer"`), so the model reads it at its
+   * next step instead of after the turn. Resolves once the host took it.
+   * Optional: a host without it never says it can (`INBOX_SEND_NOW_POLL_FIELD`)
+   * and the window never offers Send now for its sessions.
+   */
+  steer?(text: string, command: InboxReplyCommand): Promise<void>;
   /** A line for the person, outside the model's context (a toast, a notice). */
   notify(message: string): void;
   /**
@@ -484,10 +493,12 @@ export class InboxWake {
     if (now - this.leaseCheckedAt >= INBOX_LEASE_EVERY_MS) this.holdLease(now);
     if (!this.leader) return;
     if (!this.polling && now >= this.retryAt) void this.poll();
-    if (!this.delivering && this.pending.size > 0 && this.idleTicks >= 2) {
+    // Send now: a command the person asked to deliver at once goes in without waiting for two idle ticks.
+    const urgent = [...this.pending.values()].find((command) => command.now === true) ?? null;
+    if (!this.delivering && this.pending.size > 0 && (this.idleTicks >= 2 || urgent)) {
       this.delivering = true;
       try {
-        await this.deliverNext();
+        await this.deliverNext(this.idleTicks >= 2 ? null : urgent);
       } finally {
         this.delivering = false;
       }
@@ -527,6 +538,7 @@ export class InboxWake {
         ...(typeof projectPath === "string" && projectPath ? { project_path: projectPath } : {}),
         started_at: this.startedAt,
         ...(this.busy === null ? {} : { busy: this.busy, idle_since: this.idleSince }),
+        ...(this.target.steer ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
       },
       signal,
     );
@@ -548,6 +560,7 @@ export class InboxWake {
       this.backoffMs = 0;
       this.retryAt = 0;
       for (const command of commands) {
+        // A later poll may carry `now` (the person pressed Send now): the newest command wins.
         if (!this.settled.has(command.id)) this.pending.set(command.id, command);
       }
     } finally {
@@ -560,9 +573,13 @@ export class InboxWake {
     this.settled.add(id);
   }
 
-  /** Deliver the oldest waiting reply as a turn, once. */
-  private async deliverNext(): Promise<void> {
-    const command = this.pending.values().next().value as InboxReplyCommand | undefined;
+  /**
+   * Deliver the oldest waiting reply as a turn, once; `urgent` (Send now,
+   * the session not idle for two ticks yet): that one, into the running turn
+   * when one runs.
+   */
+  private async deliverNext(urgent: InboxReplyCommand | null = null): Promise<void> {
+    const command = urgent ?? (this.pending.values().next().value as InboxReplyCommand | undefined);
     if (!command) return;
     // Still waiting? An agent may have read it through the tool meanwhile, or
     // another process delivered it.
@@ -572,7 +589,8 @@ export class InboxWake {
       this.settle(command.id);
       return;
     }
-    if (await this.target.isBusy()) {
+    const busy = await this.target.isBusy();
+    if (busy && !(urgent && this.target.steer)) {
       this.idleTicks = 0;
       return;
     }
@@ -588,7 +606,8 @@ export class InboxWake {
       return;
     }
     try {
-      await this.target.deliver(inboxWakeText(command), command);
+      if (busy && this.target.steer) await this.target.steer(inboxWakeText(command), command);
+      else await this.target.deliver(inboxWakeText(command), command);
     } catch (error) {
       this.settle(command.id);
       writeQuietly(join(claim, "reported"), "1");

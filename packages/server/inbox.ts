@@ -368,6 +368,8 @@ const ERROR_STATUS: Record<string, number> = {
   guide_not_found: 404,
   // New message (step 8).
   session_not_live: 409,
+  // Send now: the session's connection does not poll now, or cannot deliver into a running turn.
+  send_now_unavailable: 409,
   // Compose: a new thread the person starts (packages/server/inbox-compose.ts).
   already_delivered: 409,
   not_addressed: 422,
@@ -1267,6 +1269,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       // A thread the person started: the wake says so (INBOX_NEW_THREAD_INSTRUCTION).
       ...(reply.started_by_person && reply.thread_id === reply.id ? { new_thread: true } : {}),
       ...(continues && !redirected ? { continues_thread: true } : {}),
+      // Send now: the connection delivers it at once, into the running turn when one runs.
+      ...(reply.deliver_now_at ? { now: true } : {}),
     };
   };
 

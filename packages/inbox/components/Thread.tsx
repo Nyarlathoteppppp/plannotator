@@ -29,6 +29,7 @@ import { inboxMessageImageBase, inlineImageRefFromSrc, markTallImage } from '../
 import { reportUnsentReply } from '../unsent';
 import { canToggleRead } from '../markRead';
 import { NewMessageButton, NewMessageComposer, NewMessagePopover, hostName, useLiveSessions, type NewMessageMode } from './NewMessage';
+import { deliveryLine, type DeliveryLine } from '../deliveryLine';
 import { SendToAnotherSession } from '../compose/SendToAnotherSession';
 import { ComposeFileTiles, attachedAnnouncement, useComposeFiles } from '../compose/ComposeFiles';
 import {
@@ -1683,23 +1684,53 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   // Where the person's last message is addressed: its own `to`, or, for a reply in a thread the
   // person started, the thread's (the server hands it to that session).
   const lastTo = last.author.kind === 'person' && !isInboxNote(last) ? (last.to ?? (startedTo && last.reply_to ? startedTo : null)) : null;
-  // Not delivered (compose): the session it is addressed to stopped before it took it (after the asker grace).
-  const { model: pendingLive, load: loadPendingLive } = useLiveSessions(thread.thread_id, lastTo?.session ?? null, !!lastTo && !last.delivery);
+  // The session the person's last reply goes to, when its connection wakes it: a message addressed to a
+  // session (`lastTo`), or a reply to an agent message sent through a waking connection (`wakes`).
+  const repliedTo = last.author.kind === 'person' && !lastTo ? askedBy(last) : undefined;
+  const wakingSession = repliedTo?.author.kind === 'agent' && repliedTo.wakes === true && repliedTo.author.session ? repliedTo.author.session : null;
+  const recipientSession = lastTo?.session ?? wakingSession;
+  const waitingOnWake = !!recipientSession && !last.delivery && !(lastTo === null && sent?.checked_at);
+  // How that session is connected now ("Queued", "Sending", Send now), and, for compose, whether it
+  // stopped before it took it (after the asker grace). Read every few seconds while the reply waits.
+  const { model: pendingLive, load: loadPendingLive } = useLiveSessions(thread.thread_id, recipientSession, waitingOnWake, 3_000);
   const undelivered = !!lastTo && !last.delivery && pendingLive?.asker?.session === lastTo.session && pendingLive.asker.live === false;
-  const delivered =
+  const recipientConnection = pendingLive?.asker?.session === recipientSession ? pendingLive?.asker?.connection : undefined;
+  const delivered: DeliveryLine | null =
     last.author.kind !== 'person'
       ? null
       : lastTo
-        ? last.delivery
-          ? { state: 'delivered', text: `Delivered to ${toName(last, last.delivery)}, ${whenTime(last.delivery.at)}` }
-          : undelivered
-            ? { state: 'undelivered', text: `Not delivered. That ${hostName(lastTo.host)} session stopped before it took this. If it is resumed, it still gets it.` }
-            : { state: 'queued', text: `${last.to ? toName(last, last.to) : hostName(lastTo.host)} takes it as its next turn.` }
-        : sent?.checked_at
-          ? { state: 'delivered', text: `Delivered to ${asker}, ${whenTime(sent.checked_at)}` }
-          : askerEnded && asking
-            ? { state: 'saved', ended: true, text: `Saved for ${asking.name}. The session that asked has ended, so it waits here until an agent reads this thread.` }
-            : { state: 'saved', text: `Saved for ${asker}. It sees it when it checks.` };
+        ? deliveryLine({
+            name: last.delivery ? toName(last, last.delivery) : last.to ? toName(last, last.to) : hostName(lastTo.host),
+            deliveredAt: last.delivery?.at ?? null,
+            time: whenTime,
+            wakes: true,
+            sendingNow: !!last.deliver_now_at,
+            connection: recipientConnection,
+            undelivered: undelivered ? { host: hostName(lastTo.host) } : null,
+          })
+        : deliveryLine({
+            name: asker,
+            deliveredAt: sent?.checked_at ?? null,
+            time: whenTime,
+            wakes: wakingSession !== null,
+            sendingNow: !!last.deliver_now_at,
+            connection: recipientConnection,
+            askerEnded: askerEnded && asking ? { name: asking.name } : null,
+          });
+  const [sendNowState, setSendNowState] = useState<{ id: string; busy: boolean; error: string | null } | null>(null);
+  const sendNow = async () => {
+    setSendNowState({ id: last.id, busy: true, error: null });
+    try {
+      await inboxApi.sendNow(last.id);
+      setSendNowState({ id: last.id, busy: false, error: null });
+      await onChanged();
+      void loadPendingLive();
+    } catch (cause) {
+      setSendNowState({ id: last.id, busy: false, error: cause instanceof InboxApiError ? cause.message : 'It was not sent now. Try again.' });
+      void loadPendingLive();
+    }
+  };
+  const sendNowError = sendNowState?.id === last.id ? sendNowState.error : null;
 
   const waitingHoldsUp = [...new Set(lastAgent.questions?.filter((q) => q.state === 'open').flatMap((q) => q.holds_up) ?? [])];
   const [holdsOpen, setHoldsOpen] = useState(false);
@@ -2215,9 +2246,31 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                 {message === last && delivered && (
                   // tabIndex -1: Send to another session puts focus here once it moved the message.
                   <div className="ib-delivered" data-delivery={delivered.state} tabIndex={-1}>
-                    <Icon name={delivered.state === 'undelivered' ? 'warn' : 'ended' in delivered && delivered.ended ? 'clock' : 'check'} size={14} />
-                    {delivered.text}
+                    <span className="ib-dl-main">
+                      <Icon
+                        name={delivered.state === 'undelivered' ? 'warn' : delivered.ended || delivered.state === 'queued' ? 'clock' : delivered.state === 'sending' ? 'send' : 'check'}
+                        size={14}
+                      />
+                      <span className="ib-dl-text">{delivered.text}</span>
+                    </span>
+                    {delivered.sendNow && (
+                      <button
+                        type="button"
+                        className="ib-sendnow"
+                        data-send-now=""
+                        disabled={sendNowState?.id === last.id && sendNowState.busy}
+                        title="Put it into the running turn now: the agent reads it at its next step, without waiting for the turn to end."
+                        onClick={() => void sendNow()}
+                      >
+                        Send now
+                      </button>
+                    )}
                   </div>
+                )}
+                {message === last && sendNowError && (
+                  <p className="ib-error" role="alert" data-send-now-error="">
+                    {sendNowError}
+                  </p>
                 )}
                 {message === last && delivered?.state === 'undelivered' && lastTo && (
                   <SendToAnotherSession

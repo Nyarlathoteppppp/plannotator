@@ -17,7 +17,9 @@
  * sent while OpenCode was restarting still finds its session). A reply goes
  * in with `session.prompt({ id, text, delivery: "queue" })` once the session is
  * idle: never "steer", which would join a run that started in the same
- * instant, and never into a session that is running. Busy comes from the
+ * instant, and never into a session that is running, except Send now (the
+ * person pressed it in the Inbox; the command's `now`), which goes in at once
+ * with `delivery: "steer"` while the session runs. Busy comes from the
  * session's execution events; a session that reads running with no event for
  * 20 s is checked against OpenCode itself (`session.wait` answers at once when
  * it is idle), so a lost end event cannot hold replies forever. Nothing here
@@ -306,6 +308,19 @@ class OpenCode2Wakes {
         // and an idle session promotes pending steer rows alone, #1734).
         await prompt({ sessionID, id: createOpenCodeMessageId(), text, delivery: "queue", metadata: { source: INBOX_PROMPT_SOURCE } });
       },
+      // Send now while a run is going (the person pressed it in the Inbox): a
+      // steer joins that run at its next step. Only while it runs: an idle
+      // session gets the queued turn above (an idle session promotes pending
+      // steer rows alone, #1734).
+      ...(typeof this.v2.session?.prompt === "function"
+        ? {
+            steer: async (text: string) => {
+              const prompt = this.v2.session?.prompt;
+              if (typeof prompt !== "function") throw new Error("this OpenCode cannot receive a prompt from a plugin");
+              await prompt({ sessionID, id: createOpenCodeMessageId(), text, delivery: "steer", metadata: { source: INBOX_PROMPT_SOURCE } });
+            },
+          }
+        : {}),
       notify: (message) => {
         console.error(`[Plannotator] ${message}`);
       },

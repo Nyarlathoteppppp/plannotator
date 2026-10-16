@@ -28,6 +28,13 @@
  * turn goes first), is checked once more with the Inbox, claimed once across
  * processes, submitted as a turn (`inboxWakeText`), and acknowledged
  * (`delivered`), which the thread shows as "Delivered to Claude Code, <time>".
+ * Send now (the person pressed it in the Inbox; the command's `now`) does not
+ * wait for idle: while a turn runs the reply goes INTO it as a user row
+ * (`$.session.append`, which the turn's next model request carries; a
+ * plugin's `$.prompt.submit` never folds into a running turn), else as a turn
+ * at once. A row that landed as the turn made its last request is pointed at
+ * by one short turn after (`inboxSentNowFollowUpText`). The poll says the
+ * engine can (`send_now`), so the window offers Send now only then.
  * A New message the person addressed to this session (plan step 8) arrives
  * on the same poll and takes the same path. Each poll also tells the Inbox
  * where the session works and whether a turn runs, and a `state` event tells
@@ -49,6 +56,8 @@ import {
   inboxToolCall,
   inboxToolCallParams,
   inboxToolResultText,
+  INBOX_SEND_NOW_POLL_FIELD,
+  inboxSentNowFollowUpText,
   inboxWakeText,
   mcpAnswerOfResponse,
   parseInboxBridgeCommands,
@@ -265,6 +274,17 @@ export class InboxLink {
   private startedAt = 0
   private busy: boolean | null = null
   private idleSince = 0
+  /**
+   * A reply Send now put into the running turn (`appendUserRow`), until that
+   * turn ends: `stepped` once a main-loop model request went out after it
+   * (that request carries it). A turn that ends with none read it, so a short
+   * turn points Claude at it.
+   */
+  private sentNow: { command: InboxReplyCommand; stepped: boolean } | null = null
+  /** Send now could not go into the running turn (the engine refused the row): these wait for idle, as before. */
+  private noSteer = new Set<string>()
+  /** The engine refused a row once (an engine without `$.session.append`): stop offering Send now. */
+  private steerRefused = false
 
   constructor(private readonly options: InboxLinkOptions) {
     this.host = options.host
@@ -446,12 +466,32 @@ export class InboxLink {
     for (const id of [...this.unacked]) await this.acknowledge(id)
     if (!this.leader) return
     if (!this.polling && now >= this.retryAt) void this.poll()
-    if (!this.delivering && this.pending.size > 0 && this.idleTicks >= 2) {
+    // Send now (the person pressed it in the Inbox): that one goes in without waiting for two idle ticks.
+    const urgent = this.idleTicks >= 2 ? null : ([...this.pending.values()].find((command) => command.now === true && !this.noSteer.has(command.id)) ?? null)
+    if (!this.delivering && this.pending.size > 0 && (this.idleTicks >= 2 || urgent)) {
       this.delivering = true
-      void this.deliverNext().finally(() => {
+      void this.deliverNext(urgent).finally(() => {
         this.delivering = false
       })
     }
+  }
+
+  /** A main-loop model request is going out: a reply put into the running turn is in it. */
+  onMainStep(): void {
+    if (this.sentNow) this.sentNow.stepped = true
+  }
+
+  /**
+   * A main-loop turn ended. A reply Send now put into it that no request
+   * carried (the turn was making its last request when the row landed) has
+   * not been read: a short turn of its own points Claude at it.
+   */
+  onMainTurnComplete(): void {
+    const sent = this.sentNow
+    this.sentNow = null
+    if (!sent || sent.stepped || this.disposed) return
+    this.host.debug(`inbox: ${sent.command.id} landed as the turn ended; pointing Claude at it`)
+    void this.host.submit(inboxSentNowFollowUpText(sent.command)).catch(() => undefined)
   }
 
   /**
@@ -499,6 +539,8 @@ export class InboxLink {
       ...(cwd ? { project_path: cwd } : {}),
       ...(this.startedAt ? { started_at: this.startedAt } : {}),
       ...(this.busy === null ? {} : { busy: this.busy, idle_since: this.idleSince }),
+      // Send now: this engine can put a reply into a running turn (`$.session.append`).
+      ...(this.host.appendUserRow && !this.steerRefused ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
     })
     return response && response.status === 200 ? parseInboxBridgeCommands(response.text) : null
   }
@@ -518,8 +560,11 @@ export class InboxLink {
       this.backoffMs = 0
       this.retryAt = 0
       for (const command of commands) {
-        if (this.settled.has(command.id) || this.pending.has(command.id) || this.elsewhere.has(command.id)) continue
-        this.host.debug(`inbox: ${command.type} ${command.id} for this session`)
+        if (this.settled.has(command.id) || this.elsewhere.has(command.id)) continue
+        const known = this.pending.get(command.id)
+        // A later poll carries `now` once the person pressed Send now: the newest command wins.
+        if (known && known.now === command.now) continue
+        this.host.debug(`inbox: ${command.type} ${command.id} for this session${command.now ? ' (send now)' : ''}`)
         this.pending.set(command.id, command)
       }
     } finally {
@@ -532,10 +577,17 @@ export class InboxLink {
     this.settled.add(id)
   }
 
-  /** Deliver the oldest waiting reply as a turn, once. */
-  private async deliverNext(): Promise<void> {
-    const command = this.pending.values().next().value as InboxReplyCommand | undefined
+  /**
+   * Deliver the oldest waiting reply as a turn, once; `urgent` (Send now,
+   * the session not idle for two ticks yet): that one at once, into the
+   * running turn while one runs (`appendUserRow`), else as a turn.
+   */
+  private async deliverNext(urgent: InboxReplyCommand | null = null): Promise<void> {
+    const command = urgent ?? (this.pending.values().next().value as InboxReplyCommand | undefined)
     if (!command) return
+    // Into the running turn only when the person asked and the engine can; otherwise it waits for idle.
+    const into = urgent !== null && this.options.isBusy()
+    if (into && !this.host.appendUserRow) return
     // Still waiting? An agent may have read it through the tool meanwhile, or
     // another process delivered it.
     const fresh = await this.pendingNow(0)
@@ -555,10 +607,28 @@ export class InboxLink {
     if (claim?.exitCode !== INBOX_CLAIM_EXIT.won) return
     this.submitting = command.id
     await this.host.writeFile(`${dir}/alive`, String(await this.host.now())).catch(() => undefined)
-    this.host.debug(`inbox: delivering ${command.type} ${command.id}`)
+    this.host.debug(`inbox: delivering ${command.type} ${command.id}${into ? ' into the running turn' : ''}`)
     try {
-      // Resolves once Claude is idle and took the turn.
-      await this.host.submit(inboxWakeText(command))
+      if (into) {
+        // Send now while Claude works: a user row in the running turn, read at its next model request.
+        try {
+          await this.host.appendUserRow!(inboxWakeText(command))
+        } catch (error) {
+          // Refused: nothing entered, so it is delivered when the session is idle (the claim is this instance's, so it wins again).
+          this.submitting = null
+          this.noSteer.add(command.id)
+          this.steerRefused = true
+          this.host.debug(`inbox: ${command.id} could not go into the running turn (${error instanceof Error ? error.message : String(error)}); it waits for idle`)
+          return
+        }
+        this.sentNow = { command, stepped: false }
+        await this.host
+          .appendNotice?.(`Plannotator Inbox: the person's ${command.type === 'message' ? 'message' : 'reply'} (${command.subject ?? 'a thread'}) went into this turn.`)
+          .catch(() => undefined)
+      } else {
+        // Resolves once Claude is idle and took the turn.
+        await this.host.submit(inboxWakeText(command))
+      }
     } catch (error) {
       this.submitting = null
       this.settle(command.id)

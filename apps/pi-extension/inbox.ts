@@ -21,7 +21,10 @@
  * settled: `agent_settled` where Pi has it, idle alone on older Pi), goes in
  * with `pi.sendUserMessage(text, { deliverAs: "followUp" })` (a follow-up
  * never steers into a run that started in the same instant), and counts as
- * delivered when Pi starts that user message. Nothing here ever aborts a
+ * delivered when Pi starts that user message. Send now (the person pressed
+ * it in the Inbox; the command's `now`) goes in at once instead: as a
+ * `deliverAs: "steer"` while a run is going, which Pi reads after the run's
+ * current tool calls, else as the follow-up. Nothing here ever aborts a
  * run, so a prompt typed into the wake's turn takes it over, the rule of
  * `pi-session-bridge.ts`'s run protection, and the reply is never sent again.
  * Listeners are registered once, at load (`pi.on` has no unsubscribe before 1.0).
@@ -178,6 +181,27 @@ function registerPiInbox(pi: InboxPi, connection: InboxAgentConnection, options:
 		}
 	};
 
+	/** Put the wake text into the session and wait until Pi starts it as a user message. */
+	const send = (text: string, command: InboxReplyCommand, deliverAs: "followUp" | "steer") =>
+		new Promise<void>((resolve, reject) => {
+			const current = ctx;
+			const watchdog = () => {
+				if (waiting?.id !== command.id) return;
+				// Still busy (Pi preparing the run, or the person's run first): look again later.
+				if (current && isCtxAlive(current) && !idleNow(current)) {
+					waiting.timer = setTimeout(watchdog, DELIVERY_WATCHDOG_MS);
+					return;
+				}
+				endWaiting(new Error("the message did not reach the session"));
+			};
+			waiting = { id: command.id, resolve, reject, timer: setTimeout(watchdog, DELIVERY_WATCHDOG_MS) };
+			try {
+				pi.sendUserMessage(text, { deliverAs });
+			} catch (error) {
+				endWaiting(error instanceof Error ? error : new Error(String(error)));
+			}
+		});
+
 	const target = {
 		isBusy: () => {
 			const current = ctx;
@@ -185,25 +209,9 @@ function registerPiInbox(pi: InboxPi, connection: InboxAgentConnection, options:
 			if (options.isAskActive()) return true;
 			return settleEvents && runOpen;
 		},
-		deliver: (text: string, command: InboxReplyCommand) =>
-			new Promise<void>((resolve, reject) => {
-				const current = ctx;
-				const watchdog = () => {
-					if (waiting?.id !== command.id) return;
-					// Still busy (Pi preparing the run, or the person's run first): look again later.
-					if (current && isCtxAlive(current) && !idleNow(current)) {
-						waiting.timer = setTimeout(watchdog, DELIVERY_WATCHDOG_MS);
-						return;
-					}
-					endWaiting(new Error("the message did not reach the session"));
-				};
-				waiting = { id: command.id, resolve, reject, timer: setTimeout(watchdog, DELIVERY_WATCHDOG_MS) };
-				try {
-					pi.sendUserMessage(text, { deliverAs: "followUp" });
-				} catch (error) {
-					endWaiting(error instanceof Error ? error : new Error(String(error)));
-				}
-			}),
+		deliver: (text: string, command: InboxReplyCommand) => send(text, command, "followUp"),
+		// Send now while a run is going: a steer, which Pi puts into the run after its current tool calls.
+		steer: (text: string, command: InboxReplyCommand) => send(text, command, "steer"),
 		notify: (message: string) => {
 			try {
 				ctx?.ui.notify(message, "warning");
