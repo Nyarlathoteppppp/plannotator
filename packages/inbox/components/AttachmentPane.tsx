@@ -67,6 +67,9 @@ export const FOLD_PANEL_BELOW = 780;
 /** How long full screen's step chip names the new file. */
 export const FULL_VIEW_CHIP_MS = 1600;
 
+/** What sits at a file's foot in full screen (an image's or a film's comment row, a phone's "Comment at"): the toolbar, the chips and the toast keep above it. */
+export const FILE_FOOT_ROW = '[data-image-composer], [data-file-foot]';
+
 /** Hide / Show tools: the html-annotate scope's existing chord (⌘⇧X), HTML files only. */
 const TOOLS_CHORD = htmlAnnotateShortcuts.shortcuts.toggleTools.bindings[0]!;
 
@@ -396,23 +399,23 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
       setMoreOpen(false);
     }
   }, [full]);
-  // An image's or a film's comment row stays at the file's foot in full screen: the chip (and a phone's toolbar) sit above it.
+  // An image's or a film's comment row (a phone's "Comment at" button for a film) stays at the file's foot in full screen: the chip and a phone's toolbar sit above it.
   useEffect(() => {
     const section = sectionRef.current;
     if (!full || !section || (kind !== 'image' && kind !== 'video')) return;
     const place = () => {
-      const row = section.querySelector<HTMLElement>('[data-image-composer]');
+      const row = section.querySelector<HTMLElement>(FILE_FOOT_ROW);
       section.style.setProperty('--ib-fvfoot', `${row ? Math.round(row.getBoundingClientRect().height) : 0}px`);
     };
     place();
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(place);
     const mutations = new MutationObserver(() => {
       place();
-      const row = section.querySelector('[data-image-composer]');
+      const row = section.querySelector(FILE_FOOT_ROW);
       if (row && observer) observer.observe(row);
     });
     mutations.observe(section, { childList: true, subtree: true });
-    const row = section.querySelector('[data-image-composer]');
+    const row = section.querySelector(FILE_FOOT_ROW);
     if (row && observer) observer.observe(row);
     return () => {
       observer?.disconnect();
