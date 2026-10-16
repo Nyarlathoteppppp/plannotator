@@ -11,17 +11,21 @@ import { Icon } from '../icons';
 import { Modal } from './Updates';
 
 const STEP_TEXT: Record<NonNullable<InboxNameState['step']>, string> = {
-  installing: 'Installing portless into Plannotator’s data folder…',
+  preparing: 'Getting portless ready…',
   password: 'Waiting for your password. Your computer asks for it in its own window.',
-  alias: 'Registering inbox.plannotator.localhost…',
+  installing: 'Password accepted. Setting it up…',
+  starting: 'Starting the address…',
   verifying: 'Checking the new address…',
 };
+
+/** How often the window reads the state while setup runs (the server moves a step within 250 ms of it happening). */
+const SETUP_POLL_MS = 250;
 
 export function stepText(state: InboxNameState): string {
   return state.step ? STEP_TEXT[state.step] : 'Starting…';
 }
 
-/** The fixed address's state, with on/off; polls once a second while the server works. */
+/** The fixed address's state, with on/off; polls every 250 ms while the server works. */
 export function useFixedAddress(enabled: boolean) {
   const [state, setState] = useState<InboxNameState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +43,7 @@ export function useFixedAddress(enabled: boolean) {
       } catch (e) {
         if (alive.current) setError(e instanceof Error ? e.message : String(e));
       }
-    }, 1000);
+    }, SETUP_POLL_MS);
   }, []);
 
   useEffect(() => {
@@ -94,7 +98,8 @@ export function FixedAddressDialog({ initial, onClose }: FixedAddressDialogProps
   const asked = useRef(false);
   useEffect(() => {
     if (asked.current && state.status === 'on') {
-      const id = setTimeout(() => goToName(state), 900);
+      // A short beat so "Done" is seen, then the tab moves.
+      const id = setTimeout(() => goToName(state), 400);
       return () => clearTimeout(id);
     }
   }, [state]);

@@ -45,10 +45,27 @@
  *
  * The fallback is always `http://localhost:<port>`: nothing an agent or
  * connection uses changes, and a failure leaves the Inbox exactly as it was.
+ *
+ * The wait after the password (measured 2026-10-16 on the owner's Mac): the
+ * plist was written 1-2 s after the prompt, and the proxy started exactly 10 s
+ * later. portless's macOS install runs `launchctl bootstrap` (RunAtLoad starts
+ * the proxy at once) and then `launchctl kickstart -k`, which kills that new
+ * instance; launchd then holds the respawn for its ThrottleInterval (10 s) and
+ * `kickstart` blocks until it ends. A temp LaunchAgent reproduces it as the
+ * person: `kickstart -k` right after `bootstrap` takes 10.02 s, plain
+ * `kickstart` 0.007 s. So the elevated macOS command puts a `launchctl` shim
+ * first on PATH (a root-owned mktemp folder, made and removed inside the same
+ * command) that drops the `-k` from `kickstart -k`; everything else passes
+ * through to /bin/launchctl. And so the window never says "waiting for your
+ * password" after it was typed, the elevated command's first act makes a
+ * marker folder (`accepted-<nonce>`, in a folder the person owns, made before
+ * the prompt): the server polls for it and moves `step` from `password` to
+ * `installing`, then `starting` (the proxy, the alias) and `verifying`.
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { inboxDir } from "@plannotator/shared/inbox/schema";
@@ -67,6 +84,10 @@ export const INBOX_NAME_PROMPT =
   "Plannotator wants to give the Inbox a fixed address, inbox.plannotator.localhost. This starts a small local proxy (portless) on this computer only.";
 
 const NAME_FILE = "name.json";
+/** The folder (under the Inbox's own folder, the person's) where the elevated command leaves its marker. */
+const SETUP_DIR = "name-setup";
+/** How often the server looks for the marker and for the proxy while setup runs. */
+const SETUP_POLL_MS = 250;
 const PRIVILEGED_TIMEOUT_MS = 5 * 60_000;
 const NPM_TIMEOUT_MS = 3 * 60_000;
 const ALIAS_TIMEOUT_MS = 20_000;
@@ -195,6 +216,38 @@ export interface PrivilegedOptions {
    * on Windows `schtasks /Create /F` in the install replaces the task itself.
    */
   replace?: boolean;
+  /**
+   * A folder the elevated command makes FIRST (`/bin/mkdir`, never following a
+   * final symlink; on Windows the person's PowerShell makes it once UAC was
+   * accepted), so the server knows the password went in. Only with the OS
+   * prompt. Validated like every other path.
+   */
+  marker?: string;
+}
+
+/**
+ * The launchctl shim's lines: `kickstart -k <service>` becomes `kickstart
+ * <service>` (start it if it is not running; return at once if it is), so
+ * launchd's 10-second respawn throttle after `bootstrap` never applies;
+ * anything else goes to `target` unchanged. No `"` or `\` (it rides inside
+ * an AppleScript string); portless's launchctl words hold no spaces, so `$@`
+ * needs no quotes. `target` is a parameter for the tests only.
+ */
+export function launchctlShimLines(target = "/bin/launchctl"): string[] {
+  return ["#!/bin/sh", `if [ $# -ge 2 ] && [ $1 = kickstart ] && [ $2 = -k ]; then shift 2; exec ${target} kickstart $@; fi`, `exec ${target} $@`];
+}
+
+/**
+ * macOS: wrap `body` so it runs with the launchctl shim first on PATH. The
+ * shim lives in a root-owned 0700 folder from mktemp under /tmp, made and
+ * removed inside the same elevated command. Any failure making it leaves PATH
+ * alone (the install then runs as before, 10 s slower). Keeps the body's exit.
+ */
+export function withLaunchctlShim(body: string): string {
+  const write = launchctlShimLines()
+    .map((line, i) => `echo '${line}' ${i === 0 ? ">" : ">>"} $d/launchctl`)
+    .join(" && ");
+  return `d=$(/usr/bin/mktemp -d /tmp/plannotator-launchctl.XXXXXX) && /bin/chmod 700 $d && ${write} && /bin/chmod 755 $d/launchctl && PATH=$d:/usr/bin:/bin:/usr/sbin:/sbin && export PATH ; ${body} ; s=$? ; /bin/rm -rf $d ; exit $s`;
 }
 
 /**
@@ -206,13 +259,19 @@ export interface PrivilegedOptions {
  */
 export function privilegedInstallCommand(platform: NodeJS.Platform, ctx: PrivilegedContext, mode: ElevationMode = "prompt", options: PrivilegedOptions = {}): CommandLine {
   validate(ctx, platform);
+  const marker = mode === "prompt" && options.marker ? assertSafePath(options.marker, platform) : null;
   const portlessWords = [ctx.cli, ...SERVICE_INSTALL_WORDS, "--state-dir", ctx.stateDir];
   if (platform === "win32") {
     if (mode !== "prompt") return { command: ctx.node, args: portlessWords };
     // Start-Process -ArgumentList joins its words with spaces, so each path is wrapped in double quotes
     // (validated to hold none); the whole is one single-quoted PowerShell string (validated to hold no ').
     const argumentList = `"${ctx.cli}" ${SERVICE_INSTALL_WORDS.join(" ")} --state-dir "${ctx.stateDir}"`;
-    const script = `$p = Start-Process -FilePath '${ctx.node}' -ArgumentList '${argumentList}' -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode`;
+    const start = (wait: string) => `Start-Process -FilePath '${ctx.node}' -ArgumentList '${argumentList}' -Verb RunAs${wait} -PassThru -WindowStyle Hidden`;
+    // With a marker: Start-Process returns once UAC was accepted (a refusal throws, and Stop ends the script there),
+    // the marker is made as the person, then the elevated install is awaited.
+    const script = marker
+      ? `$ErrorActionPreference = 'Stop'; $p = ${start("")}; $null = $p.Handle; New-Item -ItemType Directory -Force -Path '${marker}' | Out-Null; $p.WaitForExit(); exit $p.ExitCode`
+      : `$p = ${start(" -Wait")}; exit $p.ExitCode`;
     return { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script] };
   }
   const env = ["/usr/bin/env", ...posixEnvWords(ctx), ctx.node];
@@ -220,13 +279,18 @@ export function privilegedInstallCommand(platform: NodeJS.Platform, ctx: Privile
   const shellLine = (words: string[]) => words.map((word) => `'${word}'`).join(" ");
   // One shell line when replacing: the uninstall, then the install whatever the uninstall said
   // (the install boots out the same launchd label / systemd unit itself; the uninstall is belt and braces).
-  const shell = options.replace ? `${shellLine([...env, ctx.cli, "service", "uninstall"])} ; ${shellLine(install)}` : shellLine(install);
+  let body = options.replace ? `${shellLine([...env, ctx.cli, "service", "uninstall"])} ; ${shellLine(install)}` : shellLine(install);
+  // macOS: the launchctl shim (see the module comment: launchd's 10-second throttle).
+  if (platform === "darwin") body = withLaunchctlShim(body);
+  // The marker first, whatever it says: it only tells the window the password went in.
+  const shell = marker ? `/bin/mkdir ${shellLine([marker])} ; ${body}` : body;
   if (platform === "darwin" && mode === "prompt") {
     // `do shell script` runs /bin/sh: every word single-quoted. The AppleScript string then holds no `"` or `\`.
     return { command: "/usr/bin/osascript", args: ["-e", `do shell script "${shell}" with administrator privileges with prompt "${INBOX_NAME_PROMPT}"`] };
   }
-  // pkexec and sudo take an argv; a replace needs a shell for the two commands (the polkit agent then names /bin/sh).
-  const argv = options.replace ? ["/bin/sh", "-c", shell] : install;
+  // pkexec and sudo take an argv; a shell line (replace, marker, the macOS shim) runs through /bin/sh -c
+  // (the polkit agent then names /bin/sh).
+  const argv = shell === shellLine(install) ? install : ["/bin/sh", "-c", shell];
   if (mode === "direct") return { command: argv[0]!, args: argv.slice(1) };
   if (mode === "sudo") return { command: "sudo", args: ["-n", ...argv] };
   return { command: "pkexec", args: argv };
@@ -307,7 +371,15 @@ export const runDetached: NameRunner = (line, { env, timeoutMs }) =>
   });
 
 export type NameStatus = "unavailable" | "off" | "working" | "on" | "failed";
-export type NameStep = "installing" | "password" | "alias" | "verifying";
+/**
+ * Where setup is, for the window:
+ * - `preparing`: fetching portless into the data folder (usually done before Sure, see `prefetch`).
+ * - `password`: the OS password prompt is up.
+ * - `installing`: the password went in (the marker appeared); the elevated install runs.
+ * - `starting`: waiting for the proxy on port 80, then registering the name.
+ * - `verifying`: checking the address answers this Inbox.
+ */
+export type NameStep = "preparing" | "password" | "installing" | "starting" | "verifying";
 
 export interface InboxNameState {
   status: NameStatus;
@@ -476,8 +548,10 @@ export interface InboxName {
   /** Sure / `--name on`: runs in the background; poll `state()`. */
   enable(): InboxNameState;
   disable(): Promise<InboxNameState>;
-  /** Compare-and-set: the first ask while due gets true. */
+  /** Compare-and-set: the first ask while due gets true (and portless starts downloading in the background). */
   claimDialog(): boolean;
+  /** Fetch portless in the background; idempotent. */
+  prefetch(): void;
   listenerPort(): number | null;
   stop(): void;
 }
@@ -486,19 +560,24 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const probe = options.probe ?? probeName;
-  const pollMs = options.pollMs ?? 500;
+  const pollMs = options.pollMs ?? SETUP_POLL_MS;
   const pollTries = options.pollTries ?? 30;
   const proxyWaitMs = options.proxyWaitMs ?? 90_000;
   const log: string[] = [];
-  /** Run a command and keep a line about it (never its environment). */
+  const note = (text: string) => {
+    log.push(`${new Date().toISOString()} ${text}`);
+    if (log.length > 20) log.splice(0, log.length - 20);
+  };
+  /** Run a command and keep a line about it (never its environment): logged when it ENDS, with how long it took. */
   const exec: NameRunner = async (line, opts) => {
+    const began = Date.now();
     const result = await (options.runner ?? runDetached)(line, opts);
     const tail = `${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-4).join(" | ").slice(0, 600);
-    log.push(`${new Date().toISOString()} ${[line.command, ...line.args].join(" ").slice(0, 900)} -> ${result.timedOut ? "timed out" : `exit ${result.code}`}${tail ? `: ${tail}` : ""}`);
-    if (log.length > 20) log.splice(0, log.length - 20);
+    note(`${[line.command, ...line.args].join(" ").slice(0, 900)} -> ${result.timedOut ? "timed out" : `exit ${result.code}`} in ${Date.now() - began} ms${tail ? `: ${tail}` : ""}`);
     return result;
   };
   const file = join(inboxDir(options.dataDir), NAME_FILE);
+  const setupDir = join(inboxDir(options.dataDir), SETUP_DIR);
   const home = env.PLANNOTATOR_PROTO_PORTLESS_HOME || join(options.dataDir, "portless");
   const userHome = (platform === "win32" ? env.USERPROFILE : env.HOME) || homedir();
   const stateDir = env.PLANNOTATOR_PROTO_PORTLESS_STATE_DIR || join(userHome, ".portless");
@@ -533,6 +612,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   let nodeLookup: Promise<{ node: string; version: string } | null> | null = null;
   let listener: ReturnType<typeof Bun.serve> | null = null;
   let job: Promise<void> | null = null;
+  let fetching: Promise<string | null> | null = null;
   let stopped = false;
 
   const childEnv = (): Record<string, string | undefined> => ({
@@ -579,6 +659,62 @@ export function createInboxName(options: InboxNameOptions): InboxName {
     const major = nodeMajor(node.version);
     if (major === null || major < PORTLESS_MIN_NODE_MAJOR) return `Needs Node 24 or newer; found ${node.version} at ${node.node}.`;
     return null;
+  };
+
+  /**
+   * portless into <data dir>/portless, as the person; idempotent and one at a
+   * time. Started when the dialog is shown (`prefetch`), so Sure never waits on
+   * npm before the prompt; Sure awaits the same promise. Null when ready.
+   */
+  const ensurePortless = (): Promise<string | null> => {
+    if (existsSync(cli)) return Promise.resolve(null);
+    fetching ??= (async () => {
+      if (await ensureNode()) return "Node 24 or newer is missing.";
+      const found = node!;
+      const npmCli = [join(dirname(found.node), "node_modules", "npm", "bin", "npm-cli.js"), join(dirname(found.node), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js")].find((p) => existsSync(p));
+      if (!npmCli) return `npm was not found next to ${found.node}.`;
+      mkdirSync(home, { recursive: true });
+      const installed = await exec(npmInstallCommand(found.node, npmCli, home), { env: childEnv(), timeoutMs: NPM_TIMEOUT_MS });
+      if (installed.code !== 0 || !existsSync(cli)) return `Installing portless ${PORTLESS_VERSION} failed: ${(installed.stderr || installed.stdout).trim().slice(-400) || `exit ${installed.code}`}`;
+      return null;
+    })()
+      .catch((error) => (error instanceof Error ? error.message : String(error)))
+      .finally(() => {
+        fetching = null;
+      });
+    return fetching;
+  };
+
+  /** Fetch portless in the background (never throws, never waits). */
+  const prefetch = () => {
+    if (!enabledHere || stopped || existsSync(cli)) return;
+    void ensurePortless();
+  };
+
+  /**
+   * The privileged step, with the marker watched: `password` until the
+   * elevated command made the marker, then `installing`. The marker's name is
+   * fresh per run, in a folder the person owns made before the prompt; it is
+   * removed after.
+   */
+  const runPrivileged = async (line: CommandLine, marker: string | null): Promise<RunResult> => {
+    const began = Date.now();
+    let seen = false;
+    const look = () => {
+      if (!seen && marker && existsSync(marker)) {
+        seen = true;
+        step = "installing";
+        note(`password accepted (marker seen) after ${Date.now() - began} ms`);
+      }
+    };
+    const watch = marker ? setInterval(look, SETUP_POLL_MS) : null;
+    try {
+      return await exec(line, { env: childEnv(), timeoutMs: PRIVILEGED_TIMEOUT_MS });
+    } finally {
+      if (watch) clearInterval(watch);
+      look();
+      if (marker) rmSync(marker, { recursive: true, force: true });
+    }
   };
 
   const openListener = (): number => {
@@ -669,36 +805,42 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       return fail("portless is already set up on this computer with HTTPS, by something other than Plannotator. Plannotator leaves it alone. Nothing changed; the Inbox stays at localhost.");
     }
     const port = openListener();
-    // 3. portless into <data dir>/portless, as the person.
+    // 3. portless into <data dir>/portless, as the person (usually fetched already, when the dialog showed).
     if (!existsSync(cli)) {
-      step = "installing";
-      const npmCli = [join(dirname(node!.node), "node_modules", "npm", "bin", "npm-cli.js"), join(dirname(node!.node), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js")].find((p) => existsSync(p));
-      if (!npmCli) return fail(`npm was not found next to ${node!.node}.`);
-      mkdirSync(home, { recursive: true });
-      const installed = await exec(npmInstallCommand(node!.node, npmCli, home), { env: childEnv(), timeoutMs: NPM_TIMEOUT_MS });
-      if (installed.code !== 0 || !existsSync(cli)) return fail(`Installing portless ${PORTLESS_VERSION} failed: ${(installed.stderr || installed.stdout).trim().slice(-400) || `exit ${installed.code}`}`);
+      step = "preparing";
+      const fetchError = await ensurePortless();
+      if (fetchError) return fail(fetchError);
     }
     // 4. The one privileged step, only when a plain-HTTP portless is not already answering.
     if (before.kind !== "http") {
-      step = "password";
+      // No OS prompt in the CI modes: straight to installing.
+      step = elevation === "prompt" ? "password" : "installing";
       let line: CommandLine;
+      let marker: string | null = null;
       try {
         const me = options.user ? options.user() : platform === "win32" ? { username: env.USERNAME ?? "", uid: -1, gid: -1 } : userInfo();
+        if (elevation === "prompt") {
+          mkdirSync(setupDir, { recursive: true, mode: 0o700 });
+          for (const stale of readdirSync(setupDir)) rmSync(join(setupDir, stale), { recursive: true, force: true });
+          marker = join(setupDir, `accepted-${randomBytes(8).toString("hex")}`);
+        }
         line = privilegedInstallCommand(
           platform,
           { node: node!.node, cli, stateDir, user: me.username, uid: String(me.uid), gid: String(me.gid), home: userHome },
           elevation,
           // Plannotator's own earlier service (the HTTPS one): replaced in the same prompt.
-          { replace: !!service?.ours },
+          { replace: !!service?.ours, ...(marker ? { marker } : {}) },
         );
       } catch (error) {
         return fail(error instanceof Error ? error.message : String(error));
       }
-      const result = await exec(line, { env: childEnv(), timeoutMs: PRIVILEGED_TIMEOUT_MS });
+      const result = await runPrivileged(line, marker);
       if (result.timedOut) return fail("The password prompt timed out. Nothing changed.");
       if (result.code !== 0) return fail(explainPrivilegedFailure(platform, result.code, result.stderr || result.stdout));
+      step = "starting";
       let up = false;
-      const until = Date.now() + proxyWaitMs;
+      const waitBegan = Date.now();
+      const until = waitBegan + proxyWaitMs;
       while (!stopped && Date.now() < until) {
         if ((await readState()).kind === "http") {
           up = true;
@@ -706,6 +848,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
         }
         await Bun.sleep(pollMs);
       }
+      note(up ? `the proxy answered on port ${INBOX_NAME_PROXY_PORT} after ${Date.now() - waitBegan} ms` : `the proxy did not answer within ${proxyWaitMs} ms`);
       if (!up) {
         const tail = serviceLogTail(stateDir);
         if (/EADDRINUSE/i.test(tail)) return fail(`Port ${INBOX_NAME_PROXY_PORT} is used by another program, so portless's proxy could not start. The Inbox stays at localhost. (${tail})`);
@@ -713,12 +856,15 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       }
     }
     // 5. The alias, as the person.
-    step = "alias";
+    step = "starting";
     const aliasError = await alias(port);
     if (aliasError) return fail(aliasError);
     // 6. Verify.
     step = "verifying";
-    if (!(await verify())) return fail(`The address does not answer this Inbox yet: ${probeDetail ?? "no answer"}. localhost still works.`);
+    const verifyBegan = Date.now();
+    const verified = await verify();
+    note(`verify ${verified ? "answered" : "gave up"} after ${Date.now() - verifyBegan} ms`);
+    if (!verified) return fail(`The address does not answer this Inbox yet: ${probeDetail ?? "no answer"}. localhost still works.`);
     saved = { ...readFile(), on: true, port };
     writeFile(saved);
     status = "on";
@@ -770,7 +916,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
         // On at the last run: same listener port when free, the alias re-pointed (no prompt), then
         // the probe. "working" from the first moment, so a window reading the state meanwhile waits.
         status = "working";
-        step = "alias";
+        step = "starting";
         const missing = await ensureNode();
         if (missing) {
           status = "unavailable";
@@ -837,8 +983,11 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       if (!enabledHere || status !== "off" || current.dialog_shown) return false;
       writeFile({ ...current, dialog_shown: true });
       saved = { ...saved, dialog_shown: true };
+      // The person is reading the offer: fetch portless now, so Sure goes straight to the password prompt.
+      prefetch();
       return true;
     },
+    prefetch,
     listenerPort: () => (listener ? (listener.port as number) : null),
     stop() {
       stopped = true;

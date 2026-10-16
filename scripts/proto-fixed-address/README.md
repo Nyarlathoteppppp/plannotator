@@ -23,9 +23,32 @@ The prototype is inert unless the Inbox starts with `PLANNOTATOR_PROTO_FIXED_ADD
 1. Finds Node 24+ (portless needs it). Without it the offer never shows.
 2. Looks at port 80. Another program there: it stops and says which ("Port 80 is already used by another program … it answered as "nginx""), with no prompt and nothing installed. A portless HTTPS proxy that Plannotator did not install: left alone, same message style.
 3. Installs portless 0.15.8 into the data folder, as the person.
-4. The one privileged step, only when a plain-HTTP portless is not already on 80: `portless service install --no-tls --port 80`. When this prototype's own earlier HTTPS service is installed (read from `/Library/LaunchDaemons/sh.portless.proxy.plist`, matched by our `cli.js` path), the same elevated command runs `service uninstall ; service install --no-tls …`, so it is still one prompt.
+4. The one privileged step, only when a plain-HTTP portless is not already on 80: `portless service install --no-tls --port 80` (on macOS behind the launchctl shim, after the marker; see "The wait after the password"). When this prototype's own earlier HTTPS service is installed (read from `/Library/LaunchDaemons/sh.portless.proxy.plist`, matched by our `cli.js` path), the same elevated command runs `service uninstall ; service install --no-tls …`, so it is still one prompt.
 5. `portless alias inbox.plannotator <name listener port>`, as the person.
 6. Verifies `http://inbox.plannotator.localhost/api/inbox/health` answers this Inbox's `serverSession` (falls back to `127.0.0.1:80` with the name as Host when the process cannot resolve the name).
+
+## The wait after the password (measured 2026-10-16)
+
+The owner's first run, read from file times on his Mac (nothing re-run with admin):
+
+| Time | What |
+|---|---|
+| 15:28:39.6 | npm install of portless ends (it takes 0.13 to 0.4 s; measured into a temp prefix, warm and cold cache) |
+| 15:28:42 | the launchd plist is written: the password went in about 2 s after the prompt |
+| 15:28:52 | the proxy writes its pid: **10 s later** |
+| 15:28:52.9 | the elevated command (osascript) returns |
+| 15:28:53.5 | `portless alias` ends (0.6 s) |
+| 15:28:54 | verified, `name.json` written; the window then took up to 1 s (its poll) plus 0.9 s (a fixed pause) to move the tab |
+
+The 10 s is launchd. portless's macOS install runs `launchctl bootstrap` (RunAtLoad starts the proxy at once) and then `launchctl kickstart -k`, which kills that new instance; launchd then holds the respawn for its ThrottleInterval (10 s), and `kickstart` blocks until then. A temp LaunchAgent reproduces it as the person: `kickstart -k` right after `bootstrap` takes 10.02 s; plain `kickstart` takes 0.007 s; portless's whole launchctl sequence through the shim below takes 0.18 s. The proxy itself is listening 75 ms after it starts (`proxy start --foreground` on a high port).
+
+What changed:
+
+- The elevated macOS command puts a `launchctl` shim first on PATH (a root-owned `mktemp -d` folder under /tmp, made and removed inside the same command) that turns `kickstart -k` into `kickstart`. Everything else passes through to /bin/launchctl. Expected wait after the password: about 1 s instead of 11.
+- The elevated command's first act makes a marker folder (`<data dir>/inbox/name-setup/accepted-<random>`, the folder made by the person before the prompt; on Windows the person's PowerShell makes it once UAC returns). The server looks for it every 250 ms and moves `step` from `password` to `installing`, then `starting` (proxy and alias) and `verifying`. The window never says "waiting for your password" after it was typed.
+- portless is fetched when the dialog is shown (`prefetch`), so Sure goes straight to the prompt.
+- The server's waits poll every 250 ms (was 500); the window reads the state every 250 ms while setup runs (was 1 s) and moves the tab 0.4 s after "Done" (was 0.9 s).
+- Each logged command now says how long it took (`… -> exit 0 in 812 ms`), plus lines for the password, the proxy and the verify.
 
 ## On the owner's Mac
 
@@ -99,5 +122,5 @@ Results go to the job summary. Screenshots are uploaded as artifacts.
 
 - Linux and macOS: the routing worked; CA trust needed NSS by hand (Linux) and could not be added without a person (macOS; on the owner's Mac too, so Chrome showed NET::ERR_CERT_AUTHORITY_INVALID).
 - Windows: trusting the CA showed Windows' own Security Warning dialog, a second prompt after UAC.
-- The proxy took over 15 s to come up after `launchctl` on a CI Mac; the flow waits up to 90 s.
+- The proxy took over 15 s to come up after `launchctl` on a CI Mac; the flow waits up to 90 s. (10 s of that was launchd's respawn throttle after `kickstart -k`; the shim removes it.)
 - Playwright under Bun on Windows never launches Chromium, so CI drives the browser with Node.

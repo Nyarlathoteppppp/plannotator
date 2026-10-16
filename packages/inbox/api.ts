@@ -35,7 +35,8 @@ export interface InboxNameState {
   url: string;
   host: string;
   reason: string | null;
-  step: 'installing' | 'password' | 'alias' | 'verifying' | null;
+  /** preparing: fetching portless; password: the OS prompt is up; installing: the password went in; starting: the proxy and the name; verifying: checking it. */
+  step: 'preparing' | 'password' | 'installing' | 'starting' | 'verifying' | null;
   listener_port: number | null;
   dialog_due: boolean;
   /** The prototype is switched on in the Inbox's environment; off, the window shows nothing. */

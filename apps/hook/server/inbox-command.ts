@@ -389,10 +389,10 @@ async function nameCommand(dataDir: string, action: "on" | "off" | "status"): Pr
       if (state.step !== lastStep && state.step) {
         lastStep = state.step;
         process.stderr.write(
-          { installing: "Installing portless into the data folder…", password: "Waiting for your password (the OS asks)…", alias: "Registering the name…", verifying: "Checking the address…" }[state.step] + "\n",
+          `${({ preparing: "Getting portless ready…", password: "Waiting for your password (the OS asks)…", installing: "Password accepted; setting it up…", starting: "Starting the address…", verifying: "Checking the address…" } as Record<string, string>)[state.step] ?? state.step}\n`,
         );
       }
-      await Bun.sleep(700);
+      await Bun.sleep(250);
       state = (await ask("status")) ?? state;
     }
   }

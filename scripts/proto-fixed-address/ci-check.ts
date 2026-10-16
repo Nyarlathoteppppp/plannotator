@@ -121,7 +121,7 @@ try {
   const afterSure = await nameState(first.port);
   record("Sure in the window -> on", afterSure.status === "on", `status ${afterSure.status}; reason ${afterSure.reason}; probe ${afterSure.probe}`);
   console.log("commands run:\n" + ((afterSure.log as string[] | undefined) ?? []).join("\n"));
-  const privileged = ((afterSure.log as string[] | undefined) ?? []).filter((line) => /service install/.test(line));
+  const privileged = ((afterSure.log as string[] | undefined) ?? []).filter((line) => /'?service'? '?install'?/.test(line));
   if (afterSure.status === "failed" && /Port 80 is already used by another program/.test(String(afterSure.reason))) {
     // The runner's port 80 is someone else's (Windows images: http.sys, PID 4). What must hold: a plain
     // message, nothing installed, no privileged command. The rest of the flow needs the port.

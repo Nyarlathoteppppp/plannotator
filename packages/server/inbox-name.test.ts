@@ -5,7 +5,7 @@
  * sudo or `security` ever runs, and nothing outside temp folders is written.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TailscaleRunner } from "@plannotator/shared/tailscale";
@@ -19,12 +19,14 @@ import {
   explainPrivilegedFailure,
   INBOX_NAME_HOST,
   isLoopbackAddress,
+  launchctlShimLines,
   nodeMajor,
   npmInstallCommand,
   privilegedInstallCommand,
   readExistingService,
   readProxyState,
   serviceFilePath,
+  withLaunchctlShim,
   type CommandLine,
   type ExistingService,
   type NameRunner,
@@ -135,7 +137,7 @@ describe("the privileged command", () => {
     expect(line.args[0]).toBe("-e");
     const install = [...ENV(MAC), MAC.node, MAC.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", "/Users/ramos/.portless"];
     expect(line.args[1]).toBe(
-      `do shell script "${quoted(install)}" with administrator privileges with prompt "Plannotator wants to give the Inbox a fixed address, inbox.plannotator.localhost. This starts a small local proxy (portless) on this computer only."`,
+      `do shell script "${withLaunchctlShim(quoted(install))}" with administrator privileges with prompt "Plannotator wants to give the Inbox a fixed address, inbox.plannotator.localhost. This starts a small local proxy (portless) on this computer only."`,
     );
     // The AppleScript string holds no quote or backslash of its own beyond the delimiters.
     const script = line.args[1]!;
@@ -151,7 +153,7 @@ describe("the privileged command", () => {
     expect(line.command).toBe("/usr/bin/osascript");
     const uninstall = [...ENV(MAC), MAC.node, MAC.cli, "service", "uninstall"];
     const install = [...ENV(MAC), MAC.node, MAC.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", "/Users/ramos/.portless"];
-    expect(line.args[1]!.startsWith(`do shell script "${quoted(uninstall)} ; ${quoted(install)}" with administrator privileges`)).toBe(true);
+    expect(line.args[1]!.startsWith(`do shell script "${withLaunchctlShim(`${quoted(uninstall)} ; ${quoted(install)}`)}" with administrator privileges`)).toBe(true);
     expect(line.args.filter((a) => a.includes("with administrator privileges"))).toHaveLength(1);
   });
 
@@ -162,7 +164,9 @@ describe("the privileged command", () => {
     const install = [...ENV(linux), "/usr/bin/node", linux.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", "/home/ramos/.portless"];
     expect(prompt.args).toEqual(install);
     expect(privilegedInstallCommand("linux", linux, "sudo")).toEqual({ command: "sudo", args: ["-n", ...install] });
-    expect(privilegedInstallCommand("darwin", MAC, "direct").command).toBe("/usr/bin/env");
+    // macOS always runs through a shell now (the launchctl shim), in every mode.
+    expect(privilegedInstallCommand("darwin", MAC, "direct")).toEqual({ command: "/bin/sh", args: ["-c", withLaunchctlShim(quoted([...ENV(MAC), MAC.node, MAC.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", MAC.stateDir]))] });
+    expect(privilegedInstallCommand("darwin", MAC, "sudo").args.slice(0, 3)).toEqual(["-n", "/bin/sh", "-c"]);
     const replace = privilegedInstallCommand("linux", linux, "prompt", { replace: true });
     expect(replace).toEqual({ command: "pkexec", args: ["/bin/sh", "-c", `${quoted([...ENV(linux), "/usr/bin/node", linux.cli, "service", "uninstall"])} ; ${quoted(install)}`] });
     expect(privilegedInstallCommand("linux", linux, "sudo", { replace: true })).toEqual({ command: "sudo", args: ["-n", ...replace.args] });
@@ -214,6 +218,87 @@ describe("the privileged command", () => {
     expect(explainPrivilegedFailure("darwin", 1, "0:191: execution error: User canceled. (-128)")).toBe("You cancelled the password prompt. Nothing changed.");
     expect(explainPrivilegedFailure("linux", 126, "Error executing command as another user: Request dismissed")).toBe("You cancelled the password prompt. Nothing changed.");
     expect(explainPrivilegedFailure("darwin", 1, "boom")).toContain("boom");
+  });
+});
+
+describe("the wait after the password: the marker and the launchctl shim", () => {
+  const MARK = "/Users/ramos/.plannotator/inbox/name-setup/accepted-0123456789abcdef";
+  const quoted = (words: string[]) => words.map((w) => `'${w}'`).join(" ");
+
+  test("macOS: the marker is the elevated command's first act, then the shim, then the install; still no quote or backslash in the AppleScript string", () => {
+    const line = privilegedInstallCommand("darwin", MAC, "prompt", { marker: MARK });
+    const script = line.args[1]!;
+    const inner = script.slice('do shell script "'.length, script.indexOf('" with administrator'));
+    expect(inner.startsWith(`/bin/mkdir '${MARK}' ; d=$(/usr/bin/mktemp -d /tmp/plannotator-launchctl.XXXXXX)`)).toBe(true);
+    expect(inner).not.toMatch(/["\\]/);
+    expect(inner).toContain("'service' 'install' '--no-tls' '--port' '80'");
+    expect(line.args.filter((a) => a.includes("with administrator privileges"))).toHaveLength(1);
+  });
+
+  test("Linux: a marker puts the install behind /bin/sh -c (the marker first); no marker keeps the plain argv; CI modes never get one", () => {
+    const linux = { ...MAC, node: "/usr/bin/node", cli: "/home/r/.plannotator/portless/node_modules/portless/dist/cli.js", stateDir: "/home/r/.portless", home: "/home/r", uid: "1000", gid: "1000" };
+    const install = ["/usr/bin/env", `SUDO_USER=${linux.user}`, `SUDO_UID=1000`, `SUDO_GID=1000`, "HOME=/home/r", "PORTLESS_STATE_DIR=/home/r/.portless", "PORTLESS_HTTPS=0", "PORTLESS_SYNC_HOSTS=1", "/usr/bin/node", linux.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", "/home/r/.portless"];
+    expect(privilegedInstallCommand("linux", linux, "prompt", { marker: "/home/r/m/accepted-1" })).toEqual({ command: "pkexec", args: ["/bin/sh", "-c", `/bin/mkdir '/home/r/m/accepted-1' ; ${quoted(install)}`] });
+    expect(privilegedInstallCommand("linux", linux, "sudo", { marker: "/home/r/m/accepted-1" })).toEqual({ command: "sudo", args: ["-n", ...install] });
+    // No shim on Linux: systemctl restart has no throttle.
+    expect(privilegedInstallCommand("linux", linux, "prompt", { marker: "/home/r/m/accepted-1" }).args.join(" ")).not.toContain("launchctl");
+  });
+
+  test("Windows: with a marker, Start-Process returns once UAC is accepted (Stop on a refusal), the person makes the marker, then waits for the install", () => {
+    const script = privilegedInstallCommand("win32", WIN, "prompt", { marker: "C:\\Users\\ramos\\.plannotator\\inbox\\name-setup\\accepted-1" }).args.at(-1)!;
+    expect(script.startsWith("$ErrorActionPreference = 'Stop'; $p = Start-Process -FilePath ")).toBe(true);
+    expect(script).not.toContain("-Wait ");
+    const order = ["-Verb RunAs -PassThru", "$null = $p.Handle", "New-Item -ItemType Directory -Force -Path 'C:\\Users\\ramos\\.plannotator\\inbox\\name-setup\\accepted-1'", "$p.WaitForExit()", "exit $p.ExitCode"].map((w) => script.indexOf(w));
+    expect(order.every((i) => i > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  test("a hostile marker never reaches a command", () => {
+    for (const bad of HOSTILE) {
+      expect(() => privilegedInstallCommand("darwin", MAC, "prompt", { marker: `${MARK}${bad}x` })).toThrow();
+      expect(() => privilegedInstallCommand("linux", MAC, "prompt", { marker: `${MARK}${bad}x` })).toThrow();
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("the shim drops -k from kickstart only, and passes everything else through unchanged", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "plannotator-inbox-name-shim-")));
+    roots.push(dir);
+    const record = join(dir, "record");
+    const target = join(dir, "fake-launchctl");
+    writeFileSync(target, `#!/bin/sh\necho "$@" >> '${record}'\n`);
+    chmodSync(target, 0o755);
+    const shim = join(dir, "launchctl");
+    writeFileSync(shim, `${launchctlShimLines(target).join("\n")}\n`);
+    chmodSync(shim, 0o755);
+    for (const args of [["bootout", "system", "/Library/LaunchDaemons/sh.portless.proxy.plist"], ["bootstrap", "system", "/Library/LaunchDaemons/sh.portless.proxy.plist"], ["enable", "system/sh.portless.proxy"], ["kickstart", "-k", "system/sh.portless.proxy"], ["kickstart", "system/sh.portless.proxy"], ["print", "system/sh.portless.proxy"]]) {
+      expect(Bun.spawnSync([shim, ...args]).exitCode).toBe(0);
+    }
+    expect(readFileSync(record, "utf8").trim().split("\n")).toEqual([
+      "bootout system /Library/LaunchDaemons/sh.portless.proxy.plist",
+      "bootstrap system /Library/LaunchDaemons/sh.portless.proxy.plist",
+      "enable system/sh.portless.proxy",
+      "kickstart system/sh.portless.proxy",
+      "kickstart system/sh.portless.proxy",
+      "print system/sh.portless.proxy",
+    ]);
+  });
+
+  test.skipIf(process.platform === "win32")("the macOS line as /bin/sh runs it: the shim is first on PATH for portless, the install's exit is kept, the shim folder is gone after", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "plannotator-inbox-name-line-")));
+    roots.push(dir);
+    const out = join(dir, "seen");
+    // A stand-in for node: says which launchctl portless would get and what it does with kickstart -k, then exits 7.
+    const fakeNode = join(dir, "node");
+    writeFileSync(fakeNode, `#!/bin/sh\nl=$(command -v launchctl)\necho "$l" > '${out}'\nsed -n 2p "$l" >> '${out}'\nexit 7\n`);
+    chmodSync(fakeNode, 0o755);
+    const ctx = { ...MAC, node: fakeNode, cli: join(dir, "cli.js"), stateDir: join(dir, "state"), home: dir };
+    const line = privilegedInstallCommand("darwin", ctx, "direct");
+    const run = Bun.spawnSync([line.command, ...line.args]);
+    expect(run.exitCode).toBe(7);
+    const [where, rule] = readFileSync(out, "utf8").trim().split("\n");
+    expect(where).toMatch(/^\/tmp\/plannotator-launchctl\.[A-Za-z0-9]+\/launchctl$/);
+    expect(rule).toContain("[ $2 = -k ]; then shift 2; exec /bin/launchctl kickstart $@");
+    expect(existsSync(dirname(where!))).toBe(false);
   });
 });
 
@@ -283,6 +368,10 @@ interface Rig {
   proxy: { up: boolean; other?: string; https?: boolean };
   privileged: { code: number; stderr: string };
   service: { value: ExistingService | null };
+  /** How the scripted password prompt behaves: time to type the password, then time the install takes. */
+  timing: { typingMs: number; installMs: number };
+  /** The marker folders the scripted elevated command made (as root would). */
+  markers: string[];
 }
 
 /** A temp world: data dir, a portless home and state dir, and seams that record every command instead of running it. */
@@ -298,6 +387,8 @@ async function rig(options: { off?: boolean; nodeDelayMs?: number; node?: string
   const proxy = options.carry?.proxy ?? { up: false };
   const privileged = options.carry?.privileged ?? { code: 0, stderr: "" };
   const service = options.carry?.service ?? { value: null };
+  const timing = options.carry?.timing ?? { typingMs: 0, installMs: 0 };
+  const markers: string[] = options.carry?.markers ?? [];
   const self: { inbox?: InboxServer } = {};
   const runner: NameRunner = async (line) => {
     calls.push(line);
@@ -309,6 +400,15 @@ async function rig(options: { off?: boolean; nodeDelayMs?: number; node?: string
       return { code: 0, stdout: "", stderr: "", timedOut: false };
     }
     if (isPrivileged(line)) {
+      // The prompt is up; the person types; on success the elevated command's first act makes the marker.
+      if (timing.typingMs) await Bun.sleep(timing.typingMs);
+      const marker = /accepted-[0-9a-f]{16}/.exec(joined)?.[0];
+      if (marker && privileged.code === 0) {
+        const path = join(dataDir, "inbox", "name-setup", marker);
+        mkdirSync(path);
+        markers.push(path);
+      }
+      if (timing.installMs) await Bun.sleep(timing.installMs);
       if (privileged.code === 0) {
         proxy.up = true;
         proxy.https = false;
@@ -364,7 +464,7 @@ async function rig(options: { off?: boolean; nodeDelayMs?: number; node?: string
   });
   self.inbox = inbox;
   servers.push(inbox);
-  return { inbox, dataDir, stateDir, home, calls, proxy, privileged, service };
+  return { inbox, dataDir, stateDir, home, calls, proxy, privileged, service, timing, markers };
 }
 
 const post = (r: Rig, path: string, body: Json, init: { origin?: string; site?: string } = {}) =>
@@ -600,6 +700,68 @@ describe("the fixed address's routes", () => {
     r.calls.length = 0;
     await post(r, "/api/inbox/name", { on: false, serverSession: r.inbox.serverSession });
     expect(r.calls).toEqual([]);
+  });
+
+  test("the steps the window reads: password while the prompt is up, installing the moment the password went in, then starting and verifying", async () => {
+    const r = await rig();
+    r.timing.typingMs = 400;
+    r.timing.installMs = 400;
+    await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
+    const steps: string[] = [];
+    await waitFor(
+      "on",
+      async () => {
+        const state = ((await (await fetch(`http://localhost:${r.inbox.port}/api/inbox/name`)).json()) as Json).name;
+        if (state.step && steps.at(-1) !== state.step) steps.push(state.step);
+        return state.status === "on";
+      },
+      8000,
+    );
+    // preparing (npm) may be too quick to be seen; the rest is in order.
+    expect(steps.filter((s) => s !== "preparing").slice(0, 2)).toEqual(["password", "installing"]);
+    expect(steps.indexOf("installing")).toBeLessThan(steps.lastIndexOf("verifying") === -1 ? Infinity : steps.lastIndexOf("verifying"));
+    // The marker was made inside the Inbox's own folder, by the "elevated" command, and is gone after.
+    expect(r.markers).toHaveLength(1);
+    expect(dirname(r.markers[0]!)).toBe(join(r.dataDir, "inbox", "name-setup"));
+    expect(readdirSync(join(r.dataDir, "inbox", "name-setup"))).toEqual([]);
+    const log = r.inbox.name.state().log.join("\n");
+    expect(log).toMatch(/password accepted \(marker seen\) after \d+ ms/);
+    expect(log).toMatch(/the proxy answered on port 80 after \d+ ms/);
+    expect(log).toMatch(/ in \d+ ms/);
+  });
+
+  test("a cancelled prompt never reads as installing, and leaves no marker", async () => {
+    const r = await rig();
+    r.privileged.code = 1;
+    r.privileged.stderr = CANCELLED[0]!;
+    r.timing.typingMs = 300;
+    await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
+    const seen = new Set<string>();
+    await waitFor("failed", () => {
+      const state = r.inbox.name.state();
+      if (state.step) seen.add(state.step);
+      return state.status === "failed";
+    });
+    expect(seen.has("installing")).toBe(false);
+    expect(seen.has("password")).toBe(true);
+    expect(r.markers).toEqual([]);
+    expect(readdirSync(join(r.dataDir, "inbox", "name-setup"))).toEqual([]);
+  });
+
+  test("portless is fetched while the dialog is read: Sure then goes straight to the prompt, with no second npm run", async () => {
+    const r = await rig();
+    expect(((await (await post(r, "/api/inbox/name/dialog", { serverSession: r.inbox.serverSession })).json()) as Json).show).toBe(true);
+    await waitFor("portless fetched", () => existsSync(join(r.home, "node_modules", "portless", "dist", "cli.js")));
+    const npmRuns = () => r.calls.filter((c) => c.args.some((a) => a.endsWith("npm-cli.js"))).length;
+    expect(npmRuns()).toBe(1);
+    expect(r.calls.some(isPrivileged)).toBe(false);
+    await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
+    await waitFor("on", () => r.inbox.name.state().status === "on");
+    expect(npmRuns()).toBe(1);
+    // Calling it again changes nothing.
+    r.inbox.name.prefetch();
+    await Bun.sleep(50);
+    expect(npmRuns()).toBe(1);
   });
 
   test("never through the tailnet, even for the owner", async () => {
