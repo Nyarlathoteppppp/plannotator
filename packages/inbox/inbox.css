@@ -2670,6 +2670,75 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-ackwhen { min-width: 0; }
 .ib-toast > .ib-temoji { flex: none; font-size: 15px; line-height: 1; }
 
+/* ───────────── The Soft look elsewhere (.product/approved/inbox-soft/): buttons, dialogs, the search
+   palette, compose, Settings, Decisions, Drafts, What's new and a file's chrome ───────────── */
+/* Appended after the window's own rules (the phone's Soft foot follows), so each value here is the one drawn.
+   Buttons: no outline, a quiet fill, Soft's radius; the primary keeps the accent. */
+.pn-inbox .ib-btn { border: 0; border-radius: 10px; background: color-mix(in oklch, var(--muted) 60%, transparent); color: var(--ib-raise-fg); transition: background-color 140ms ease-out, color 140ms ease-out; }
+.pn-inbox .ib-btn:hover:not(:disabled) { background: color-mix(in oklch, var(--muted) 90%, transparent); }
+.pn-inbox .ib-btn.ib-pri { background: var(--primary); color: var(--primary-foreground); }
+.pn-inbox .ib-btn.ib-pri:hover:not(:disabled) { background: color-mix(in oklch, var(--primary) 88%, var(--foreground)); }
+.pn-inbox .ib-btn.ib-ghost { background: transparent; }
+.pn-inbox .ib-btn.ib-ghost:hover:not(:disabled) { background: var(--ib-hover); color: var(--foreground); }
+.pn-inbox .ib-btn.ib-on { background: color-mix(in oklch, var(--primary) 12%, transparent); }
+.pn-inbox .ib-copy { border: 0; border-radius: 8px; background: color-mix(in oklch, var(--muted) 60%, transparent); }
+/* Dialogs, the search palette and compose: one floating surface, Soft's radius and shadow, no outline. */
+.pn-inbox .ib-dlg, dialog.ib-dlg { border: 0; border-radius: 16px; box-shadow: var(--ib-float-shadow); }
+.ib-dlg h3 { font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.ib-cmd { border: 0; border-radius: 10px; background: var(--ib-raise); }
+.pn-inbox dialog.ib-sp, dialog.ib-sp, .pn-inbox dialog.ib-cp, dialog.ib-cp { border-radius: 16px; box-shadow: var(--ib-float-shadow); }
+.ib-sp-inrow, .ib-sp-filters { border-bottom-color: var(--ib-fill); }
+
+/* Settings: the section nav as the sidebar's (a lifted row for the section shown), the groups as raised cards. */
+.ib-snav a { border-radius: 10px; }
+.ib-snav a:hover { background: var(--ib-hover); }
+.ib-snav a[aria-current="page"] { background: var(--ib-fill); color: var(--foreground); }
+.ib-snav a[aria-current="page"] svg.ib-ic { color: var(--primary); }
+.ib-eyebrow { font-size: 12px; font-weight: 550; letter-spacing: 0; text-transform: none; }
+.ib-card { border: 0; border-radius: 14px; background: var(--ib-raise); }
+.ib-prow, .ib-card .ib-arcrow, .ib-sframe .ib-stbl td { border-bottom-color: var(--ib-fill); }
+.ib-callout { border-radius: 12px; }
+.ib-flow, .ib-way { border-radius: 14px; }
+.ib-tile { border-radius: 10px; background: var(--card); }
+.ib-skel { border-radius: 14px; }
+.pn-inbox .ib-sback { border-radius: 10px; }
+.ib-way-sec h5, .ib-before h5 { font-size: 12px; letter-spacing: 0; text-transform: none; }
+
+/* Decisions and Drafts: Soft rows (the list's pill, below), sections as text headers. */
+.ib-drow { border-bottom: 0; }
+.ib-draft { border-bottom-color: var(--ib-fill); }
+.pn-inbox .ib-draft-open:hover { background: var(--ib-hover); }
+.ib-draft-mk { border-radius: 11px; }
+.pn-inbox .ib-ppick-t { border: 0; border-radius: 10px; background: var(--ib-raise); }
+.ib-ppick-list { border: 0; border-radius: 14px; box-shadow: var(--ib-float-shadow); }
+.ib-ppick-o { border-radius: 9px; }
+.ib-deccard { border: 0; border-radius: 16px; box-shadow: var(--ib-float-shadow); }
+
+/* What's new: its bar shares the panes' hairline; the release card is raised. */
+.ib-wn-bar { border-bottom-color: var(--ib-fill); }
+.ib-wn-hero { border-bottom-color: var(--ib-fill); }
+.ib-wn-skipped { border: 0; border-radius: 14px; background: var(--ib-raise); }
+.pn-inbox .ib-wn-gh { border-radius: 10px; }
+
+/* A file's chrome: the header at the panes' 54 px with their hairline, the bar under the file on the card. */
+.ib-view { grid-template-rows: 54px auto minmax(0, 1fr) auto auto; }
+.ib-vhead, .ib-vfoot, .ib-apanel, .ib-fold .ib-sheet-h { border-color: var(--ib-fill); }
+.ib-stepbox { border: 0; border-radius: 10px; background: var(--ib-raise); }
+.pn-inbox .ib-stepbtn, .pn-inbox .ib-steppos { border-radius: 8px; }
+.ib-toolstrip { border-radius: 12px; box-shadow: var(--ib-float-shadow); }
+.ib-fvbar, .ib-fvchip, .ib-fvver { border: 0; border-radius: 12px; box-shadow: var(--ib-float-shadow); }
+:root.light .ib-fvbar, :root.light .ib-fvver { box-shadow: var(--ib-float-shadow); }
+.ib-imgbar, .ib-imgshowing { border-radius: 10px; }
+.ib-viewer { grid-template-rows: 54px minmax(0, 1fr); }
+
+/* The comments panel's empty state (ui fades its words to 60% and 40%) reads at AA here. */
+.pn-inbox .ib-apanel p[class*="text-muted-foreground/"] { color: var(--muted-foreground); }
+/* The search palette's groups are sentence-case headers (as the list's sections); the row in focus is a neutral fill. */
+.ib-sp-gh { font-size: 12px; letter-spacing: 0; text-transform: none; padding: 10px 8px 4px; }
+.ib-sp-row { border-radius: 10px; }
+:root .pn-inbox .ib-sp-row[aria-selected="true"] { background: var(--ib-fill); }
+.ib-sp-chip { border-radius: 999px; padding: 2px 8px; }
+
 /* A phone (PHONE_QUERY): the Soft foot keeps a thumb's 44 px; the way back reads in the text colour. */
 @media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
   .pn-inbox .ib-pfoot .ib-btn:not(.ib-sm) { height: 44px; padding: 0 16px; font-size: 15px; }
