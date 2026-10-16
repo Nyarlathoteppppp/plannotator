@@ -137,6 +137,7 @@ jobs:
           packages/inbox/whatsNewLink.test.tsx
           packages/inbox/replaced.test.tsx
           packages/inbox/threadFolding.test.tsx
+          packages/inbox/pasteTarget.test.ts
           packages/inbox/seenOnSight.test.tsx
           packages/inbox/projectList.test.tsx
           packages/inbox/sidebarQuiet.test.tsx
