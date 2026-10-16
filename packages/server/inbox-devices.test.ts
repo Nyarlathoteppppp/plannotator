@@ -17,7 +17,7 @@
  *    route there, and the mapping goes with the switch and a clean stop.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -459,14 +459,15 @@ describe("the device door, on the binary", () => {
     writeFileSync(join(w.project, "shots", "after.png"), ONE_PIXEL_PNG);
     writeFileSync(join(w.project, "shots", "mock.png"), ONE_PIXEL_PNG);
     writeFileSync(join(w.project, "shots", "not-shown.png"), ONE_PIXEL_PNG);
-    // Outside the project, referenced by `../`.
-    writeFileSync(join(w.project, "..", "outside.png"), ONE_PIXEL_PNG);
+    // Outside the project, in a hidden folder, referenced by `../`.
+    mkdirSync(join(w.project, "..", ".private"), { recursive: true });
+    writeFileSync(join(w.project, "..", ".private", "outside.png"), ONE_PIXEL_PNG);
     const body = [
       "The page after the fix:",
       "",
       "![after](shots/after.png)",
       "",
-      "![up](../outside.png)",
+      "![up](../.private/outside.png)",
       "",
       ":::question",
       "Keep the new header?",
@@ -513,10 +514,24 @@ describe("the device door, on the binary", () => {
     expect(unshown.status).toBe(403);
     expect(((await unshown.json()) as Json).code).toBe("image_not_referenced");
     expect(unshown.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'; style-src 'unsafe-inline'");
-    // Referenced, but outside the project.
-    const escaped = await img("../outside.png");
-    expect(escaped.status).toBe(403);
-    expect(((await escaped.json()) as Json).code).toBe("outside_project");
+    // Referenced, but in a hidden folder outside the project: the window's refusal.
+    const hidden = await img("../.private/outside.png");
+    expect(hidden.status).toBe(403);
+    expect(((await hidden.json()) as Json).code).toBe("image_hidden");
+    // A person's reply posted from the phone keeps the project boundary: an image of the
+    // project shows, one elsewhere on the machine (a photo library, say) is refused, by the door and the window alike.
+    mkdirSync(join(w.project, "..", "Photos"), { recursive: true });
+    const photo = join(realpathSync(join(w.project, "..")), "Photos", "IMG_0001.png");
+    writeFileSync(photo, ONE_PIXEL_PNG);
+    const replied = await door(`messages/${id}/reply`, { body: { idempotency_key: keys(), words: `Like this: ![p](${photo}) ![a](shots/after.png)` } });
+    expect(replied.status).toBe(200);
+    const replyId = ((await replied.json()) as Json).reply.id as string;
+    const personImg = (path: string) => door(`messages/${replyId}/image?path=${encodeURIComponent(path)}`);
+    expect((await personImg("shots/after.png")).status).toBe(200);
+    const outsidePhone = await personImg(photo);
+    expect([outsidePhone.status, ((await outsidePhone.json()) as Json).code]).toEqual([403, "outside_project"]);
+    const outsideWindow = await fetch(`${base}/api/inbox/messages/${replyId}/image?path=${encodeURIComponent(photo)}`);
+    expect([outsideWindow.status, ((await outsideWindow.json()) as Json).code]).toEqual([403, "outside_project"]);
     // Another message's id does not lend its body.
     const other = await door(`messages/${threadId}/image?path=${encodeURIComponent("shots/after.png")}`);
     expect(other.status).toBe(403);
@@ -1216,6 +1231,37 @@ describe("the door's parity routes, in process (7.39 to 7.49)", () => {
     const read = await door(`markups/${markup.name}`);
     expect(Buffer.from(await read.arrayBuffer()).equals(ONE_PIXEL_PNG)).toBe(true);
     expect((await door("markups?idempotency_key=mk-2", { raw: "<svg/>" })).status).toBe(422);
+  });
+
+  test("7.57: a reply carries uploads through the door unchanged: they become the reply's attachments, a replay copies nothing, a gone id is the window's 404", async () => {
+    const { ledger, inbox, door } = await world();
+    const { store } = inbox;
+    const project = store.ensureProject({ name: "ledger", root: ledger });
+    const asked = store.sendMessage({ project_id: project.id, author: { kind: "agent", host: "claude-code", session: "ses-a", name: null }, body: "The chart is rendered." }).message;
+
+    const uploaded = await door("uploads?name=pasted-image-2026-10-16-0912.png&idempotency_key=paste-up-1", { raw: ONE_PIXEL_PNG, headers: { "Content-Type": "image/png" } });
+    const upload = ((await uploaded.json()) as Json).upload;
+    const body = { idempotency_key: "paste-reply-1", words: "This is what I see.", questions: [], uploads: [upload.upload_id] };
+    const sent = await door(`messages/${asked.id}/reply`, { body });
+    expect(sent.status).toBe(200);
+    const reply = ((await sent.json()) as Json).reply;
+    expect(reply.attachments.map((a: Json) => [a.name, a.kind])).toEqual([["pasted-image-2026-10-16-0912.png", "image"]]);
+    expect(store.message(reply.id)!.attachments!.map((a) => a.id)).toEqual(reply.attachments.map((a: Json) => a.id));
+
+    const again = await door(`messages/${asked.id}/reply`, { body });
+    expect(again.headers.get("idempotent-replayed")).toBe("true");
+    expect(((await again.json()) as Json).reply.id).toBe(reply.id);
+    // The window's own replay (another key on the door, the store's key the same) copies nothing either.
+    const replayed = await fetch(`http://127.0.0.1:${inbox.port}/api/inbox/messages/${asked.id}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(((await replayed.json()) as Json).replayed).toBe(true);
+    expect(readdirSync(join(inbox.store.dir, "uploads")).filter((name) => name.startsWith("att_"))).toHaveLength(1);
+
+    const gone = await door(`messages/${asked.id}/reply`, { body: { ...body, idempotency_key: "paste-reply-2" } });
+    expect([gone.status, ((await gone.json()) as Json).code]).toEqual([404, "upload_not_found"]);
   });
 
   test("a raw body past its bound is refused promptly and never buffered whole: a chunked drawing past the door's 32 MB, an upload declaring more than 100 MB; neither is recorded under its key; the window's drawing route keeps the 128 MiB request bound", async () => {

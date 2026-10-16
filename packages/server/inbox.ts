@@ -119,7 +119,7 @@ import { createInboxAttachmentRoutes } from "./inbox-attachments";
 import { createInboxImageCapture, inboxMessageImageRoute, type InboxImageCapture } from "./inbox-message-images";
 import { createInboxOpenInRoute, systemOpenInLauncher, type InboxOpenInLauncher } from "./inbox-open-in";
 import { recordInboxAttachments, sweepStaleInboxSendTemps } from "@plannotator/shared/inbox/attachments";
-import { inboxBodyForAgent } from "@plannotator/shared/inbox/uploads";
+import { inboxBodyForAgent, inboxUploadAttachments, removeInboxAttachmentFiles, removeInboxUploads } from "@plannotator/shared/inbox/uploads";
 import { createInboxLiveSessions } from "./inbox-sessions";
 import { createInboxCompose, INBOX_UPLOAD_SWEEP_MS } from "./inbox-compose";
 import { createInboxDevices, DOOR_PREFIX } from "./inbox-devices";
@@ -550,11 +550,11 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
 
   // Where a path an agent named files its messages: its repository (a linked
   // worktree folds into its main repository's project) or the folder, cached
-  // per folder (packages/server/inbox-project-root.ts). One cache for sends,
-  // live sessions and the message-image route, so they always agree.
+  // per folder (packages/server/inbox-project-root.ts). One cache for sends
+  // and live sessions, so they always agree.
   const projectRoots = createInboxProjectRoots(options.projectRootGit ? { git: options.projectRootGit } : {});
   // Images messages show that have no captured file yet: copied in the background after a read of their thread (inbox-message-images.ts).
-  const imageCapture = createInboxImageCapture(store, projectRoots);
+  const imageCapture = createInboxImageCapture(store);
   const projectLocks = new Map<string, Promise<InboxProject>>();
   const resolveProject = async (path: string): Promise<InboxProject> => {
     const { root, name, folder, settled } = await projectRoots.resolve(path);
@@ -1797,9 +1797,20 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
             // An unknown message is the store's 404, never "not live".
             const asked = body.to === undefined ? undefined : store.message(messageId);
             const to = body.to === undefined || !asked ? undefined : live.replyTarget(asked.thread_id, body.to);
+            // Files the person pasted into the reply box: their uploads become
+            // attachments on the reply, exactly as compose's become a thread's.
+            // A replay answers the reply it wrote before anything is copied
+            // (its uploads are gone by then); the rest checks the message first.
+            const uploads = body.uploads === undefined || body.uploads === null ? [] : body.uploads;
+            if (!Array.isArray(uploads)) throw new InboxError("validation_error", "uploads: a list of upload ids.", { field: "uploads" });
+            const replayKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+            const fresh = uploads.length > 0 && !store.replyByKey(messageId, replayKey);
+            if (fresh && !store.message(messageId)) throw new InboxError("message_not_found", `No message ${messageId}.`);
+            const attachments = fresh ? inboxUploadAttachments(store.dir, uploads, new Date().toISOString()) : [];
             let result: ReturnType<typeof store.sendReply>;
             try {
               result = store.sendReply(messageId, {
+                ...(attachments.length > 0 ? { attachments } : {}),
                 ...(to === undefined ? {} : { to }),
                 words: typeof body.words === "string" ? body.words : undefined,
                 questions: (body.questions as never) ?? [],
@@ -1809,6 +1820,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
                 skip_unanswered: body.skip_unanswered === true,
               });
             } catch (error) {
+              removeInboxAttachmentFiles(store.dir, attachments);
               // A skip-only target whose questions closed meanwhile: a no-op, so
               // the rest of a multi-message Send still goes.
               if (error instanceof InboxError && error.code === "nothing_to_send") {
@@ -1816,6 +1828,9 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
               }
               throw error;
             }
+            if (result.replayed) removeInboxAttachmentFiles(store.dir, attachments);
+            // Sent: the uploads are the reply's attachments now.
+            else if (attachments.length > 0) removeInboxUploads(store.dir, uploads.filter((id): id is string => typeof id === "string"));
             // Step 3: the sent answers whose decision switch is on become
             // decisions, after the reply landed; a refused one never undoes it.
             const decisions = recordDecisionsForReply(store, result.reply.id);
@@ -1869,9 +1884,9 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       const newMessage = await live.route(req, path);
       if (newMessage) return newMessage;
 
-      // #1813: an image a message's body shows, read from its project
-      // (packages/server/inbox-message-images.ts).
-      const image = await inboxMessageImageRoute(req, url, store, projectRoots);
+      // #1813: an image a message's body shows, read from wherever it is on this
+      // computer outside hidden folders (packages/server/inbox-message-images.ts).
+      const image = await inboxMessageImageRoute(req, url, store);
       if (image) return image;
 
       // "Open in": an attachment in its own app, by id only (packages/server/inbox-open-in.ts).
