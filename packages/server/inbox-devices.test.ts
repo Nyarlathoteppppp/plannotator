@@ -459,14 +459,15 @@ describe("the device door, on the binary", () => {
     writeFileSync(join(w.project, "shots", "after.png"), ONE_PIXEL_PNG);
     writeFileSync(join(w.project, "shots", "mock.png"), ONE_PIXEL_PNG);
     writeFileSync(join(w.project, "shots", "not-shown.png"), ONE_PIXEL_PNG);
-    // Outside the project, referenced by `../`.
-    writeFileSync(join(w.project, "..", "outside.png"), ONE_PIXEL_PNG);
+    // Outside the project, in a hidden folder, referenced by `../`.
+    mkdirSync(join(w.project, "..", ".private"), { recursive: true });
+    writeFileSync(join(w.project, "..", ".private", "outside.png"), ONE_PIXEL_PNG);
     const body = [
       "The page after the fix:",
       "",
       "![after](shots/after.png)",
       "",
-      "![up](../outside.png)",
+      "![up](../.private/outside.png)",
       "",
       ":::question",
       "Keep the new header?",
@@ -513,10 +514,10 @@ describe("the device door, on the binary", () => {
     expect(unshown.status).toBe(403);
     expect(((await unshown.json()) as Json).code).toBe("image_not_referenced");
     expect(unshown.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'; style-src 'unsafe-inline'");
-    // Referenced, but outside the project.
-    const escaped = await img("../outside.png");
-    expect(escaped.status).toBe(403);
-    expect(((await escaped.json()) as Json).code).toBe("outside_project");
+    // Referenced, but in a hidden folder outside the project: the window's refusal.
+    const hidden = await img("../.private/outside.png");
+    expect(hidden.status).toBe(403);
+    expect(((await hidden.json()) as Json).code).toBe("image_hidden");
     // Another message's id does not lend its body.
     const other = await door(`messages/${threadId}/image?path=${encodeURIComponent("shots/after.png")}`);
     expect(other.status).toBe(403);

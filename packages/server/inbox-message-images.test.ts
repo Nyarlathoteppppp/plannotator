@@ -54,9 +54,13 @@ function world() {
   writeFileSync(join(project, ".walkthrough", "shots", "fake.png"), "not an image at all");
   writeFileSync(join(project, ".walkthrough", "notes.txt"), "plain text");
   writeFileSync(join(project, "packages", "web", "shots", "home.png"), png());
-  // Outside the project.
+  // Outside the project: shown, as an attachment from anywhere would be.
   writeFileSync(join(root, "secret.png"), png());
   symlinkSync(join(root, "secret.png"), join(project, ".walkthrough", "shots", "escape.png"));
+  // In a hidden folder outside the project (as ~/.ssh): never shown, by path or through a symlink.
+  mkdirSync(join(root, ".secrets"), { recursive: true });
+  writeFileSync(join(root, ".secrets", "key.png"), png());
+  symlinkSync(join(root, ".secrets", "key.png"), join(project, ".walkthrough", "shots", "to-hidden.png"));
   const dataDir = join(root, "data");
   process.env.PLANNOTATOR_DATA_DIR = dataDir;
   return { root, project, dataDir };
@@ -101,6 +105,8 @@ const BODY = [
   "",
   "![up](../secret.png) ![link](.walkthrough/shots/escape.png) ![gone](.walkthrough/shots/missing.png)",
   "",
+  "![hidden](../.secrets/key.png) ![to-hidden](.walkthrough/shots/to-hidden.png)",
+  "",
   '<img src="./.walkthrough/shots/after.png?v=2" alt="html">',
 ].join("\n");
 
@@ -126,20 +132,26 @@ test("an image the message shows serves from its project, typed by its bytes, wi
   expect(html.headers.get("content-type")).toBe("image/png");
 });
 
-test("escapes, non-images, unreferenced paths, unknown messages and other sites are refused", async () => {
+test("images outside the project serve; hidden folders outside it, non-images, unreferenced paths, unknown messages and other sites are refused", async () => {
   const { project, dataDir } = world();
   const server = await start(dataDir);
   const sent = await send(await agent(server), { project_path: project, body: BODY });
   const id = sent.message_id as string;
 
+  // Outside the project, by `../` and through a symlink: shown (no project boundary).
   const up = await image(server, id, "../secret.png");
-  expect(up.status).toBe(403);
-  expect(((await up.json()) as { code: string }).code).toBe("outside_project");
+  expect(up.status).toBe(200);
   expectGuardHeaders(up);
+  expect((await image(server, id, ".walkthrough/shots/escape.png")).status).toBe(200);
 
-  const link = await image(server, id, ".walkthrough/shots/escape.png");
-  expect(link.status).toBe(403);
-  expect(((await link.json()) as { code: string }).code).toBe("outside_project");
+  // A hidden folder outside the project: refused as named, and through a symlink by its realpath.
+  const hidden = await image(server, id, "../.secrets/key.png");
+  expect(hidden.status).toBe(403);
+  expect(((await hidden.json()) as { code: string }).code).toBe("image_hidden");
+  expectGuardHeaders(hidden);
+  const toHidden = await image(server, id, ".walkthrough/shots/to-hidden.png");
+  expect(toHidden.status).toBe(403);
+  expect(((await toHidden.json()) as { code: string }).code).toBe("image_hidden");
 
   // A non-image: by its name before anything is read, and by its bytes.
   expect((await image(server, id, ".walkthrough/notes.txt")).status).toBe(415);
@@ -166,7 +178,7 @@ test("escapes, non-images, unreferenced paths, unknown messages and other sites 
   expect(rebound.status).toBe(403);
 });
 
-test("relative paths start at the folder the agent sent from, still bounded by the project", async () => {
+test("relative paths start at the folder the agent sent from", async () => {
   const { project, dataDir } = world();
   const server = await start(dataDir);
   const client = await agent(server);
@@ -174,7 +186,7 @@ test("relative paths start at the folder the agent sent from, still bounded by t
   expect(sent.project.root).toBe(project);
   expect((await image(server, sent.message_id, "shots/home.png")).status).toBe(200);
   expect((await image(server, sent.message_id, "../../.walkthrough/shots/after.png")).status).toBe(200);
-  expect((await image(server, sent.message_id, "../../../secret.png")).status).toBe(403);
+  expect((await image(server, sent.message_id, "../../../secret.png")).status).toBe(200);
   // An absolute path inside the project works when the body names it.
   const absolute = join(project, ".walkthrough", "shots", "after.png");
   const second = await send(client, { project_path: project, body: `![abs](${absolute})` });
@@ -223,12 +235,99 @@ test("an absolute path through a symlinked prefix is judged by where it leads", 
   symlinkSync(project, alias);
   const spelled = join(alias, ".walkthrough", "shots", "after.png");
   const escape = join(alias, ".walkthrough", "shots", "escape.png");
+  const toHidden = join(alias, ".walkthrough", "shots", "to-hidden.png");
   const outside = join(root, "secret.png");
   const server = await start(dataDir);
-  const sent = await send(await agent(server), { project_path: project, body: `![a](${spelled}) ![b](${escape}) ![c](${outside})` });
+  const sent = await send(await agent(server), { project_path: project, body: `![a](${spelled}) ![b](${escape}) ![c](${outside}) ![d](${toHidden})` });
   expect((await image(server, sent.message_id, spelled)).status).toBe(200);
-  expect((await image(server, sent.message_id, escape)).status).toBe(403);
-  expect((await image(server, sent.message_id, outside)).status).toBe(403);
+  expect((await image(server, sent.message_id, escape)).status).toBe(200);
+  expect((await image(server, sent.message_id, outside)).status).toBe(200);
+  // The hidden folder it really leads to is refused, whatever spelling named it.
+  expect((await image(server, sent.message_id, toHidden)).status).toBe(403);
+});
+
+test("an image under /tmp, spelled /tmp (really /private/tmp on macOS), is served and captured at send", async () => {
+  const { project, dataDir } = world();
+  const scratch = mkdtempSync("/tmp/plannotator-inbox-img-tmp-");
+  roots.push(scratch);
+  const shot = join(scratch, "before-list-light.png");
+  writeFileSync(shot, png());
+  const server = await start(dataDir);
+  const sent = await send(await agent(server), { project_path: project, body: `The list before:\n\n![before](${shot})` });
+  expect(sent.images_not_shown).toBeUndefined();
+  const served = await image(server, sent.message_id, shot);
+  expect(served.status).toBe(200);
+  expect(new Uint8Array(await served.arrayBuffer())).toEqual(png());
+  const captured = server.store.message(sent.message_id)?.inline_images ?? [];
+  expect(captured.map((i) => [i.ref, i.path])).toEqual([[shot, realpathSync(shot)]]);
+});
+
+test("a dotenv-family name is refused even inside the project", async () => {
+  const { project, dataDir } = world();
+  writeFileSync(join(project, ".walkthrough", "shots", ".env.png"), png());
+  const server = await start(dataDir);
+  const sent = await send(await agent(server), { project_path: project, body: "![e](.walkthrough/shots/.env.png)" });
+  const answer = await image(server, sent.message_id, ".walkthrough/shots/.env.png");
+  expect(answer.status).toBe(403);
+  expect(((await answer.json()) as { code: string }).code).toBe("image_hidden");
+});
+
+/** send_message's whole result: its text line and structured content. */
+async function sendResult(client: Client, args: Record<string, unknown>): Promise<{ text: string; structured: Record<string, any> }> {
+  const result = (await client.callTool({ name: "send_message", arguments: args })) as { isError?: boolean; content: { text: string }[]; structuredContent: Record<string, any> };
+  if (result.isError) throw new Error(result.content[0]!.text);
+  return { text: result.content.map((part) => part.text).join("\n"), structured: result.structuredContent };
+}
+
+test("send_message says which images will not show, and still sends the message", async () => {
+  const { project, dataDir } = world();
+  const server = await start(dataDir);
+  const client = await agent(server);
+  const body = [
+    "![ok](.walkthrough/shots/after.png) ![far](../secret.png)",
+    "![gone](.walkthrough/shots/missing.png) ![hidden](../.secrets/key.png)",
+    "![fake](.walkthrough/shots/fake.png) ![remote](https://example.com/shot.png)",
+    "",
+    "```md",
+    "![in-a-fence](.walkthrough/shots/missing-too.png)",
+    "```",
+    "And inline: `![code](nope.png)`.",
+  ].join("\n");
+  const { text, structured } = await sendResult(client, { project_path: project, body });
+  expect(server.store.message(structured.message_id)?.body).toBe(body);
+  expect(structured.images_not_shown).toEqual([
+    { ref: ".walkthrough/shots/missing.png", reason: "not on disk, or not a file" },
+    { ref: "../.secrets/key.png", reason: "in a hidden folder, or a hidden or .env file" },
+    { ref: ".walkthrough/shots/fake.png", reason: "not an image (png, jpg, gif, webp, svg, avif, bmp, ico)" },
+    { ref: "https://example.com/shot.png", reason: "remote images never load in the Inbox" },
+  ]);
+  expect(text).toContain("4 images will not show");
+  expect(text).toContain(".walkthrough/shots/missing.png (not on disk, or not a file)");
+  expect(text).toContain("https://example.com/shot.png");
+  expect(text).toContain("attach it with attachments");
+  expect(text).not.toContain("missing-too.png");
+  expect(text).not.toContain("nope.png");
+
+  // Every image shows (and a fenced block that mentions one): no warning at all.
+  const clean = await sendResult(client, { project_path: project, body: "![ok](.walkthrough/shots/after.png)\n\n```\n![x](missing.png)\n```" });
+  expect(clean.structured.images_not_shown).toBeUndefined();
+  expect(clean.text).not.toContain("will not show");
+});
+
+test("submit_guide's result carries the same warning", async () => {
+  const { project, dataDir } = world();
+  writeFileSync(join(project, "a.ts"), "export const a = 1;\n");
+  const server = await start(dataDir);
+  const client = await agent(server);
+  const patch = ["diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -1 +1 @@", "-export const a = 0;", "+export const a = 1;", ""].join("\n");
+  const guide = { title: "One change", intent: "Shows a.", sections: [{ title: "The change", overview: "a moves to 1.", diffs: [{ file: "a.ts", summary: "Bumps a." }] }] };
+  const result = (await client.callTool({
+    name: "submit_guide",
+    arguments: { project_path: project, guide, patch, body: "Before: ![gone](.walkthrough/shots/missing.png)" },
+  })) as { isError?: boolean; content: { text: string }[]; structuredContent: Record<string, any> };
+  expect(result.isError).toBeFalsy();
+  expect(result.structuredContent.images_not_shown).toEqual([{ ref: ".walkthrough/shots/missing.png", reason: "not on disk, or not a file" }]);
+  expect(result.content[0]!.text).toContain("this image will not show: .walkthrough/shots/missing.png");
 });
 
 test("the byte cap and the pixel cap are 413", async () => {
@@ -274,7 +373,7 @@ test("a percent-encoded src falls back to the decoded name; an SVG is image/svg+
   expectGuardHeaders(posted);
 });
 
-test("a base_path gone by serve time, or outside the project, falls back to the project root", async () => {
+test("a base_path gone by serve time falls back to the project root", async () => {
   const { project, dataDir } = world();
   const sub = join(project, "packages", "gone");
   mkdirSync(sub, { recursive: true });
@@ -283,10 +382,8 @@ test("a base_path gone by serve time, or outside the project, falls back to the 
   expect(server.store.message(sent.message_id)?.base_path).toBe(sub);
   rmSync(sub, { recursive: true, force: true });
   expect((await image(server, sent.message_id, ".walkthrough/shots/after.png")).status).toBe(200);
-  // A base_path outside the project is never used unless the caller checked it
-  // is a linked worktree folded into the project (`worktree`; see
-  // inbox-worktree-projects.test.ts).
-  const result = readInboxMessageImage({ body: "![a](.walkthrough/shots/after.png)", root: project, base: join(project, ".."), path: ".walkthrough/shots/after.png" });
+  // The same rule read directly: a base that is gone starts at the root.
+  const result = readInboxMessageImage({ body: "![a](.walkthrough/shots/after.png)", root: project, base: sub, path: ".walkthrough/shots/after.png" });
   expect(result.ok).toBe(true);
 });
 

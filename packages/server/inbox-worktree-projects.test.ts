@@ -130,7 +130,7 @@ test("a message from a linked worktree lands in the main repository's project an
   expect(server.store.message(fromMain.message_id)?.base_path).toBeUndefined();
 });
 
-test("images relative to the worktree resolve there; anything outside the project and the worktree is refused", async () => {
+test("images relative to the worktree resolve there, and from anywhere else on this computer", async () => {
   const { main, worktree, dataDir } = world();
   const server = await start(dataDir);
   const sent = await send(await agent(server), {
@@ -144,10 +144,8 @@ test("images relative to the worktree resolve there; anything outside the projec
   expect(new Uint8Array(await after.arrayBuffer())).toEqual(png());
   // An image in the main repository still serves (the project root).
   expect((await image(server, sent.message_id, join(main, "docs", "main-shot.png"))).status).toBe(200);
-  // `../secret.png` from the worktree leaves both the worktree and the project.
-  const escaped = await image(server, sent.message_id, "../secret.png");
-  expect(escaped.status).toBe(403);
-  expect(((await escaped.json()) as { code: string }).code).toBe("outside_project");
+  // `../secret.png` from the worktree leaves both the worktree and the project, and still serves.
+  expect((await image(server, sent.message_id, "../secret.png")).status).toBe(200);
 
   // Once the worktree is removed, its folder is no longer the message's: the image is just gone.
   git(main, "worktree", "remove", "--force", worktree);

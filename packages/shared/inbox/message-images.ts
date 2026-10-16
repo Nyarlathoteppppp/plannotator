@@ -2,8 +2,8 @@
  * Plannotator Inbox: images a message shows (#1813).
  *
  * A message body (an agent's, or the person's own) can carry
- * `![alt](shots/after.png)` or `<img src="…">` naming an image in the
- * message's project. The window asks for it through
+ * `![alt](shots/after.png)` or `<img src="…">` naming an image on this
+ * computer. The window asks for it through
  * `GET /api/inbox/messages/<id>/image?path=<the src as written>`
  * (packages/server/inbox-message-images.ts), and this module decides every
  * answer. The rules, in order:
@@ -16,13 +16,15 @@
  *  3. A relative path resolves against the folder the agent sent from
  *     (`base_path`, kept on the message when it is a subfolder of the
  *     project or a linked worktree of its repository), else the project
- *     root; an absolute one is taken as it is. Its realpath must sit inside
- *     the project root (a realpath itself), or inside the linked worktree
- *     the message was sent from when the caller checked it is one, so
- *     `../` and a symlink that leaves the project are refused alike, while
- *     an absolute path spelled through a symlinked prefix (macOS `/tmp`,
- *     really `/private/tmp`) is judged by where it really leads. A path
- *     that is not on disk and lexically leaves the project is refused too.
+ *     root; an absolute one is taken as it is. It may lead anywhere the
+ *     person's user can read, as an attachment may (owner ruling
+ *     2026-10-16: no project boundary), except what attachments and the
+ *     wide asset roots refuse (`403 image_hidden`), judged on the path as
+ *     named AND on its realpath, so a symlink into `~/.ssh` is refused too:
+ *     a dotenv-family name anywhere, and outside the project and the folder
+ *     sent from, any segment starting with `.` (`refusesHiddenHtmlAssetPath`).
+ *     Inside those two folders hidden folders stay allowed, as before
+ *     (screenshots in `.walkthrough/`, a project in `~/.claude/worktrees/`).
  *  4. The realpath is opened once, `O_RDONLY | O_NOFOLLOW | O_NONBLOCK`, and
  *     everything after that reads the descriptor: `fstat` must say a regular
  *     file of at most MAX_REVIEW_IMAGE_PREVIEW_BYTES, at most cap + 1 bytes
@@ -35,8 +37,10 @@
 
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
-import { isAbsolute, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { isDotenvFileName } from "@plannotator/core/annotatable";
 import { MAX_REVIEW_IMAGE_PREVIEW_BYTES, MAX_REVIEW_IMAGE_PREVIEW_PIXELS, isReviewImagePath } from "../diff-paths";
+import { refusesHiddenHtmlAssetPath } from "../html-assets";
 import { isLfsPointer, readImageDimensions, sniffImageContentType } from "../review-image";
 
 /** The longest `path` the route takes. */
@@ -163,6 +167,20 @@ export function blankInlineCode(text: string): string {
  * captures (inline-images.ts), in the order the window steps through them.
  */
 export function inboxMessageImageRefsInOrder(body: string): string[] {
+  return imageSourcesInOrder(body).filter((src) => !/^(https?:|data:|blob:)/i.test(src));
+}
+
+/**
+ * The remote (`http:` / `https:`) images the body shows, each once, in text
+ * order, outside code. The window never loads them (its CSP allows only its
+ * own origin, `data:` and `blob:`), so send_message warns about them.
+ */
+export function inboxMessageRemoteImageRefsInOrder(body: string): string[] {
+  return imageSourcesInOrder(body).filter((src) => /^https?:/i.test(src));
+}
+
+/** Every image source the body shows outside code, each once, in text order. */
+function imageSourcesInOrder(body: string): string[] {
   const text = blankCode(body);
   const found: { index: number; src: string }[] = [];
   for (const match of text.matchAll(MARKDOWN_IMAGE_RE)) found.push({ index: match.index ?? 0, src: match[1]! });
@@ -170,7 +188,7 @@ export function inboxMessageImageRefsInOrder(body: string): string[] {
   found.sort((a, b) => a.index - b.index);
   const out: string[] = [];
   for (const { src } of found) {
-    if (!src || /^(https?:|data:|blob:)/i.test(src) || out.includes(src)) continue;
+    if (!src || out.includes(src)) continue;
     out.push(src);
   }
   return out;
@@ -183,7 +201,7 @@ export type InboxMessageImageResult =
       contentType: string;
       width?: number;
       height?: number;
-      /** The realpath read (inside the project, or the worktree it was sent from). */
+      /** The realpath read. */
       real: string;
       /** The path the src named, resolved to an absolute path before symlinks. */
       named: string;
@@ -226,18 +244,45 @@ function hasScheme(src: string): boolean {
 
 export interface InboxMessageImageInput {
   body: string;
+  /** The project's root: relative paths start here when there is no `base`. */
   root: string;
+  /** The folder the agent sent from (`base_path`): relative paths start here. */
   base?: string | null;
-  worktree?: string | null;
   path: string | null;
 }
 
 type Refusal = Extract<InboxMessageImageResult, { ok: false }>;
 
 /**
+ * The hidden rule for one absolute path. A dotenv-family file name is refused
+ * everywhere. Outside `anchors` (the project root and the folder sent from,
+ * each in both spellings), a segment starting with `.` is refused too
+ * (`refusesHiddenHtmlAssetPath`: `~/.ssh`, `~/.config`). Inside them the
+ * agent's own working tree is trusted as before: screenshots in
+ * `.walkthrough/` or `.playwright-mcp/`, and a project that itself sits in a
+ * hidden folder (`~/.claude/worktrees/…`), still show.
+ */
+function hiddenPath(path: string, anchors: readonly string[]): boolean {
+  if (isDotenvFileName(basename(path))) return true;
+  return !anchors.some((folder) => isInside(path, folder)) && refusesHiddenHtmlAssetPath(path);
+}
+
+/** A folder and its realpath, when it has one. */
+function spellings(folder: string): string[] {
+  const out = [resolve(folder)];
+  try {
+    const real = realpathSync(folder);
+    if (real !== out[0]) out.push(real);
+  } catch {
+    // Not on disk: the spelling given is all there is.
+  }
+  return out;
+}
+
+/**
  * Rules 1 to 3: the path the src names, judged before anything is read: a
- * refusal, or the file to read (its realpath inside the project or the
- * worktree, and the absolute path it was named by). Never throws.
+ * refusal, or the file to read (its realpath, and the absolute path it was
+ * named by). Never throws.
  */
 function locateInboxMessageImage(input: InboxMessageImageInput): Refusal | { ok: true; real: string; named: string } {
   const src = input.path;
@@ -250,31 +295,11 @@ function locateInboxMessageImage(input: InboxMessageImageInput): Refusal | { ok:
   }
   if (hasScheme(src)) return refuse(400, "validation_error", "path: not a file path.") as Refusal;
 
-  let root: string;
-  try {
-    root = realpathSync(input.root);
-  } catch {
-    return refuse(404, "image_missing", "The message's project is no longer on disk.") as Refusal;
-  }
-  // Where the message's images may be: its project, and the linked worktree it was sent from.
-  const areas = [root];
-  if (input.worktree) {
-    try {
-      areas.push(realpathSync(input.worktree));
-    } catch {
-      // The worktree is gone (cleaned up): only the project is left.
-    }
-  }
-  const inArea = (path: string) => areas.some((area) => isInside(path, area));
-  let base = root;
-  if (input.base) {
-    try {
-      const real = realpathSync(input.base);
-      if (inArea(real)) base = real;
-    } catch {
-      // The folder the agent sent from is gone: paths start at the root.
-    }
-  }
+  const roots = spellings(input.root);
+  const bases = input.base ? spellings(input.base) : [];
+  // Relative paths start at the folder the agent sent from while it is on disk, else at the root.
+  const base = bases.length > 0 && isOnDisk(bases[0]!) ? bases[bases.length - 1]! : roots[roots.length - 1]!;
+  const anchors = [...roots, ...bases];
 
   const candidates = pathCandidates(src).filter((candidate) => isReviewImagePath(candidate));
   if (candidates.length === 0) return refuse(415, "not_an_image", "Only png, jpg, gif, webp, svg, avif, bmp and ico images are shown.") as Refusal;
@@ -285,16 +310,36 @@ function locateInboxMessageImage(input: InboxMessageImageInput): Refusal | { ok:
     try {
       real = realpathSync(named);
     } catch {
-      // Not on disk under this spelling: one that leaves the project is
-      // refused as such; otherwise the next spelling is tried.
-      if (!inArea(named)) return refuse(403, "outside_project", "That image is outside the message's project.") as Refusal;
+      // Not on disk under this spelling: the next spelling is tried.
       continue;
     }
-    // Judged by where the path really leads, never by its spelling.
-    if (!inArea(real)) return refuse(403, "outside_project", "That image leads outside the message's project.") as Refusal;
+    // By where it really leads (a symlink into a hidden folder is refused), and as named: the
+    // name in its folder's real location (a link kept in `~/.config`, whatever spells the folder).
+    if (hiddenPath(real, anchors) || hiddenPath(join(realFolder(dirname(named)), basename(named)), anchors)) {
+      return refuse(403, "image_hidden", HIDDEN) as Refusal;
+    }
     return { ok: true, real, named };
   }
   return refuse(404, "image_missing", "That image is not on disk.") as Refusal;
+}
+
+const HIDDEN = "That image is in a hidden folder, or is a hidden or .env file.";
+
+function realFolder(folder: string): string {
+  try {
+    return realpathSync(folder);
+  } catch {
+    return folder;
+  }
+}
+
+function isOnDisk(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Rule 4's last part: the bytes read are an image (not an LFS pointer), within the pixel cap. */
@@ -312,9 +357,7 @@ function finishImage(bytes: Buffer, located: { real: string; named: string }, mt
 /**
  * Read one image a message shows. `root` is the project's root (a realpath);
  * `base` the folder relative paths start from (the message's `base_path`, or
- * the root). `worktree`, when the caller checked that the message was sent
- * from a linked worktree of the project's repository (outside its root), is
- * that folder: images in it are the message's too. Never throws.
+ * the root). Never throws.
  */
 export function readInboxMessageImage(input: InboxMessageImageInput): InboxMessageImageResult {
   const located = locateInboxMessageImage(input);
