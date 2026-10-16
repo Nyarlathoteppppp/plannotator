@@ -322,12 +322,15 @@ for (const phone of [
       await shot(page, '1-list');
       expect(await sideways(page)).toEqual([]);
       expect(await overlaps(page, '.ib-mrow', ROW_PARTS)).toEqual([]);
-      // Each row: who and when on the first line, the subject under it, the time at the right edge.
+      // Each row (the Soft uplift): the subject and the time on the first line, the time at the right edge;
+      // the agent's mark and the project under the subject.
       const row = page.locator(`.ib-mrow[data-thread-id="${world.threads.stopped}"]`);
       await expect(row.locator('.ib-m2')).toHaveText('Stripe 409 on the retry worker: which way should it go before I ship it');
-      const [rowBox, timeBox, subjectBox] = await Promise.all([row.boundingBox(), row.locator('.ib-t').boundingBox(), row.locator('.ib-m2').boundingBox()]);
+      const [rowBox, timeBox, subjectBox, projectBox] = await Promise.all([row.boundingBox(), row.locator('.ib-t').boundingBox(), row.locator('.ib-m2').boundingBox(), row.locator('.ib-p').boundingBox()]);
       expect(timeBox!.x + timeBox!.width).toBeGreaterThan(rowBox!.x + rowBox!.width - 24);
-      expect(subjectBox!.y).toBeGreaterThan(timeBox!.y);
+      expect(Math.abs(subjectBox!.y - timeBox!.y)).toBeLessThan(6);
+      expect(subjectBox!.x + subjectBox!.width).toBeLessThanOrEqual(timeBox!.x);
+      expect(projectBox!.y).toBeGreaterThan(subjectBox!.y + subjectBox!.height - 2);
       expect(await smallTargets(page, '.ib-mrow, .ib-lhead .ib-sb-trigger')).toEqual([]);
 
       // One project's list: the same rows (the wide row's columns once left the subject no room).
@@ -769,7 +772,8 @@ for (const narrow of [
         await expect(page.locator('.ib-listcol')).toBeHidden();
         const [paneBox, mainBox] = await Promise.all([pane.boundingBox(), page.locator('.ib-main').boundingBox()]);
         expect(paneBox!.width).toBeGreaterThanOrEqual(480);
-        expect(Math.abs(paneBox!.width - mainBox!.width)).toBeLessThan(2);
+        // The Soft layout keeps an 8 px gutter around the pane's card on either side.
+        expect(Math.abs(paneBox!.width - (mainBox!.width - 16))).toBeLessThan(2);
         await page.screenshot({ path: join(proofDir, `${tag}-2-thread.png`) });
         expect(await sideways(page)).toEqual([]);
         expect(await overlaps(page, '.ib-fline.ib-is-open', '.ib-mk, .ib-fl-nm, .ib-fl-meta, .ib-fl-tm')).toEqual([]);
@@ -806,7 +810,7 @@ for (const narrow of [
         await expect(dpane.getByRole('heading', { name: 'Retry a Stripe 409 with the same idempotency key' })).toBeVisible();
         await expect(page.locator('.ib-dpage')).toBeHidden();
         const [dpaneBox, dmainBox] = await Promise.all([dpane.boundingBox(), page.locator('.ib-main').boundingBox()]);
-        expect(Math.abs(dpaneBox!.width - dmainBox!.width)).toBeLessThan(2);
+        expect(Math.abs(dpaneBox!.width - (dmainBox!.width - 16))).toBeLessThan(2);
         await page.screenshot({ path: join(proofDir, `${tag}-4-decision.png`) });
         expect(await sideways(page)).toEqual([]);
         expect(await overlaps(page, 'section.ib-dpane .ib-phead', '.ib-pback, .ib-dstate')).toEqual([]);
@@ -1039,13 +1043,14 @@ test.describe('a desktop window', () => {
     await expect(decisionRow).toBeFocused();
   });
 
-  test('an iPad on its side (1080 px) keeps the list beside a 468 px thread, as main does', async ({ page }) => {
+  test('an iPad on its side (1080 px) keeps the list beside a 444 px thread (the Soft gutters take 24), as main does', async ({ page }) => {
     await page.setViewportSize({ width: 1080, height: 810 });
     await page.goto(`${world.url}#thread=${world.threads.stopped}`);
     const pane = page.locator('section.ib-pane');
     await expect(pane.getByRole('heading', { name: /Stripe 409/ })).toBeVisible();
     await expect(page.locator('.ib-listcol.ib-narrow')).toBeVisible();
-    expect(Math.round((await pane.boundingBox())!.width)).toBe(1080 - 232 - 380);
+    // The Soft layout's gutters (8 px each side of the cards and between them) come out of the thread's room.
+    expect(Math.round((await pane.boundingBox())!.width)).toBe(1080 - 232 - 380 - 24);
     await expect(pane.getByRole('button', { name: 'Close the thread' })).toBeVisible();
     expect(await page.evaluate(() => document.querySelector('.pn-inbox')!.getAttribute('data-stack'))).toBeNull();
   });

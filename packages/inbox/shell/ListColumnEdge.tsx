@@ -9,13 +9,14 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { CollapsibleEdge, ResizeHandle } from "./CollapsibleEdge";
 import { useResizablePanel } from "./useResizablePanel";
+// The Soft layout's gutters inside `.ib-main` come out of the room the column measures (`clientWidth`).
+import { SHELL_GUTTERS } from "../stack";
 
 /** The list's width beside a thread before it was resizable: the floor, so it never gets narrower than it was. */
 export const LIST_COLUMN_MIN = 380;
 /** The room the thread pane keeps beside a widened list. */
 export const READING_PANE_MIN = 480;
 export const LIST_COLUMN_WIDTH_KEY = "plannotator-inbox-list-width";
-
 /**
  * Draws the edge on the list column's right side (render it inside the
  * column: its parent element is the column) and sets the column's width.
@@ -37,7 +38,7 @@ export function ListColumnEdge({ controls }: { controls?: string }) {
 		minWidth: LIST_COLUMN_MIN,
 		// No cap of its own: the thread pane's minimum is the only limit.
 		maxWidth: Number.POSITIVE_INFINITY,
-		reserveViewport: READING_PANE_MIN,
+		reserveViewport: READING_PANE_MIN + SHELL_GUTTERS,
 		container,
 		side: "left",
 		apply: (w) => {

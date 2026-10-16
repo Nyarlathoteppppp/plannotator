@@ -1758,10 +1758,11 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       disabled={!markReadEnabled}
       onClick={() => onMarkRead!(readAt === null)}
       title={
+        // The key rides the tooltip: the Soft header draws no inline keycap (inbox.css .ib-hbtn > .ib-kbd).
         readAt !== null
-          ? 'Move it back to the top'
+          ? 'Move it back to the top (E)'
           : markReadEnabled
-            ? `Out of the top until ${asker} writes again. Its waiting questions close unanswered.`
+            ? `Out of the top until ${asker} writes again. Its waiting questions close unanswered. (E)`
             : 'Nothing here waits on you'
       }
     >

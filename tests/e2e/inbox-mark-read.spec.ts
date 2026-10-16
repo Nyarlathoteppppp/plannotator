@@ -307,11 +307,11 @@ test('Mark read on a thread an agent is stopped on warns with Reply; Z undoes it
   const toast = page.locator('[data-inbox-toast]');
   await expect(toast).toContainText('Claude Code was stopped');
   await expect(toast.getByRole('button', { name: 'Reply' })).toBeVisible();
-  // One 40 px line, no close, centered on the window (not the thread pane) 12 px above the pane's foot (never over Reply).
+  // One 44 px pill (the Soft uplift; 40 px before), no close, centered on the window (not the thread pane) 12 px above the pane's foot (never over Reply).
   await expect(toast.getByRole('button')).toHaveCount(2);
   await toast.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)).then(() => undefined));
   const [toastBox, paneBox, footBox] = await Promise.all([toast.boundingBox(), page.locator('section.ib-pane').boundingBox(), page.locator('section.ib-pane .ib-pfoot').boundingBox()]);
-  expect(toastBox!.height).toBe(40);
+  expect(toastBox!.height).toBe(44);
   expect(toastBox!.width).toBeLessThanOrEqual(520);
   const viewport = page.viewportSize()!;
   expect(Math.abs(toastBox!.x + toastBox!.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);

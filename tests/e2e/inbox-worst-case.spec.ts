@@ -235,10 +235,10 @@ test('the names: real folder names, a parent folder for two "api", days and year
     await cut.hover();
     // The tooltip is portaled out of the window's root.
     await expect(page.locator('body > :not(#root)').getByText(full, { exact: true })).toBeVisible();
-    // A long project name and its folder stay in the 60 px header (row 25).
+    // A long project name and its folder stay in the 54 px header (row 25; 60 px before the Soft uplift).
     await page.goto(`${world.url}/#project=${world.ids.long}&thread=${world.seed.threads.multiDay}`);
     await page.waitForSelector('section.ib-pane');
-    expect((await page.locator('.ib-lhead').boundingBox())!.height).toBe(60);
+    expect((await page.locator('.ib-lhead').boundingBox())!.height).toBe(54);
     // Yesterday's message says its day (row 10).
     await expect(page.locator('section.ib-pane :is(.ib-tm, .ib-fl-tm)').first()).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M/);
   } finally {

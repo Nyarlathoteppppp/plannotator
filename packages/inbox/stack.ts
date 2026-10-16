@@ -32,6 +32,11 @@ export const FILE_MIN_WIDTH = 480;
 export const DECISIONS_LIST_WIDTH = 460;
 /** An open decision's narrowest pane beside the Decisions list. */
 export const DECISION_MIN_WIDTH = 380;
+/**
+ * The Soft layout's gutters inside `.ib-main` (inbox.css `--ib-gutter`, 8 px): its padding on both sides and the
+ * gap between two panes. They are not room a pane can use, so the two-pane checks leave them out.
+ */
+export const SHELL_GUTTERS = 24;
 
 export interface Stack {
   /** A thread covers the list. */
@@ -88,7 +93,10 @@ export function useStack(ref: RefObject<HTMLElement | null>, phone: boolean, dep
   const [stack, setStack] = useState<Stack>(NO_STACK);
   const measure = () => {
     const root = ref.current;
-    const next = phone || !root ? NO_STACK : stackFor(mainWidthOf(root), root.getBoundingClientRect().width);
+    // The list and its pane share `.ib-main` less its gutters. (A file beside the thread drops the gutters in
+    // a window only just wide enough for the two: inbox.css, so the window's width stays the file's test.)
+    const main = root ? mainWidthOf(root) : 0;
+    const next = phone || !root ? NO_STACK : stackFor(main > 0 ? Math.max(1, main - SHELL_GUTTERS) : 0, root.getBoundingClientRect().width);
     setStack((current) => (same(current, next) ? current : next));
   };
   // The caller's deps are what change the sidebar's target in the same commit.

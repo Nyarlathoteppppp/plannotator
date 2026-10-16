@@ -29,6 +29,10 @@ const SIDEBAR = 232;
 const LIST_MIN = 380;
 const PANE_MIN = 480;
 const WIDE_ROWS = 900;
+/** The Soft layout's gutter (inbox.css --ib-gutter): the list card sits 8 px from the sidebar; the main area's padding
+ *  and the gap between the list and the thread take 3 of them from the room. */
+const GUTTER = 8;
+const GUTTERS = 3 * GUTTER;
 
 interface World {
   root: string;
@@ -134,8 +138,8 @@ test('the full list has no edge; an open thread narrows it to 380px with the edg
   await expect(page.locator('.ib-pane')).toBeVisible();
   await expect(edge(page)).toHaveAttribute('aria-valuenow', String(LIST_MIN));
   await expect(edge(page)).toHaveAttribute('aria-valuemin', String(LIST_MIN));
-  await expect(edge(page)).toHaveAttribute('aria-valuemax', String(VIEWPORT.width - SIDEBAR - PANE_MIN));
-  expect(await page.evaluate(() => (window as unknown as { firstMax?: string }).firstMax)).toBe(String(VIEWPORT.width - SIDEBAR - PANE_MIN));
+  await expect(edge(page)).toHaveAttribute('aria-valuemax', String(VIEWPORT.width - SIDEBAR - PANE_MIN - GUTTERS));
+  expect(await page.evaluate(() => (window as unknown as { firstMax?: string }).firstMax)).toBe(String(VIEWPORT.width - SIDEBAR - PANE_MIN - GUTTERS));
   // Each edge names the panel it resizes.
   const listId = await list(page).getAttribute('id');
   expect(listId).toBeTruthy();
@@ -150,7 +154,7 @@ test('the full list has no edge; an open thread narrows it to 380px with the edg
   // pane's side, with the sidebar's col-resize cursor.
   const hit = page.locator('.ib-listedge .ib-handle-hit');
   const box = (await hit.boundingBox())!;
-  expect(Math.abs(box.x - (SIDEBAR + LIST_MIN - 1))).toBeLessThanOrEqual(1);
+  expect(Math.abs(box.x - (SIDEBAR + GUTTER + LIST_MIN))).toBeLessThanOrEqual(1);
   expect(box.width).toBe(12);
   expect(await page.locator('.ib-listedge .ib-handle').evaluate((el) => getComputedStyle(el).cursor)).toBe('col-resize');
   await shot('thread-open');
@@ -158,7 +162,7 @@ test('the full list has no edge; an open thread narrows it to 380px with the edg
 
 test('a drag widens it; the rows switch to the wide shape once, as it crosses 900px', async () => {
   const { page } = world;
-  const x0 = SIDEBAR + LIST_MIN + 4;
+  const x0 = SIDEBAR + GUTTER + LIST_MIN + 4;
   const target = 1000;
   // Every frame of the drag: the list's width and which row shape is drawn.
   const sampling = page.evaluate(
@@ -177,7 +181,7 @@ test('a drag widens it; the rows switch to the wide shape once, as it crosses 90
   );
   await page.mouse.move(x0, 500);
   await page.mouse.down();
-  await page.mouse.move(SIDEBAR + target + 4, 500, { steps: 60 });
+  await page.mouse.move(SIDEBAR + GUTTER + target + 4, 500, { steps: 60 });
   await page.mouse.up();
   const samples = await sampling;
   const flips = samples.filter((s, i) => i > 0 && s[1] !== samples[i - 1]![1]).length;
@@ -190,14 +194,14 @@ test('a drag widens it; the rows switch to the wide shape once, as it crosses 90
   expect(await cookie(page, 'plannotator-inbox-list-width')).toBe(String(target));
   // The open thread stays marked in the wide rows.
   await expect(page.locator('.ib-lbody .ib-row.ib-sel')).toHaveCount(1);
-  expect(await width(page, '.ib-pane')).toBe(VIEWPORT.width - SIDEBAR - target);
+  expect(await width(page, '.ib-pane')).toBe(VIEWPORT.width - SIDEBAR - target - GUTTERS);
   await shot('widened');
 });
 
 test('it never leaves the thread pane less than 480px', async () => {
   const { page } = world;
-  const max = VIEWPORT.width - SIDEBAR - PANE_MIN;
-  await page.mouse.move(SIDEBAR + 1000 + 4, 500);
+  const max = VIEWPORT.width - SIDEBAR - PANE_MIN - GUTTERS;
+  await page.mouse.move(SIDEBAR + GUTTER + 1000 + 4, 500);
   await page.mouse.down();
   await page.mouse.move(VIEWPORT.width - 20, 500, { steps: 20 });
   await page.mouse.up();
@@ -211,7 +215,7 @@ test('the width survives a reload; the keyboard resizes it within the range', as
   const { page } = world;
   await page.reload();
   await expect(page.locator('.ib-pane')).toBeVisible();
-  const max = VIEWPORT.width - SIDEBAR - PANE_MIN;
+  const max = VIEWPORT.width - SIDEBAR - PANE_MIN - GUTTERS;
   await expect(edge(page)).toHaveAttribute('aria-valuenow', String(max));
   expect(await width(page, '.ib-listcol')).toBe(max);
   expect(await width(page, '.ib-pane')).toBe(PANE_MIN);
@@ -235,16 +239,16 @@ test('the width survives a reload; the keyboard resizes it within the range', as
 test('a narrower window draws it clamped, keeping the thread pane its 480px', async () => {
   const { page } = world;
   await page.setViewportSize({ width: 1280, height: 900 });
-  const room = 1280 - SIDEBAR;
+  const room = 1280 - SIDEBAR - GUTTERS;
   await expect.poll(() => width(page, '.ib-pane')).toBe(PANE_MIN);
   expect(await width(page, '.ib-listcol')).toBe(room - PANE_MIN);
   await expect(edge(page)).toHaveAttribute('aria-valuenow', String(room - PANE_MIN));
   // The stored preference is kept for a wider window.
-  expect(await cookie(page, 'plannotator-inbox-list-width')).toBe(String(VIEWPORT.width - SIDEBAR - PANE_MIN));
+  expect(await cookie(page, 'plannotator-inbox-list-width')).toBe(String(VIEWPORT.width - SIDEBAR - PANE_MIN - GUTTERS));
   // A drag starts from the drawn width: the first pixels move the edge.
-  await page.mouse.move(SIDEBAR + room - PANE_MIN + 4, 500);
+  await page.mouse.move(SIDEBAR + GUTTER + room - PANE_MIN + 4, 500);
   await page.mouse.down();
-  await page.mouse.move(SIDEBAR + room - PANE_MIN - 96, 500, { steps: 10 });
+  await page.mouse.move(SIDEBAR + GUTTER + room - PANE_MIN - 96, 500, { steps: 10 });
   await page.mouse.up();
   await expect(edge(page)).toHaveAttribute('aria-valuenow', String(room - PANE_MIN - 100));
   await page.setViewportSize(VIEWPORT);
@@ -252,7 +256,7 @@ test('a narrower window draws it clamped, keeping the thread pane its 480px', as
 
 test('a window that leaves no room to widen into shows no separator', async () => {
   const { page } = world;
-  // 232 + 380 + 480 = 1092: at 1080 there is nothing to drag.
+  // 232 + 380 + 480 + 24 (the gutters) = 1116: at 1080 there is nothing to drag.
   await page.setViewportSize({ width: 1080, height: 900 });
   await expect(edge(page)).toHaveCount(0);
   expect(await width(page, '.ib-listcol')).toBe(LIST_MIN);
@@ -282,7 +286,7 @@ test('with a classic scrollbar on the list, the whole scrollbar stays the listâ€
     });
     expect(bar.scrolls).toBe(true);
     expect(bar.width).toBe(15);
-    expect(bar.right).toBe(SIDEBAR + LIST_MIN - 1);
+    expect(bar.right).toBe(SIDEBAR + GUTTER + LIST_MIN);
     const y = Math.round(bar.top + 40);
     const at = (x: number) => page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.className, [x, y] as const);
     for (let x = bar.right - bar.width; x < bar.right; x += 1) expect(await at(x), `x=${x}`).toBe('ib-lbody');
@@ -318,7 +322,7 @@ test('closing the thread gives the list its full width back; a phone gets no edg
   await page.getByRole('button', { name: 'Close the thread' }).click();
   await expect(page.locator('.ib-pane')).toHaveCount(0);
   await expect(edge(page)).toHaveCount(0);
-  expect(await width(page, '.ib-listcol')).toBe(VIEWPORT.width - SIDEBAR);
+  expect(await width(page, '.ib-listcol')).toBe(VIEWPORT.width - SIDEBAR - 2 * GUTTER);
   expect(await list(page).evaluate((el) => (el as HTMLElement).style.width)).toBe('');
 
   await page.setViewportSize({ width: 600, height: 900 });
