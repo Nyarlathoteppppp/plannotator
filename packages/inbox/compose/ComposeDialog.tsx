@@ -11,7 +11,7 @@
  *   back to writing. Nothing is saved without the person's choice.
  * - A reopened draft keeps the session it was for, struck through when that
  *   session has ended: it is never re-addressed on its own.
- * - Files: the paperclip or a drop, uploaded at once (ComposeFiles.tsx).
+ * - Files: the paperclip, a drop or a paste (paste.ts), uploaded at once (ComposeFiles.tsx).
  */
 
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
@@ -378,6 +378,10 @@ export function ComposeDialog(props: ComposeDialogProps) {
       onDragLeave={(event) => {
         if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
         setDropping(false);
+      }}
+      // A paste anywhere in the dialog that carries files attaches them; text pastes as text.
+      onPaste={(event) => {
+        if (files.paste(event)) setError(null);
       }}
       onDrop={(event) => {
         if (event.dataTransfer.files.length === 0) return;

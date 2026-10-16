@@ -1,6 +1,7 @@
 /**
  * Plannotator Inbox: files the person uploads from the window for a thread
- * they start (compose, "send a new message to a connected agent").
+ * they start (compose, "send a new message to a connected agent") or a reply
+ * (pasted into the reply box).
  *
  *   inbox/uploads/pending/<upl_id>.json   an upload not sent yet; a draft may name it
  *   inbox/uploads/<att_id>/<name>         a sent upload: a read-only hard link of its blob
@@ -66,7 +67,9 @@ export function inboxAttachedLines(message: { attachments?: readonly InboxAttach
 /** The words an agent reads for a person's message: its body, then `inboxAttachedLines`. */
 export function inboxBodyForAgent(message: { body: string; attachments?: readonly InboxAttachment[] | null }): string {
   const attached = inboxAttachedLines(message);
-  return attached ? `${message.body}\n\n${attached}` : message.body;
+  if (!attached) return message.body;
+  // A reply of pasted files alone may have no words.
+  return message.body.trim() ? `${message.body}\n\n${attached}` : attached;
 }
 const PENDING_DIR = "pending";
 /** The most one uploaded file may hold (decision 1a: under the Inbox's 128 MiB request bound). */

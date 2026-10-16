@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent } from 'react';
 import { inboxAttachmentKindLabel, readInboxAttachmentKind, type InboxUpload } from '@plannotator/core/inbox-types';
 import { InboxApiError, uploadFile } from '../api';
 import { formatBytes } from '../format';
 import { Icon, type IconName } from '../icons';
 import { FileName } from '../components/FileName';
+import { clipboardHasText, pastedFiles } from './paste';
 
 /**
- * Compose's files: each one the person picked or dropped, uploaded at once
+ * Compose's files, and the reply box's: each one the person picked, dropped
+ * or pasted (paste.ts), uploaded at once
  * (streamed, with progress, removable while it uploads: the request is
  * aborted), or refused in its own tile (the dotenv family, too large).
  * Uploaded files become ordinary attachments when the message is sent.
@@ -66,6 +68,38 @@ export function useComposeFiles(initial: readonly InboxUpload[]) {
     setFiles((current) => current.filter((file) => file.key !== key));
   }, []);
 
+  /** Forget every file (the reply box closed, or the thread changed): uploads in flight are aborted. */
+  const reset = useCallback(() => {
+    for (const controller of aborts.current.values()) controller.abort();
+    aborts.current.clear();
+    setFiles((current) => (current.length === 0 ? current : []));
+  }, []);
+
+  // The names already attached, for a pasted file's name (`-2` when one is taken).
+  const namesRef = useRef<string[]>([]);
+  namesRef.current = files.map((file) => file.name);
+
+  /**
+   * A paste (paste.ts): the files the clipboard carries attach. Read from
+   * `event.clipboardData` synchronously, never the async clipboard. The
+   * browser's own paste is prevented only when the clipboard holds files and
+   * no text; text alone, or text beside files, goes through natively. True
+   * when it took files.
+   */
+  const paste = useCallback(
+    (event: ReactClipboardEvent<HTMLElement>): boolean => {
+      if (event.defaultPrevented) return false;
+      const data = event.clipboardData;
+      const list = pastedFiles(data, namesRef.current);
+      if (list.length === 0) return false;
+      if (!clipboardHasText(data)) event.preventDefault();
+      namesRef.current = [...namesRef.current, ...list.map((file) => file.name)];
+      add(list);
+      return true;
+    },
+    [add],
+  );
+
   useEffect(
     () => () => {
       for (const controller of aborts.current.values()) controller.abort();
@@ -76,7 +110,7 @@ export function useComposeFiles(initial: readonly InboxUpload[]) {
 
   const uploaded = files.filter((file) => file.state === 'done' && file.upload).map((file) => file.upload!);
   const uploading = files.some((file) => file.state === 'uploading');
-  return { files, add, remove, uploaded, uploading };
+  return { files, add, remove, reset, paste, uploaded, uploading };
 }
 
 function iconFor(upload: Pick<InboxUpload, 'kind'> | null): IconName {
