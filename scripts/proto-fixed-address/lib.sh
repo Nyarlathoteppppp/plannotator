@@ -11,10 +11,12 @@ SCRATCH="${SCRATCH%/}"
 DATA="$SCRATCH/data"
 REAL_INBOX_PORT="${REAL_INBOX_PORT:-59812}"
 NAME_HOST="inbox.plannotator.localhost"
-NAME_URL="https://$NAME_HOST"
+NAME_URL="http://$NAME_HOST"
 PORTLESS_STATE="$HOME/.portless"
 PORTLESS_PLIST="/Library/LaunchDaemons/sh.portless.proxy.plist"
 PORTLESS_CA_NAME="portless Local CA"
+# The CA the earlier HTTPS try made (the plain-HTTP flow makes none), kept by fingerprint so undo removes only it.
+CA_RECORD="$SCRATCH/portless-ca.sha1"
 
 # The scratch Inbox's environment: scratch data dir, no agent connecting, no
 # note dialog (it would offer to write into the person's real agent files),
@@ -38,6 +40,11 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ok() { printf '  \033[32mPASS\033[0m %s\n' "$*"; PASSES=$((${PASSES:-0} + 1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAILS=$((${FAILS:-0} + 1)); }
 note() { printf '  \033[33mNOTE\033[0m %s\n' "$*"; }
+
+# Who answers on 127.0.0.1:<port> as portless (X-Portless), without following a redirect.
+portless_on() {
+  curl -s -o /dev/null -D - --max-time 2 -H "Host: $NAME_HOST" "http://127.0.0.1:$1/" 2>/dev/null | grep -qi '^x-portless'
+}
 
 # A JSON field from stdin, with Node (present: portless needs it anyway).
 json_field() {

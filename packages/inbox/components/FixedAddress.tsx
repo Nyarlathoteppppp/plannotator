@@ -3,7 +3,7 @@
  * "Give the Inbox a fixed address" dialog and Settings → Devices' row.
  * Server: packages/server/inbox-name.ts. Sure runs portless's one privileged
  * step (the OS asks for the password), registers the name, verifies it, and
- * this page then moves to https://inbox.plannotator.localhost.
+ * this page then moves to http://inbox.plannotator.localhost.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { inboxApi, type InboxNameState } from '../api';
@@ -170,7 +170,7 @@ export function FixedAddressSection({ via, localUrl }: { via: 'local' | 'tailnet
       <div className="ib-card">
         <div className="ib-prow" data-name-row={state?.status ?? 'loading'}>
           <span className="ib-txt">
-            <span className="ib-l">{state?.status === 'on' ? state.url : 'https://inbox.plannotator.localhost'}</span>
+            <span className="ib-l">{state?.status === 'on' ? state.url : 'http://inbox.plannotator.localhost'}</span>
             <span className="ib-desc">
               {!state
                 ? 'Checking…'

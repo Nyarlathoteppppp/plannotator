@@ -11,11 +11,12 @@
  *   1. start a scratch Inbox (temp data dir, prototype on)
  *   2. click Sure in its window (headless Chromium, ui-flow.ts --click-sure):
  *      portless installed into the data dir, `service install`, alias, verify
- *   3. https://inbox.plannotator.localhost/api/inbox/health answers this
- *      Inbox, checked against portless's CA (Bun fetch, tls.ca)
- *   4. the OS's own trust: browsers load it with certificate checks on
- *      (browser-check.ts; Linux first adds the CA to Chromium's NSS store,
- *      which `update-ca-certificates` does not reach: a finding, recorded)
+ *   3. http://inbox.plannotator.localhost/api/inbox/health answers this
+ *      Inbox (by the name; when this runner cannot resolve it, by
+ *      127.0.0.1:80 with the name as Host, recorded as a finding); nothing
+ *      of portless listens on 443 and no CA was made
+ *   4. browsers load it as a secure context with notifications available
+ *      (browser-check.ts); no certificate anywhere
  *   5. port change: the Inbox stopped, its old port held, started again on a
  *      new port; the name answers the new Inbox with no privileged step
  *   6. --name off: the alias goes and the name no longer answers this Inbox
@@ -29,7 +30,7 @@ const repo = resolve(import.meta.dir, "../..");
 const shots = resolve(process.argv[2] ?? "proto-shots");
 mkdirSync(shots, { recursive: true });
 const data = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), "pn-fixed-address-"));
-const NAME = "https://inbox.plannotator.localhost";
+const NAME = "http://inbox.plannotator.localhost";
 const portlessState = join(homedir(), ".portless");
 const env = {
   ...process.env,
@@ -67,13 +68,30 @@ const runNode = (args: string[]) => {
 };
 const registry = () => JSON.parse(readFileSync(join(data, "inbox", "inbox.json"), "utf8")) as { port: number; token: string; serverSession: string; url: string };
 const nameState = async (port: number) => ((await (await fetch(`http://127.0.0.1:${port}/api/inbox/name`)).json()) as { name: Record<string, unknown> }).name;
-const httpsSession = async (): Promise<string> => {
+/** The serverSession the name answers: by the name itself, else through 127.0.0.1:80 with the name as Host. */
+const nameSession = async (): Promise<{ session: string; via: "name" | "127.0.0.1:80" }> => {
+  const read = async (url: string, headers: Record<string, string>) => {
+    const response = await fetch(url, { headers, redirect: "manual", signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return `HTTP ${response.status} ${response.headers.get("location") ?? ""}`.trim();
+    return ((await response.json()) as { serverSession?: string }).serverSession ?? "(no serverSession)";
+  };
   try {
-    const ca = readFileSync(join(portlessState, "ca.pem"));
-    const response = await fetch(`${NAME}/api/inbox/health`, { tls: { ca }, signal: AbortSignal.timeout(5000) } as RequestInit);
-    return ((await response.json()) as { serverSession?: string }).serverSession ?? `HTTP ${response.status}`;
+    return { session: await read(`${NAME}/api/inbox/health`, {}), via: "name" };
   } catch (error) {
-    return `error: ${String(error)}`;
+    try {
+      return { session: await read("http://127.0.0.1:80/api/inbox/health", { host: "inbox.plannotator.localhost" }), via: "127.0.0.1:80" };
+    } catch (second) {
+      return { session: `error: ${String(error)}; ${String(second)}`, via: "name" };
+    }
+  }
+};
+/** Whether portless answers on 127.0.0.1:<port> (its HTTPS proxy accepts plain HTTP on its TLS port and says X-Portless). */
+const portlessOn = async (port: number): Promise<boolean> => {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/`, { headers: { host: "inbox.plannotator.localhost" }, redirect: "manual", signal: AbortSignal.timeout(2500) });
+    return response.headers.get("x-portless") !== null;
+  } catch {
+    return false;
   }
 };
 const startInbox = () => {
@@ -101,45 +119,26 @@ try {
   const flow = runNode([join(repo, "scripts/proto-fixed-address/ui-flow.ts"), url, shots, "--click-sure"]);
   console.log(flow.out, flow.err);
   const afterSure = await nameState(first.port);
-  record("Sure in the window -> on", afterSure.status === "on", `status ${afterSure.status}; reason ${afterSure.reason}; probe ${afterSure.probe}; os_trust ${afterSure.os_trust}`);
+  record("Sure in the window -> on", afterSure.status === "on", `status ${afterSure.status}; reason ${afterSure.reason}; probe ${afterSure.probe}`);
   console.log("commands run:\n" + ((afterSure.log as string[] | undefined) ?? []).join("\n"));
-  if (afterSure.os_trust === false) finding("macOS: the OS does not trust portless's CA (root could not add trust without a person)", String(afterSure.reason));
+  const privileged = ((afterSure.log as string[] | undefined) ?? []).filter((line) => /service install/.test(line));
+  record("exactly one privileged command, plain HTTP", privileged.length === 1 && /--no-tls/.test(privileged[0] ?? ""), privileged.join(" | ").slice(0, 300) || "(none run)");
   const moved = /tab moved to the name: true/.test(flow.out);
   const movedLine = (/tab moved to the name: .*/.exec(flow.out) ?? ["(no line)"])[0];
-  if (!moved && process.platform === "linux" && afterSure.status === "on") {
-    finding("linux: the tab could not move (Chromium reads NSS, which update-ca-certificates does not reach)", movedLine);
-  } else if (!moved && process.platform === "win32" && afterSure.status === "on") {
-    finding("windows: the tab could not move (the CA is not trusted yet: see the certutil finding below)", movedLine);
-  } else {
-    record("the tab moved itself to the name", moved, movedLine);
-  }
+  record("the tab moved itself to the name", moved, movedLine);
 
   // 3.
-  const session1 = await httpsSession();
-  record("https name answers this Inbox (portless CA)", session1 === first.serverSession, session1);
+  const named1 = await nameSession();
+  record("http name answers this Inbox", named1.session === first.serverSession, `${named1.session} (via ${named1.via})`);
+  if (named1.via !== "name") finding(`${process.platform}: this runner's resolver does not map inbox.plannotator.localhost (browsers do it themselves)`, named1.via);
+  record("no certificate: portless made no CA", !existsSync(join(portlessState, "ca.pem")), existsSync(join(portlessState, "ca.pem")) ? "ca.pem exists" : "no ca.pem");
+  const on443 = await portlessOn(443);
+  record("no portless on 443 (no HTTPS proxy)", !on443, on443 ? "portless answers on 127.0.0.1:443" : "not on 443");
 
   // 4.
-  if (process.platform === "linux" && existsSync(join(portlessState, "ca.pem"))) {
-    const nss = join(homedir(), ".pki", "nssdb");
-    mkdirSync(nss, { recursive: true });
-    spawnSync("certutil", ["-d", `sql:${nss}`, "-N", "--empty-password"], { encoding: "utf8" });
-    const added = spawnSync("certutil", ["-d", `sql:${nss}`, "-A", "-t", "C,,", "-n", "portless Local CA", "-i", join(portlessState, "ca.pem")], { encoding: "utf8" });
-    record("linux: CA added to Chromium's NSS store (portless does not do this)", added.status === 0, (added.stderr || "ok").trim());
-  }
-  let browsers = runNode([join(repo, "scripts/proto-fixed-address/browser-check.ts"), first.serverSession, NAME]);
+  const browsers = runNode([join(repo, "scripts/proto-fixed-address/browser-check.ts"), first.serverSession, NAME]);
   console.log(browsers.out, browsers.err);
-  if (browsers.code !== 0 && process.platform === "win32" && existsSync(join(portlessState, "ca.pem"))) {
-    // portless trusts its CA with `certutil -addstore -user Root`, which shows Windows' own
-    // "Security Warning: install this certificate?" dialog; with no one to click Yes it times
-    // out (the first CI run). A person clicks it. CI adds it to the machine store instead
-    // (admin, no dialog), then checks the browsers again.
-    finding("windows: trusting the CA needs a click on Windows' Security Warning dialog (certutil -user Root timed out here)", browsers.out.trim().split("\n")[0] ?? "");
-    const added = spawnSync("certutil", ["-addstore", "-f", "Root", join(portlessState, "ca.pem")], { encoding: "utf8" });
-    record("windows (CI only): CA added to the machine Root store", added.status === 0, (added.stdout || added.stderr).trim().split("\n").slice(-1)[0] ?? "");
-    browsers = runNode([join(repo, "scripts/proto-fixed-address/browser-check.ts"), first.serverSession, NAME]);
-    console.log(browsers.out, browsers.err);
-  }
-  record("a browser loads the name with certificate checks on", browsers.code === 0, browsers.out.trim().split("\n").join(" | "));
+  record("a browser loads the name as a secure context with notifications", browsers.code === 0, browsers.out.trim().split("\n").join(" | "));
 
   // 5.
   const listener = afterSure.listener_port;
@@ -156,16 +155,16 @@ try {
     }
     record("name on again after the move, no privileged step", state.status === "on", `status ${state.status}; listener ${state.listener_port} (was ${listener}); ${state.reason ?? ""}`);
     console.log("commands run after the move:\n" + ((state.log as string[] | undefined) ?? []).join("\n"));
-    const session2 = await httpsSession();
-    record("https name answers the restarted Inbox", session2 === second.serverSession, session2);
+    const named2 = await nameSession();
+    record("http name answers the restarted Inbox", named2.session === second.serverSession, `${named2.session} (via ${named2.via})`);
 
     // 6.
     const off = run([join(repo, "apps/hook/server/index.ts"), "inbox", "--name", "off"]);
     // portless reloads routes.json on a file watch, and the listener closes a moment after the answer.
-    let session3 = await httpsSession();
+    let session3 = (await nameSession()).session;
     for (let i = 0; i < 30 && session3 === second.serverSession; i++) {
       await Bun.sleep(200);
-      session3 = await httpsSession();
+      session3 = (await nameSession()).session;
     }
     record("--name off: the name no longer answers this Inbox", off.code === 0 && session3 !== second.serverSession, session3);
     await stopInbox();

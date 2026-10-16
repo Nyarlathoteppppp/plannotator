@@ -7,11 +7,13 @@
 #
 # Checks:
 #   1. the fixed address is on (the scratch Inbox says so)
-#   2. https://inbox.plannotator.localhost answers THIS scratch Inbox (serverSession)
-#   3. the OS trusts portless's CA (security verify-cert), and real browser
-#      engines load the address with certificate checks on (no warning)
+#   2. http://inbox.plannotator.localhost answers THIS scratch Inbox (serverSession)
+#   3. plain HTTP, no certificate: the service runs --no-tls on 80, nothing of
+#      portless on 443, /etc/hosts has the name (Safari), and headless
+#      Chromium, WebKit and Firefox load it as a secure context
 #   4. port change: the scratch Inbox restarted on a NEW port keeps the name
-#   5. notifications: a question arrives at the new origin; you confirm the ask
+#   5. notifications: a question arrives at the new origin; you confirm the
+#      ask, and that macOS asked for your password exactly once
 #   6. Tailscale: serve config unchanged, the tailnet URL still answers
 #   7. the real Inbox on :59812 is untouched; no ~/.plannotator/inbox/name.json
 set -uo pipefail
@@ -21,9 +23,9 @@ FAILS=0
 
 [ -f "$SCRATCH/made-by-try" ] || { echo "Run try-on-this-mac.sh first." >&2; exit 2; }
 
-https_session() {
-  # --cacert: the route itself (name -> portless -> name listener -> Inbox), whatever the OS trusts.
-  curl -s --max-time 5 --cacert "$PORTLESS_STATE/ca.pem" "$NAME_URL/api/inbox/health" | json_field serverSession
+name_session() {
+  # curl maps *.localhost to loopback itself, so this is the name's own route: name -> portless :80 -> name listener -> Inbox.
+  curl -s --max-time 5 "$NAME_URL/api/inbox/health" | json_field serverSession
 }
 
 say "1. The fixed address is on"
@@ -33,15 +35,17 @@ if [ "$STATUS" = "on" ]; then ok "status on (listener port $(printf '%s' "$STATE
 
 say "2. $NAME_URL answers this scratch Inbox"
 SESSION="$(scratch_session)"
-GOT="$(https_session)"
+GOT="$(name_session)"
 if [ -n "$SESSION" ] && [ "$GOT" = "$SESSION" ]; then ok "serverSession matches ($SESSION)"; else bad "health answered '${GOT:-nothing}', expected '$SESSION'"; fi
-curl -s -o /dev/null -D - --max-time 5 --cacert "$PORTLESS_STATE/ca.pem" "$NAME_URL/" | grep -i '^x-portless' >/dev/null && ok "served through portless (X-Portless header)" || note "no X-Portless header seen"
+curl -s -o /dev/null -D - --max-time 5 "$NAME_URL/" | grep -i '^x-portless' >/dev/null && ok "served through portless (X-Portless header)" || note "no X-Portless header seen"
 
-say "3. Certificate trusted by the OS and by browsers (no warning)"
-if security verify-cert -c "$PORTLESS_STATE/ca.pem" -p ssl -L >/dev/null 2>&1; then ok "macOS trusts '$PORTLESS_CA_NAME' for SSL"; else bad "macOS does not trust portless's CA: browsers will warn (portless trust, or the second prompt was dismissed)"; fi
-if curl -s --max-time 5 "$NAME_URL/api/inbox/health" >/dev/null 2>&1; then ok "curl (system trust store) accepts the certificate"; else note "curl without --cacert refused it (macOS curl may not read the keychain; the browser check below is what counts)"; fi
-if (cd "$REPO" && bun scripts/proto-fixed-address/browser-check.ts "$SESSION" "$NAME_URL"); then ok "a Chromium-family browser loaded $NAME_URL with certificate checks on"; else bad "no Chromium-family engine loaded it cleanly (see the lines above; 'not available' means install it: bunx playwright install chromium)"; fi
-note "Also open $NAME_URL in Safari and Chrome yourself: no warning page, a padlock."
+say "3. Plain HTTP, no certificate"
+if grep -q -- '--no-tls' "$PORTLESS_PLIST" 2>/dev/null && ! grep -q -- '<string>--https</string>' "$PORTLESS_PLIST" 2>/dev/null; then ok "the launchd service runs portless with --no-tls"; else bad "the launchd service is not the plain-HTTP one ($PORTLESS_PLIST)"; fi
+if grep -q -- '<string>80</string>' "$PORTLESS_PLIST" 2>/dev/null; then ok "the service listens on port 80"; else bad "the service file does not name port 80"; fi
+if portless_on 443; then bad "portless still answers on 443 (the HTTPS proxy was not replaced)"; else ok "nothing of portless on 443"; fi
+if grep -Eq "^127\.0\.0\.1[[:space:]]+$NAME_HOST\b" /etc/hosts; then ok "/etc/hosts maps $NAME_HOST (kept by portless's root proxy, for Safari on resolvers that do not map *.localhost)"; else note "/etc/hosts has no line for $NAME_HOST (this Mac's resolver maps *.localhost without it: dscacheutil -q host -a name $NAME_HOST)"; fi
+if (cd "$REPO" && bun scripts/proto-fixed-address/browser-check.ts "$SESSION" "$NAME_URL"); then ok "headless browsers load $NAME_URL as a secure context with notifications (lines above)"; else bad "a browser engine failed (lines above; 'not available' means: bunx playwright install chromium webkit firefox)"; fi
+note "Also open $NAME_URL in Safari and Chrome yourself: the Inbox, no warning page."
 
 say "4. A port change keeps the name"
 OLD_PORT="$(scratch_port)"
@@ -56,7 +60,7 @@ NEW_SESSION="$(scratch_session)"
 kill "$SQUAT_PID" 2>/dev/null || true  # the port holder this script started above, nothing else
 if [ -n "$NEW_PORT" ] && [ "$NEW_PORT" != "$OLD_PORT" ]; then ok "scratch Inbox moved: :$OLD_PORT -> :$NEW_PORT"; else bad "the scratch Inbox did not move (old $OLD_PORT, new ${NEW_PORT:-none})"; fi
 GOT=""
-for _ in $(seq 1 30); do GOT="$(https_session)"; [ "$GOT" = "$NEW_SESSION" ] && break; sleep 0.5; done
+for _ in $(seq 1 30); do GOT="$(name_session)"; [ "$GOT" = "$NEW_SESSION" ] && break; sleep 0.5; done
 if [ -n "$NEW_SESSION" ] && [ "$GOT" = "$NEW_SESSION" ]; then ok "$NAME_URL answers the restarted Inbox (no password asked)"; else bad "after the move the name answered '${GOT:-nothing}', expected '$NEW_SESSION'"; fi
 
 say "5. Notifications on the new origin"
@@ -71,6 +75,8 @@ cat <<EOF
 EOF
 read -r -p "  Did the browser ask for notification permission for $NAME_HOST? [y/n] " ANSWER
 case "$ANSWER" in y|Y|yes) ok "notification permission prompt on the new origin (your answer)";; *) bad "no notification prompt on the new origin (your answer)";; esac
+read -r -p "  When you clicked Sure, did macOS ask for your password exactly once, and nothing else asked? [y/n] " ANSWER
+case "$ANSWER" in y|Y|yes) ok "one password prompt, nothing else (your answer)";; *) bad "more than one prompt, or another dialog (your answer)";; esac
 
 say "6. Tailscale still works"
 if command -v tailscale >/dev/null; then
@@ -86,7 +92,7 @@ if command -v tailscale >/dev/null; then
 else
   note "no tailscale CLI on PATH"
 fi
-note "Port 443 listeners you can see (Tailscale's network extension may not show): $(lsof -nP -iTCP:443 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $1" "$9}' | tr '\n' ';')"
+note "Port 80 listeners you can see (root's are hidden without sudo): $(lsof -nP -iTCP:80 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $1" "$9}' | tr '\n' ';')"
 
 say "7. Your real Inbox is untouched"
 BEFORE="$(cat "$SCRATCH/real-inbox-session.before" 2>/dev/null)"

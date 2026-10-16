@@ -11,8 +11,9 @@
 #    ~/.plannotator, and never touches your real Inbox on port 59812.
 #  - Opens it in your default browser. Nothing privileged runs until YOU click
 #    Sure: then macOS asks for your password once (the dialog's title says
-#    "osascript"; the reason line names Plannotator), and possibly a second
-#    time to trust portless's certificate.
+#    "osascript"; the reason line names Plannotator). That one prompt installs
+#    portless's plain-HTTP proxy on port 80 and, when the earlier HTTPS try's
+#    service is still installed, replaces it. No certificate is made or trusted.
 #  - Records what was there before (Tailscale serve, the real Inbox's session),
 #    so checklist.sh can show nothing else changed.
 # Then run:  bash scripts/proto-fixed-address/checklist.sh
@@ -54,10 +55,20 @@ if command -v tailscale >/dev/null; then
   tailscale serve status --json > "$SCRATCH/tailscale-serve.before.json" 2>/dev/null || true
   echo "  tailscale serve config saved ($(wc -c < "$SCRATCH/tailscale-serve.before.json" | tr -d ' ') bytes)"
 fi
-security find-certificate -a -c "$PORTLESS_CA_NAME" >/dev/null 2>&1 && echo "  note: a '$PORTLESS_CA_NAME' certificate is already in a keychain"
+# The earlier HTTPS try left a CA; remember its fingerprint so undo.sh removes exactly that one.
+if [ -f "$PORTLESS_STATE/ca.pem" ] && [ ! -s "$CA_RECORD" ]; then
+  openssl x509 -in "$PORTLESS_STATE/ca.pem" -noout -fingerprint -sha1 2>/dev/null | sed 's/.*=//; s/://g' > "$CA_RECORD" || true
+  echo "  the earlier try's CA (no longer used): $(cat "$CA_RECORD")"
+fi
+if portless_on 443; then echo "  the earlier HTTPS proxy answers on 443; Sure replaces it with the HTTP one (same single prompt)"; fi
+if ! portless_on 80 && curl -s -o /dev/null --max-time 2 "http://127.0.0.1:80/" 2>/dev/null; then
+  echo "  note: another program answers on port 80; Sure will say so and change nothing"
+fi
 
 say "3/4 Starting the scratch Inbox (data: $DATA)"
 stop_scratch_inbox || true
+# Offer the one-time dialog again (scratch data only): a retry starts from "off".
+rm -f "$DATA/inbox/name.json"
 URL="$(cd "$SCRATCH" && pn inbox --background)"
 PORT="$(scratch_port)"
 [ "$PORT" != "$REAL_INBOX_PORT" ] || { echo "The scratch Inbox took the real Inbox's port; refusing." >&2; stop_scratch_inbox; exit 1; }
@@ -72,8 +83,8 @@ cat <<EOF
   In the browser tab that just opened:
     1. Wait for the dialog "Give the Inbox a fixed address" (a few seconds;
        or Settings → Devices → Fixed address → Turn on).
-    2. Click Sure. macOS asks for your password ("osascript wants to make
-       changes"). It may ask a second time to trust the certificate.
+    2. Click Sure. macOS asks for your password once ("osascript wants to
+       make changes"). Nothing else asks.
     3. The tab moves to $NAME_URL by itself.
 
   Then:   bash scripts/proto-fixed-address/checklist.sh

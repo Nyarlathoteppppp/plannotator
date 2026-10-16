@@ -15,13 +15,18 @@ import {
   aliasRemoveCommand,
   assertSafePath,
   checkNameRequest,
+  classifyPort80,
   explainPrivilegedFailure,
   INBOX_NAME_HOST,
   isLoopbackAddress,
   nodeMajor,
   npmInstallCommand,
   privilegedInstallCommand,
+  readExistingService,
+  readProxyState,
+  serviceFilePath,
   type CommandLine,
+  type ExistingService,
   type NameRunner,
   type PrivilegedContext,
 } from "./inbox-name";
@@ -65,7 +70,7 @@ describe("the name listener's request check", () => {
   test("lets in the name from this computer, as portless forwards it", () => {
     expect(checkNameRequest(headers({ host: INBOX_NAME_HOST, "x-forwarded-for": "127.0.0.1" }), "/", "127.0.0.1")).toEqual({ ok: true });
     expect(checkNameRequest(headers({ host: INBOX_NAME_HOST, "x-forwarded-for": "::1" }), "/api/inbox/threads", "::1")).toEqual({ ok: true });
-    expect(checkNameRequest(headers({ host: `${INBOX_NAME_HOST}:443` }), "/", "127.0.0.1")).toEqual({ ok: true });
+    expect(checkNameRequest(headers({ host: `${INBOX_NAME_HOST}:80` }), "/", "127.0.0.1")).toEqual({ ok: true });
     expect(checkNameRequest(headers({ host: "INBOX.Plannotator.localhost" }), "/", "127.0.0.1")).toEqual({ ok: true });
   });
 
@@ -78,6 +83,8 @@ describe("the name listener's request check", () => {
     expect(refused({ host: "evil.localhost" })).toBe("forbidden_host");
     expect(refused({ host: `${INBOX_NAME_HOST}.evil.example` })).toBe("forbidden_host");
     expect(refused({})).toBe("forbidden_host");
+    // Plain HTTP on 80 now: a :443 Host is not the address.
+    expect(refused({ host: `${INBOX_NAME_HOST}:443` })).toBe("forbidden_host");
     // portless in LAN mode forwards the Wi-Fi peer's address.
     expect(refused({ host: INBOX_NAME_HOST, "x-forwarded-for": "192.168.1.5" })).toBe("local_only");
     expect(refused({ host: INBOX_NAME_HOST, "x-forwarded-for": "127.0.0.1, 10.0.0.2" })).toBe("local_only");
@@ -119,36 +126,58 @@ const WIN: PrivilegedContext = {
 const HOSTILE = ["'", '"', "$(id)", "`id`", "\n", ";", "&", "|", "\\", "..", "%PATH%", "\u0000"];
 
 describe("the privileged command", () => {
-  test("macOS: osascript with administrator privileges, every word single-quoted, the person's identity handed to portless, never --force", () => {
+  const ENV = (ctx: PrivilegedContext) => ["/usr/bin/env", `SUDO_USER=${ctx.user}`, `SUDO_UID=${ctx.uid}`, `SUDO_GID=${ctx.gid}`, `HOME=${ctx.home}`, `PORTLESS_STATE_DIR=${ctx.stateDir}`, "PORTLESS_HTTPS=0", "PORTLESS_SYNC_HOSTS=1"];
+  const quoted = (words: string[]) => words.map((w) => `'${w}'`).join(" ");
+
+  test("macOS: osascript with administrator privileges, plain HTTP on 80, every word single-quoted, the person's identity handed to portless, never --force", () => {
     const line = privilegedInstallCommand("darwin", MAC);
     expect(line.command).toBe("/usr/bin/osascript");
     expect(line.args[0]).toBe("-e");
-    const script = line.args[1]!;
-    expect(script.startsWith(`do shell script "'/usr/bin/env' 'SUDO_USER=ramos' 'SUDO_UID=501' 'SUDO_GID=20' 'HOME=/Users/ramos' 'PORTLESS_STATE_DIR=/Users/ramos/.portless' '${MAC.node}' '${MAC.cli}' 'service' 'install' '--state-dir' '/Users/ramos/.portless'"`)).toBe(true);
-    expect(script).toContain("with administrator privileges with prompt");
+    const install = [...ENV(MAC), MAC.node, MAC.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", "/Users/ramos/.portless"];
+    expect(line.args[1]).toBe(
+      `do shell script "${quoted(install)}" with administrator privileges with prompt "Plannotator wants to give the Inbox a fixed address, inbox.plannotator.localhost. This starts a small local proxy (portless) on this computer only."`,
+    );
     // The AppleScript string holds no quote or backslash of its own beyond the delimiters.
+    const script = line.args[1]!;
     const inner = script.slice('do shell script "'.length, script.indexOf('" with administrator'));
     expect(inner).not.toMatch(/["\\]/);
-    expect(line.args.join(" ")).not.toContain("--force");
+    const all = line.args.join(" ");
+    expect(all).not.toContain("--force");
+    expect(all).not.toMatch(/--https|trust|ca\.pem|certif/i);
   });
 
-  test("Linux: pkexec with an argv (no shell); CI modes sudo -n and direct", () => {
+  test("macOS: replacing Plannotator's own earlier HTTPS service is the same one prompt: uninstall ; install --no-tls", () => {
+    const line = privilegedInstallCommand("darwin", MAC, "prompt", { replace: true });
+    expect(line.command).toBe("/usr/bin/osascript");
+    const uninstall = [...ENV(MAC), MAC.node, MAC.cli, "service", "uninstall"];
+    const install = [...ENV(MAC), MAC.node, MAC.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", "/Users/ramos/.portless"];
+    expect(line.args[1]!.startsWith(`do shell script "${quoted(uninstall)} ; ${quoted(install)}" with administrator privileges`)).toBe(true);
+    expect(line.args.filter((a) => a.includes("with administrator privileges"))).toHaveLength(1);
+  });
+
+  test("Linux: pkexec with an argv (no shell); a replace runs both through one /bin/sh -c; CI modes sudo -n and direct", () => {
     const linux = { ...MAC, node: "/usr/bin/node", cli: "/home/ramos/.plannotator/portless/node_modules/portless/dist/cli.js", stateDir: "/home/ramos/.portless", home: "/home/ramos", uid: "1000", gid: "1000" };
     const prompt = privilegedInstallCommand("linux", linux);
     expect(prompt.command).toBe("pkexec");
-    expect(prompt.args).toEqual(["/usr/bin/env", "SUDO_USER=ramos", "SUDO_UID=1000", "SUDO_GID=1000", "HOME=/home/ramos", "PORTLESS_STATE_DIR=/home/ramos/.portless", "/usr/bin/node", linux.cli, "service", "install", "--state-dir", "/home/ramos/.portless"]);
-    expect(privilegedInstallCommand("linux", linux, "sudo")).toEqual({ command: "sudo", args: ["-n", ...prompt.args] });
+    const install = [...ENV(linux), "/usr/bin/node", linux.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", "/home/ramos/.portless"];
+    expect(prompt.args).toEqual(install);
+    expect(privilegedInstallCommand("linux", linux, "sudo")).toEqual({ command: "sudo", args: ["-n", ...install] });
     expect(privilegedInstallCommand("darwin", MAC, "direct").command).toBe("/usr/bin/env");
+    const replace = privilegedInstallCommand("linux", linux, "prompt", { replace: true });
+    expect(replace).toEqual({ command: "pkexec", args: ["/bin/sh", "-c", `${quoted([...ENV(linux), "/usr/bin/node", linux.cli, "service", "uninstall"])} ; ${quoted(install)}`] });
+    expect(privilegedInstallCommand("linux", linux, "sudo", { replace: true })).toEqual({ command: "sudo", args: ["-n", ...replace.args] });
   });
 
-  test("Windows: Start-Process -Verb RunAs, paths in double quotes inside one single-quoted string", () => {
+  test("Windows: Start-Process -Verb RunAs, paths in double quotes inside one single-quoted string, plain HTTP on 80", () => {
     const line = privilegedInstallCommand("win32", WIN);
     expect(line.command).toBe("powershell.exe");
     const script = line.args.at(-1)!;
     expect(script).toBe(
-      `$p = Start-Process -FilePath 'C:\\Program Files\\nodejs\\node.exe' -ArgumentList '"C:\\Users\\ramos\\.plannotator\\portless\\node_modules\\portless\\dist\\cli.js" service install --state-dir "C:\\Users\\ramos\\.portless"' -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode`,
+      `$p = Start-Process -FilePath 'C:\\Program Files\\nodejs\\node.exe' -ArgumentList '"C:\\Users\\ramos\\.plannotator\\portless\\node_modules\\portless\\dist\\cli.js" service install --no-tls --port 80 --state-dir "C:\\Users\\ramos\\.portless"' -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode`,
     );
-    expect(privilegedInstallCommand("win32", WIN, "direct")).toEqual({ command: WIN.node, args: [WIN.cli, "service", "install", "--state-dir", WIN.stateDir] });
+    expect(privilegedInstallCommand("win32", WIN, "direct")).toEqual({ command: WIN.node, args: [WIN.cli, "service", "install", "--no-tls", "--port", "80", "--state-dir", WIN.stateDir] });
+    // schtasks /Create /F in portless's install replaces its own task: no uninstall word on Windows.
+    expect(privilegedInstallCommand("win32", WIN, "prompt", { replace: true })).toEqual(line);
   });
 
   test("no value can carry a quote, a substitution, a separator or a line break into it", () => {
@@ -188,6 +217,61 @@ describe("the privileged command", () => {
   });
 });
 
+describe("what answers on port 80", () => {
+  test("portless's plain proxy, portless redirecting to HTTPS, and another program", () => {
+    expect(classifyPort80(404, new Headers({ "x-portless": "1" }))).toEqual({ kind: "http" });
+    expect(classifyPort80(200, new Headers({ "x-portless": "1" }))).toEqual({ kind: "http" });
+    expect(classifyPort80(302, new Headers({ "x-portless": "1", location: "https://inbox.plannotator.localhost/" }))).toEqual({ kind: "https" });
+    // A same-scheme redirect from portless (an app's own) is still the plain proxy.
+    expect(classifyPort80(302, new Headers({ "x-portless": "1", location: "http://inbox.plannotator.localhost/x" }))).toEqual({ kind: "http" });
+    const other = classifyPort80(200, new Headers({ server: "nginx/1.27" }));
+    expect(other.kind).toBe("other");
+    expect((other as { detail: string }).detail).toContain("nginx/1.27");
+  });
+
+  test("readProxyState over real sockets: refused, portless plain, portless HTTPS redirect, another server, a non-HTTP listener", async () => {
+    const free = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
+    const freePort = free.port as number;
+    free.stop(true);
+    expect(await readProxyState(freePort)).toEqual({ kind: "free" });
+    const servers = [
+      Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("no route", { status: 404, headers: { "X-Portless": "1" } }) }),
+      Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 302, headers: { "X-Portless": "1", Location: "https://inbox.plannotator.localhost/" } }) }),
+      Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("hello", { headers: { Server: "Apache" } }) }),
+    ];
+    const raw = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open(socket) { socket.write("SSH-2.0-OpenSSH\r\n"); socket.end(); }, data() {} } });
+    try {
+      expect(await readProxyState(servers[0]!.port as number)).toEqual({ kind: "http" });
+      expect(await readProxyState(servers[1]!.port as number)).toEqual({ kind: "https" });
+      expect((await readProxyState(servers[2]!.port as number)).kind).toBe("other");
+      expect((await readProxyState(raw.port)).kind).toBe("other");
+    } finally {
+      for (const server of servers) server.stop(true);
+      raw.stop(true);
+    }
+  });
+
+  test("the service file: ours by the cli path, HTTPS by its --https argument", () => {
+    expect(serviceFilePath("darwin")).toBe("/Library/LaunchDaemons/sh.portless.proxy.plist");
+    expect(serviceFilePath("linux")).toBe("/etc/systemd/system/portless.service");
+    expect(serviceFilePath("win32")).toBeNull();
+    expect(readExistingService("win32", "C:\\x\\cli.js")).toBeNull();
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "plannotator-inbox-name-svc-")));
+    roots.push(dir);
+    const cli = "/var/folders/xg/T/plannotator-proto-fixed-address/data/portless/node_modules/portless/dist/cli.js";
+    const plist = (args: string[]) => `<plist><dict><key>ProgramArguments</key><array>${["/usr/local/bin/node", cli, "proxy", "start", "--foreground", ...args].map((a) => `<string>${a}</string>`).join("")}</array></dict></plist>`;
+    const write = (name: string, text: string) => {
+      writeFileSync(join(dir, name), text);
+      return join(dir, name);
+    };
+    // The owner's Mac after the HTTPS prototype: ours, HTTPS, so Sure replaces it.
+    expect(readExistingService("darwin", cli, write("a.plist", plist(["--port", "443", "--https", "--skip-trust"])))).toMatchObject({ ours: true, https: true });
+    expect(readExistingService("darwin", cli, write("b.plist", plist(["--port", "80", "--no-tls", "--skip-trust"])))).toMatchObject({ ours: true, https: false });
+    expect(readExistingService("darwin", "/somewhere/else/cli.js", write("c.plist", plist(["--port", "443", "--cert", "/c.pem", "--key", "/k.pem"])))).toMatchObject({ ours: false, https: true });
+    expect(readExistingService("darwin", cli, join(dir, "missing.plist"))).toBeNull();
+  });
+});
+
 // ── The routes, against a real Inbox ──
 
 interface Rig {
@@ -196,8 +280,9 @@ interface Rig {
   stateDir: string;
   home: string;
   calls: CommandLine[];
-  proxy: { up: boolean };
+  proxy: { up: boolean; other?: string; https?: boolean };
   privileged: { code: number; stderr: string };
+  service: { value: ExistingService | null };
 }
 
 /** A temp world: data dir, a portless home and state dir, and seams that record every command instead of running it. */
@@ -212,6 +297,7 @@ async function rig(options: { off?: boolean; nodeDelayMs?: number; node?: string
   const calls: CommandLine[] = options.carry?.calls ?? [];
   const proxy = options.carry?.proxy ?? { up: false };
   const privileged = options.carry?.privileged ?? { code: 0, stderr: "" };
+  const service = options.carry?.service ?? { value: null };
   const self: { inbox?: InboxServer } = {};
   const runner: NameRunner = async (line) => {
     calls.push(line);
@@ -225,8 +311,8 @@ async function rig(options: { off?: boolean; nodeDelayMs?: number; node?: string
     if (isPrivileged(line)) {
       if (privileged.code === 0) {
         proxy.up = true;
-        mkdirSync(stateDir, { recursive: true });
-        writeFileSync(join(stateDir, "ca.pem"), "fake");
+        proxy.https = false;
+        service.value = { path: "/Library/LaunchDaemons/sh.portless.proxy.plist", ours: true, https: false };
       }
       return { code: privileged.code, stdout: "", stderr: privileged.stderr, timedOut: false };
     }
@@ -269,8 +355,8 @@ async function rig(options: { off?: boolean; nodeDelayMs?: number; node?: string
         if (options.nodeDelayMs) await Bun.sleep(options.nodeDelayMs);
         return node === null ? null : { node: join(nodeDir, "node"), version: node };
       },
-      proxyAnswers: async () => proxy.up,
-      osTrust: async () => true,
+      proxyState: async () => (proxy.other ? { kind: "other", detail: proxy.other } : proxy.https ? { kind: "https" } : proxy.up ? { kind: "http" } : { kind: "free" }),
+      existingService: () => service.value,
       user: () => ({ username: "ramos", uid: 501, gid: 20 }),
       pollMs: 10,
       pollTries: 20,
@@ -278,7 +364,7 @@ async function rig(options: { off?: boolean; nodeDelayMs?: number; node?: string
   });
   self.inbox = inbox;
   servers.push(inbox);
-  return { inbox, dataDir, stateDir, home, calls, proxy, privileged };
+  return { inbox, dataDir, stateDir, home, calls, proxy, privileged, service };
 }
 
 const post = (r: Rig, path: string, body: Json, init: { origin?: string; site?: string } = {}) =>
@@ -315,7 +401,7 @@ describe("the fixed address's routes", () => {
   test("off and offered when Node 24+ is here; unavailable (never offered) without it or on an older Node", async () => {
     const ok = await rig();
     const state = ((await (await fetch(`http://localhost:${ok.inbox.port}/api/inbox/name`)).json()) as Json).name;
-    expect(state).toMatchObject({ status: "off", dialog_due: true, host: INBOX_NAME_HOST, url: `https://${INBOX_NAME_HOST}/` });
+    expect(state).toMatchObject({ status: "off", dialog_due: true, host: INBOX_NAME_HOST, url: `http://${INBOX_NAME_HOST}/` });
 
     const none = await rig({ node: null });
     const noNode = ((await (await fetch(`http://localhost:${none.inbox.port}/api/inbox/name`)).json()) as Json).name;
@@ -354,13 +440,16 @@ describe("the fixed address's routes", () => {
     expect(started.status).toBe("working");
     const on = await waitFor("on", () => (r.inbox.name.state().status === "on" ? r.inbox.name.state() : null));
     expect(on.reason).toBeNull();
-    expect(on.os_trust).toBe(true);
+    expect(on).not.toHaveProperty("os_trust");
     const listener = r.inbox.name.listenerPort()!;
     expect(listener).toBeGreaterThan(0);
     expect(listener).not.toBe(r.inbox.port);
 
     const kinds = r.calls.map((c) => (c.args.some((a) => a.endsWith("npm-cli.js")) ? "npm" : isPrivileged(c) ? "privileged" : c.args.includes("alias") ? "alias" : c.command));
     expect(kinds).toEqual(["npm", "privileged", "alias"]);
+    const privilegedCall = r.calls.find(isPrivileged)!;
+    expect(privilegedCall.args.join(" ")).toContain("'service' 'install' '--no-tls' '--port' '80'");
+    expect(privilegedCall.args.join(" ")).not.toContain("uninstall");
     const aliasCall = r.calls.find((c) => c.args.includes("alias"))!;
     expect(aliasCall.args.slice(1)).toEqual(["alias", "inbox.plannotator", String(listener)]);
     for (const call of r.calls) expect(call.args.join(" ")).not.toContain("--force");
@@ -373,7 +462,7 @@ describe("the fixed address's routes", () => {
     expect((await viaName("/api/inbox/settings")).status).toBe(200);
     const write = await viaName("/api/inbox/threads/msg_00000000000000000000000000/seen", {
       method: "POST",
-      headers: { Origin: `https://${INBOX_NAME_HOST}`, "Content-Type": "application/json" },
+      headers: { Origin: `http://${INBOX_NAME_HOST}`, "Content-Type": "application/json" },
       body: JSON.stringify({ serverSession: r.inbox.serverSession }),
     });
     expect(write.status).not.toBe(403);
@@ -384,6 +473,53 @@ describe("the fixed address's routes", () => {
     expect((await fetch(`http://127.0.0.1:${listener}/api/inbox/threads`, { headers: { host: `localhost:${listener}` } })).status).toBe(403);
     // The window's own port still refuses anything forwarded.
     expect((await fetch(`http://localhost:${r.inbox.port}/api/inbox/threads`, { headers: { "x-forwarded-for": "127.0.0.1" } })).status).toBe(403);
+  });
+
+  test("port 80 held by another program: failed before anything is installed or asked, said plainly", async () => {
+    const r = await rig();
+    r.proxy.other = 'it answered HTTP 200 as "nginx"';
+    await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
+    const failed = await waitFor("failed", () => (r.inbox.name.state().status === "failed" ? r.inbox.name.state() : null));
+    expect(failed.reason).toContain("Port 80 is already used by another program");
+    expect(failed.reason).toContain("nginx");
+    expect(failed.reason).toContain("Nothing changed");
+    expect(r.calls).toEqual([]);
+    expect(r.inbox.name.listenerPort()).toBeNull();
+  });
+
+  test("someone else's portless with HTTPS: left alone, nothing installed or asked", async () => {
+    const r = await rig();
+    r.proxy.https = true;
+    r.service.value = { path: "/Library/LaunchDaemons/sh.portless.proxy.plist", ours: false, https: true };
+    await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
+    const failed = await waitFor("failed", () => (r.inbox.name.state().status === "failed" ? r.inbox.name.state() : null));
+    expect(failed.reason).toContain("leaves it alone");
+    expect(r.calls).toEqual([]);
+  });
+
+  test("Plannotator's own earlier HTTPS service: replaced inside the one privileged step (uninstall, then install --no-tls)", async () => {
+    const r = await rig();
+    r.proxy.https = true;
+    r.service.value = { path: "/Library/LaunchDaemons/sh.portless.proxy.plist", ours: true, https: true };
+    await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
+    await waitFor("on", () => r.inbox.name.state().status === "on");
+    const privilegedCalls = r.calls.filter(isPrivileged);
+    expect(privilegedCalls).toHaveLength(1);
+    const text = privilegedCalls[0]!.args.join(" ");
+    if (PLATFORM === "win32") {
+      expect(text).toContain("service install --no-tls --port 80");
+    } else {
+      expect(text.indexOf("'service' 'uninstall'")).toBeGreaterThan(0);
+      expect(text.indexOf("'service' 'uninstall'")).toBeLessThan(text.indexOf("'service' 'install' '--no-tls'"));
+    }
+  });
+
+  test("a plain-HTTP portless already on 80: no privileged step at all, just the alias", async () => {
+    const r = await rig();
+    r.proxy.up = true;
+    await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
+    await waitFor("on", () => r.inbox.name.state().status === "on");
+    expect(r.calls.some(isPrivileged)).toBe(false);
   });
 
   test("a cancelled password prompt: failed, said plainly, nothing switched on, Try again works", async () => {

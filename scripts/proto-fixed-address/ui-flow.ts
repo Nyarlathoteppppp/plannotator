@@ -9,7 +9,8 @@
  * the Inbox was started with PLANNOTATOR_PROTO_NAME_ELEVATE=sudo (a CI runner
  * with passwordless sudo) or =direct (an elevated Windows runner); on a
  * person's computer the OS would ask for their password.
- * Certificate errors are NOT ignored: following the redirect proves trust.
+ * Plain HTTP: no certificate is involved; the tab moving to the name and
+ * reading its own health proves the route.
  */
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ if (new URL(url).port === String(process.env.REAL_INBOX_PORT ?? 59812)) {
 mkdirSync(shots, { recursive: true });
 
 const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ ignoreHTTPSErrors: false, viewport: { width: 1280, height: 820 } });
+const context = await browser.newContext({ viewport: { width: 1280, height: 820 } });
 const page = await context.newPage();
 let failed = false;
 try {
@@ -47,7 +48,7 @@ try {
     await dialog.locator("[data-name-sure]").click();
     // The server's answer first (read through the localhost origin, which keeps working)...
     const local = new URL(url).origin;
-    let state: { status?: string; reason?: string | null; probe?: string | null; os_trust?: boolean | null } = {};
+    let state: { status?: string; reason?: string | null; probe?: string | null } = {};
     const until = Date.now() + 6 * 60_000;
     const reader = await context.newPage();
     while (Date.now() < until) {
@@ -57,9 +58,9 @@ try {
     }
     console.log("name state:", JSON.stringify(state));
     if (state.status !== "on") throw new Error(`the fixed address did not turn on: ${state.reason ?? state.status}`);
-    // ...then the tab, which moves itself to the name (certificate checks on).
+    // ...then the tab, which moves itself to the name.
     const moved = await page
-      .waitForURL(/^https:\/\/inbox\.plannotator\.localhost\//, { timeout: 20_000 })
+      .waitForURL(/^http:\/\/inbox\.plannotator\.localhost\//, { timeout: 20_000 })
       .then(() => true)
       .catch(() => false);
     await page.waitForLoadState("load").catch(() => {});

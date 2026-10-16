@@ -1,6 +1,7 @@
 # PROTOTYPE (proto/inbox-fixed-address, not for merge): the Inbox's fixed
-# address (https://inbox.plannotator.localhost through portless) on Linux,
-# Windows and macOS runners. Manual only:
+# address (http://inbox.plannotator.localhost through portless's plain-HTTP
+# proxy on port 80; no certificate anywhere) on Linux, Windows and macOS
+# runners. Manual only:
 #
 #   gh workflow run 385915726 --ref proto/inbox-fixed-address   (the id: the file is not on main)
 #
@@ -32,9 +33,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    # macOS runners cannot show the keychain's trust prompt, so trusting the CA
-    # as root may fail there; the run still records what happened.
-    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     timeout-minutes: 30
     defaults:
       run:
@@ -56,14 +54,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install Playwright's Chromium (Linux also gets NSS tools for Chromium's own trust store)
+      - name: Install Playwright's Chromium
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            bunx playwright install --with-deps chromium
-            sudo apt-get install -y libnss3-tools
-          else
-            bunx playwright install chromium
-          fi
+          if [ "$RUNNER_OS" = "Linux" ]; then bunx playwright install --with-deps chromium; else bunx playwright install chromium; fi
 
       - name: Build the Inbox window
         run: bun run build:review && bun run build:hook
@@ -71,9 +64,9 @@ jobs:
       - name: Unit tests for the fixed address
         run: bun test packages/server/inbox-name.test.ts
 
-      - name: What is on 443 before
+      - name: What is on port 80 before (the plain-HTTP proxy needs it)
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then netstat -ano | grep ':443 ' || true; else sudo lsof -nP -iTCP:443 -sTCP:LISTEN || true; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then netstat -ano | grep -E ':80 .*LISTENING' || true; else sudo lsof -nP -iTCP:80 -sTCP:LISTEN || true; fi
 
       - name: The whole flow (click Sure, verify, port change, off)
         run: bun scripts/proto-fixed-address/ci-check.ts "$RUNNER_TEMP/proto-shots"
@@ -83,6 +76,8 @@ jobs:
         run: |
           ls -la ~/.portless || true
           cat ~/.portless/routes.json || true
+          cat ~/.portless/service.log 2>/dev/null | tail -20 || true
+          grep -A3 portless-start /etc/hosts 2>/dev/null || true
           if [ "$RUNNER_OS" = "Linux" ]; then systemctl status portless.service --no-pager || true; fi
           if [ "$RUNNER_OS" = "macOS" ]; then sudo launchctl print system/sh.portless.proxy | head -20 || true; fi
           if [ "$RUNNER_OS" = "Windows" ]; then schtasks /Query /TN "Portless Proxy" || true; grep -i localhost /c/Windows/System32/drivers/etc/hosts || true; fi

@@ -359,7 +359,7 @@ async function writeNotes(dataDir: string, list: string): Promise<number> {
  * stopped). `on` waits while the OS password prompt is up.
  */
 async function nameCommand(dataDir: string, action: "on" | "off" | "status"): Promise<number> {
-  type NameState = { status: string; url: string; reason: string | null; step: string | null; probe: string | null; os_trust: boolean | null; listener_port: number | null; portless: { node: string | null; cli: string | null; state_dir: string } };
+  type NameState = { status: string; url: string; reason: string | null; step: string | null; probe: string | null; listener_port: number | null; portless: { node: string | null; cli: string | null; state_dir: string } };
   let entry: InboxRegistryEntry;
   try {
     entry = await ensureInboxRunning(dataDir);
@@ -435,7 +435,7 @@ export async function runInboxCommand(args: readonly string[], assets: InboxComm
     process.exit(0);
   }
 
-  // PROTOTYPE (proto/inbox-fixed-address), hidden: the fixed address https://inbox.plannotator.localhost.
+  // PROTOTYPE (proto/inbox-fixed-address), hidden: the fixed address http://inbox.plannotator.localhost.
   if (args[0] === "--name") {
     const action = args[1] ?? "status";
     if (args.length > 2 || (action !== "on" && action !== "off" && action !== "status")) usageError("--name takes on, off or status, and no other option.");

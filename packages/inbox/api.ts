@@ -44,7 +44,6 @@ export interface InboxNameState {
   probe: string | null;
   /** The commands run for it, newest last. */
   log?: string[];
-  os_trust: boolean | null;
   portless: { node: string | null; cli: string | null; state_dir: string; home: string };
 }
 
@@ -582,7 +581,7 @@ export const inboxApi = {
   saveSound: (change: { enabled?: boolean; volume?: number }) => post<{ sound: InboxSoundSettings }>('/api/inbox/settings', { sound: change }),
   /** Ask to show the one-time sound dialog: `show` is true for the first page that ever asks after an update, and only that one. */
   claimSoundDialog: () => post<{ show: boolean; sound: InboxSoundSettings }>('/api/inbox/sound/dialog', {}),
-  // PROTOTYPE (proto/inbox-fixed-address): the fixed address https://inbox.plannotator.localhost.
+  // PROTOTYPE (proto/inbox-fixed-address): the fixed address http://inbox.plannotator.localhost.
   nameState: () => get<{ name: InboxNameState }>('/api/inbox/name'),
   setName: (on: boolean) => post<{ name: InboxNameState }>('/api/inbox/name', { on }),
   claimNameDialog: () => post<{ show: boolean; name: InboxNameState }>('/api/inbox/name/dialog', {}),

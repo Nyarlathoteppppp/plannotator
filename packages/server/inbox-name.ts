@@ -1,26 +1,40 @@
 /**
  * PROTOTYPE (branch proto/inbox-fixed-address, not for merge): a fixed
- * address for the Plannotator Inbox, `https://inbox.plannotator.localhost`,
- * through portless (https://github.com/vercel-labs/portless, pinned 0.15.8).
- * Research and findings: .product/drafts/portless-local-url/ (BRIEF.md and
- * one-click/README.md).
+ * address for the Plannotator Inbox, `http://inbox.plannotator.localhost`,
+ * through portless (https://github.com/vercel-labs/portless, pinned 0.15.8)
+ * in its plain-HTTP mode. Research and findings:
+ * .product/drafts/portless-local-url/ (BRIEF.md and one-click/README.md).
+ *
+ * Plain HTTP on purpose: the proxy answers this computer only, and
+ * `http://*.localhost` is a secure context in Chromium, Firefox and WebKit
+ * (notifications work), so there is no certificate to make, trust or warn
+ * about. portless's `service install --no-tls` never touches its CA
+ * (`installService` calls `prepareTrust` only when `useHttps`).
  *
  * What "Sure" does, in order (`enable`):
  *  1. Find Node 24+ (portless needs it). None: the offer is never shown.
- *  2. Install portless into `<data dir>/portless/` with that Node's own npm,
+ *  2. Look at port 80 (`readProxyState`). Another program there, or a
+ *     portless HTTPS proxy Plannotator did not install: stop, say why,
+ *     change nothing, ask for nothing.
+ *  3. Install portless into `<data dir>/portless/` with that Node's own npm,
  *     as the person, never globally. Skipped when it is already there.
- *  3. Skipped when portless's proxy already answers. Otherwise the ONE
- *     privileged step, `portless service install`: the proxy on 443 at boot
- *     plus its local CA trusted. The OS asks for the password itself:
- *     macOS `osascript … with administrator privileges`, Linux `pkexec`,
- *     Windows `Start-Process -Verb RunAs`. The command line is built from
- *     fixed words and validated paths only (`privilegedInstallCommand`);
- *     nothing a request carries reaches it.
- *  4. As the person (never root, so `~/.portless` stays theirs):
+ *  4. Skipped when a plain-HTTP portless already answers on 80. Otherwise the
+ *     ONE privileged step, `portless service install --no-tls --port 80`:
+ *     the proxy on 80 at boot. It also keeps `127.0.0.1
+ *     inbox.plannotator.localhost` in /etc/hosts (portless's default, for
+ *     resolvers that do not map `*.localhost` themselves). When Plannotator's
+ *     own earlier HTTPS service is installed, the same elevated command runs
+ *     `service uninstall` first, so one prompt replaces it. The OS asks for
+ *     the password itself: macOS `osascript … with administrator
+ *     privileges`, Linux `pkexec`, Windows `Start-Process -Verb RunAs`. The
+ *     command line is built from fixed words and validated paths only
+ *     (`privilegedInstallCommand`); nothing a request carries reaches it.
+ *  5. As the person (never root, so `~/.portless` stays theirs):
  *     `portless alias inbox.plannotator <name listener port>`. Never
  *     `--force` (it kills the caller's process group), always detached.
- *  5. Verify: `https://inbox.plannotator.localhost/api/inbox/health`,
- *     checked against portless's CA, answers THIS Inbox's `serverSession`.
+ *  6. Verify: `http://inbox.plannotator.localhost/api/inbox/health` (or
+ *     127.0.0.1:80 with the name as Host, when this process cannot resolve
+ *     the name) answers THIS Inbox's `serverSession`.
  *
  * The name listener: a second loopback listener (the "Over your tailnet"
  * pattern) that portless points at, so the window's own port keeps refusing
@@ -42,13 +56,15 @@ import { inboxDir } from "@plannotator/shared/inbox/schema";
 /** The name portless registers; it adds `.localhost`. */
 export const INBOX_NAME_LABEL = "inbox.plannotator";
 export const INBOX_NAME_HOST = "inbox.plannotator.localhost";
-export const INBOX_NAME_URL = `https://${INBOX_NAME_HOST}/`;
+export const INBOX_NAME_URL = `http://${INBOX_NAME_HOST}/`;
+/** The port the plain-HTTP proxy listens on (portless's default with --no-tls). */
+export const INBOX_NAME_PROXY_PORT = 80;
 /** The portless release this prototype was read against (BRIEF.md). */
 export const PORTLESS_VERSION = "0.15.8";
 export const PORTLESS_MIN_NODE_MAJOR = 24;
 /** The password prompt's reason line (macOS only shows it; the title says "osascript"). */
 export const INBOX_NAME_PROMPT =
-  "Plannotator wants to give the Inbox a fixed address, inbox.plannotator.localhost. This installs a local HTTPS proxy (portless) and trusts its certificate on this Mac.";
+  "Plannotator wants to give the Inbox a fixed address, inbox.plannotator.localhost. This starts a small local proxy (portless) on this computer only.";
 
 const NAME_FILE = "name.json";
 const PRIVILEGED_TIMEOUT_MS = 5 * 60_000;
@@ -83,7 +99,7 @@ export type NameRequestCheck = { ok: true } | { ok: false; status: number; code:
 export function checkNameRequest(headers: Headers, path: string, peer: string | null, host: string = INBOX_NAME_HOST): NameRequestCheck {
   if (peer !== null && !isLoopbackAddress(peer)) return { ok: false, status: 403, code: "local_only", error: "The fixed address answers only this computer." };
   const rawHost = (headers.get("host") ?? "").trim().toLowerCase();
-  const named = rawHost === host || rawHost === `${host}:443` || rawHost === `${host}:80`;
+  const named = rawHost === host || rawHost === `${host}:${INBOX_NAME_PROXY_PORT}`;
   if (!named) return { ok: false, status: 403, code: "forbidden_host", error: `This listener answers only ${host}.` };
   for (const name of headers.keys()) {
     if (name.toLowerCase().startsWith("tailscale-")) return { ok: false, status: 403, code: "local_only", error: "The fixed address answers only this computer." };
@@ -141,9 +157,19 @@ export interface CommandLine {
   args: string[];
 }
 
-/** POSIX `env` words handing portless the person's identity and state dir. */
+/** POSIX `env` words handing portless the person's identity, state dir, plain HTTP and /etc/hosts sync. */
 function posixEnvWords(ctx: PrivilegedContext): string[] {
-  return [`SUDO_USER=${ctx.user}`, `SUDO_UID=${ctx.uid}`, `SUDO_GID=${ctx.gid}`, `HOME=${ctx.home}`, `PORTLESS_STATE_DIR=${ctx.stateDir}`];
+  return [
+    `SUDO_USER=${ctx.user}`,
+    `SUDO_UID=${ctx.uid}`,
+    `SUDO_GID=${ctx.gid}`,
+    `HOME=${ctx.home}`,
+    `PORTLESS_STATE_DIR=${ctx.stateDir}`,
+    "PORTLESS_HTTPS=0",
+    // portless's default, said out loud so it is baked into the service: the root proxy keeps
+    // `127.0.0.1 inbox.plannotator.localhost` in /etc/hosts, for Safari wherever the system resolver does not map *.localhost itself.
+    "PORTLESS_SYNC_HOSTS=1",
+  ];
 }
 
 function validate(ctx: PrivilegedContext, platform: NodeJS.Platform): void {
@@ -158,32 +184,51 @@ function validate(ctx: PrivilegedContext, platform: NodeJS.Platform): void {
   }
 }
 
+/** The install words: plain HTTP on port 80, never a certificate, never --force. */
+export const SERVICE_INSTALL_WORDS = ["service", "install", "--no-tls", "--port", String(INBOX_NAME_PROXY_PORT)] as const;
+
+export interface PrivilegedOptions {
+  /**
+   * Plannotator's own earlier service is installed (the HTTPS one this
+   * prototype used to install): run `service uninstall` first, inside the same
+   * elevated command, so one password prompt replaces it. macOS and Linux only;
+   * on Windows `schtasks /Create /F` in the install replaces the task itself.
+   */
+  replace?: boolean;
+}
+
 /**
- * The one privileged command: `portless service install --state-dir <dir>`.
- * Every value is validated (`assertSafePath`, `USER_NAME`, `NUMERIC_ID`), so
- * it carries no quote, backslash (POSIX), `$`, backtick or line break, and
+ * The one privileged command: `portless service install --no-tls --port 80
+ * --state-dir <dir>`, preceded by `service uninstall` when `replace`. Every
+ * value is validated (`assertSafePath`, `USER_NAME`, `NUMERIC_ID`), so it
+ * carries no quote, backslash (POSIX), `$`, backtick, `;` or line break, and
  * is then quoted. Never `--force`.
  */
-export function privilegedInstallCommand(platform: NodeJS.Platform, ctx: PrivilegedContext, mode: ElevationMode = "prompt"): CommandLine {
+export function privilegedInstallCommand(platform: NodeJS.Platform, ctx: PrivilegedContext, mode: ElevationMode = "prompt", options: PrivilegedOptions = {}): CommandLine {
   validate(ctx, platform);
-  const portlessWords = [ctx.cli, "service", "install", "--state-dir", ctx.stateDir];
+  const portlessWords = [ctx.cli, ...SERVICE_INSTALL_WORDS, "--state-dir", ctx.stateDir];
   if (platform === "win32") {
     if (mode !== "prompt") return { command: ctx.node, args: portlessWords };
     // Start-Process -ArgumentList joins its words with spaces, so each path is wrapped in double quotes
     // (validated to hold none); the whole is one single-quoted PowerShell string (validated to hold no ').
-    const argumentList = `"${ctx.cli}" service install --state-dir "${ctx.stateDir}"`;
+    const argumentList = `"${ctx.cli}" ${SERVICE_INSTALL_WORDS.join(" ")} --state-dir "${ctx.stateDir}"`;
     const script = `$p = Start-Process -FilePath '${ctx.node}' -ArgumentList '${argumentList}' -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode`;
     return { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script] };
   }
-  const argv = ["/usr/bin/env", ...posixEnvWords(ctx), ctx.node, ...portlessWords];
-  if (mode === "direct") return { command: argv[0]!, args: argv.slice(1) };
-  if (mode === "sudo") return { command: "sudo", args: ["-n", ...argv] };
-  if (platform === "darwin") {
+  const env = ["/usr/bin/env", ...posixEnvWords(ctx), ctx.node];
+  const install = [...env, ...portlessWords];
+  const shellLine = (words: string[]) => words.map((word) => `'${word}'`).join(" ");
+  // One shell line when replacing: the uninstall, then the install whatever the uninstall said
+  // (the install boots out the same launchd label / systemd unit itself; the uninstall is belt and braces).
+  const shell = options.replace ? `${shellLine([...env, ctx.cli, "service", "uninstall"])} ; ${shellLine(install)}` : shellLine(install);
+  if (platform === "darwin" && mode === "prompt") {
     // `do shell script` runs /bin/sh: every word single-quoted. The AppleScript string then holds no `"` or `\`.
-    const shell = argv.map((word) => `'${word}'`).join(" ");
     return { command: "/usr/bin/osascript", args: ["-e", `do shell script "${shell}" with administrator privileges with prompt "${INBOX_NAME_PROMPT}"`] };
   }
-  // Linux: pkexec takes an argv (no shell); the polkit agent names the binary, not our reason.
+  // pkexec and sudo take an argv; a replace needs a shell for the two commands (the polkit agent then names /bin/sh).
+  const argv = options.replace ? ["/bin/sh", "-c", shell] : install;
+  if (mode === "direct") return { command: argv[0]!, args: argv.slice(1) };
+  if (mode === "sudo") return { command: "sudo", args: ["-n", ...argv] };
   return { command: "pkexec", args: argv };
 }
 
@@ -282,12 +327,6 @@ export interface InboxNameState {
   probe: string | null;
   /** The commands run for it, newest last: what ran, its exit, the end of its output (for the checklist, CI and Try again). */
   log: string[];
-  /**
-   * Whether the OS trusts portless's CA (macOS: `security verify-cert`; null
-   * elsewhere or before a check). The probe trusts the CA explicitly, so a
-   * failed trust step still verifies; this says whether browsers will warn.
-   */
-  os_trust: boolean | null;
   portless: { node: string | null; cli: string | null; state_dir: string; home: string };
 }
 
@@ -305,56 +344,102 @@ export interface ProbeResult {
 
 export type NameProbe = (stateDir: string, serverSession: string) => Promise<ProbeResult>;
 
-/** HTTPS to the name, verified against portless's CA, answering this Inbox's serverSession. */
-export const probeName: NameProbe = async (stateDir, serverSession) => {
-  const caPath = join(stateDir, "ca.pem");
-  let ca: Buffer;
-  try {
-    ca = readFileSync(caPath);
-  } catch {
-    return { ok: false, detail: `no portless CA at ${caPath}` };
-  }
-  try {
-    const response = await fetch(`${INBOX_NAME_URL}api/inbox/health`, { tls: { ca }, signal: AbortSignal.timeout(4000) } as RequestInit);
-    if (!response.ok) return { ok: false, detail: `https answered HTTP ${response.status}` };
-    const body = (await response.json()) as { serverSession?: unknown };
-    if (body.serverSession !== serverSession) return { ok: false, detail: "https answered another Inbox (serverSession differs)" };
-    return { ok: true, detail: `https ok (portless ${response.headers.get("x-portless") ? "header seen" : "header absent"})` };
-  } catch (error) {
-    const https = error instanceof Error ? error.message : String(error);
-    // Tell a name that does not resolve from a proxy without our route: portless accepts plain HTTP on its TLS port.
-    try {
-      const port = readProxyPort(stateDir);
-      const plain = await fetch(`http://127.0.0.1:${port}/api/inbox/health`, { headers: { host: INBOX_NAME_HOST }, redirect: "manual", signal: AbortSignal.timeout(3000) });
-      return { ok: false, detail: `https failed (${https}); plain http to 127.0.0.1:${port} answered ${plain.status}${plain.headers.get("x-portless") ? " from portless" : ""}` };
-    } catch (plainError) {
-      return { ok: false, detail: `https failed (${https}); proxy not answering (${plainError instanceof Error ? plainError.message : String(plainError)})` };
-    }
-  }
-};
-
-function readProxyPort(stateDir: string): number {
-  try {
-    const port = Number(readFileSync(join(stateDir, "proxy.port"), "utf8").trim());
-    if (Number.isInteger(port) && port > 0 && port <= 65535) return port;
-  } catch {
-    // The default below.
-  }
-  return 443;
+/** One health read; the serverSession it answered, or why not. */
+async function healthAt(url: string, headers: Record<string, string>): Promise<{ session: string | null; detail: string }> {
+  const response = await fetch(url, { headers, redirect: "manual", signal: AbortSignal.timeout(4000) });
+  if (!response.ok) return { session: null, detail: `answered HTTP ${response.status}${response.headers.get("location") ? ` -> ${response.headers.get("location")}` : ""}` };
+  const body = (await response.json()) as { serverSession?: unknown };
+  return { session: typeof body.serverSession === "string" ? body.serverSession : null, detail: response.headers.get("x-portless") ? "through portless" : "no X-Portless header" };
 }
 
 /**
- * portless's proxy answers on its port: the service is installed and running.
- * Plain HTTP on its TLS port gets a 302 to https carrying `X-Portless`; never
- * follow it (Bun's own CA store does not trust portless's CA; CI on macOS
- * found this), the header on the 302 is the answer.
+ * Plain HTTP to the name, answering this Inbox's serverSession. Browsers
+ * resolve `*.localhost` to loopback themselves; when this process cannot (an
+ * older resolver, no /etc/hosts line yet), the same request goes to
+ * 127.0.0.1:80 with the name as Host, which checks the route all the same.
  */
-async function proxyAnswers(stateDir: string): Promise<boolean> {
+export const probeName: NameProbe = async (_stateDir, serverSession) => {
+  let byName: string;
   try {
-    const response = await fetch(`http://127.0.0.1:${readProxyPort(stateDir)}/`, { headers: { host: INBOX_NAME_HOST }, redirect: "manual", signal: AbortSignal.timeout(2000) });
-    return response.headers.get("x-portless") !== null;
+    const result = await healthAt(`${INBOX_NAME_URL}api/inbox/health`, {});
+    if (result.session === serverSession) return { ok: true, detail: `http ok (${result.detail})` };
+    byName = result.session ? "the name answered another Inbox (serverSession differs)" : `the name ${result.detail}`;
+  } catch (error) {
+    byName = `the name did not answer (${error instanceof Error ? error.message : String(error)})`;
+  }
+  try {
+    const result = await healthAt(`http://127.0.0.1:${INBOX_NAME_PROXY_PORT}/api/inbox/health`, { host: INBOX_NAME_HOST });
+    if (result.session === serverSession) return { ok: true, detail: `http ok through 127.0.0.1:${INBOX_NAME_PROXY_PORT} (${result.detail}); ${byName}` };
+    return { ok: false, detail: `${byName}; 127.0.0.1:${INBOX_NAME_PROXY_PORT} ${result.session ? "answered another Inbox" : result.detail}` };
+  } catch (error) {
+    return { ok: false, detail: `${byName}; nothing answers on port ${INBOX_NAME_PROXY_PORT} (${error instanceof Error ? error.message : String(error)})` };
+  }
+};
+
+/** What answers on port 80: nothing, portless in plain HTTP, portless redirecting to HTTPS, or another program. */
+export type ProxyState = { kind: "free" } | { kind: "http" } | { kind: "https" } | { kind: "other"; detail: string };
+
+/** Classify an answer from port 80 (pure; unit-tested). */
+export function classifyPort80(status: number, headers: Headers): ProxyState {
+  if (headers.get("x-portless") === null) {
+    const server = headers.get("server");
+    return { kind: "other", detail: `it answered HTTP ${status}${server ? ` as "${server.slice(0, 80)}"` : ""}` };
+  }
+  const location = headers.get("location") ?? "";
+  if (status >= 300 && status < 400 && /^https:/i.test(location)) return { kind: "https" };
+  return { kind: "http" };
+}
+
+/**
+ * Look at 127.0.0.1:80 without following anything. Refused: free. An HTTP
+ * answer: classified by its `X-Portless` header and a redirect to https. Any
+ * other failure (a listener that does not speak HTTP, a hang): another program.
+ */
+export async function readProxyState(port: number = INBOX_NAME_PROXY_PORT): Promise<ProxyState> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/`, { headers: { host: INBOX_NAME_HOST }, redirect: "manual", signal: AbortSignal.timeout(2500) });
+    await response.body?.cancel().catch(() => {});
+    return classifyPort80(response.status, response.headers);
+  } catch (error) {
+    const text = `${error instanceof Error ? `${error.message} ${(error as { code?: string }).code ?? ""}` : String(error)}`;
+    if (/ECONNREFUSED|ConnectionRefused|refused/i.test(text)) return { kind: "free" };
+    return { kind: "other", detail: `something holds the port but did not answer HTTP (${text.trim().slice(0, 120)})` };
+  }
+}
+
+/** portless's service file: launchd plist (macOS), systemd unit (Linux). Windows: none read (the install's /F replaces its task). */
+export function serviceFilePath(platform: NodeJS.Platform): string | null {
+  if (platform === "darwin") return "/Library/LaunchDaemons/sh.portless.proxy.plist";
+  if (platform === "linux") return "/etc/systemd/system/portless.service";
+  return null;
+}
+
+export interface ExistingService {
+  path: string;
+  /** It runs Plannotator's own copy of portless (the cli.js under the data dir). */
+  ours: boolean;
+  /** It starts the proxy with --https or --cert (the earlier prototype's service, or someone's own HTTPS setup). */
+  https: boolean;
+}
+
+/** Read portless's installed service, if any (world-readable files; nothing privileged). */
+export function readExistingService(platform: NodeJS.Platform, cli: string, path: string | null = serviceFilePath(platform)): ExistingService | null {
+  if (!path) return null;
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
   } catch {
-    return false;
+    return null;
+  }
+  return { path, ours: text.includes(cli), https: /--(https|cert)\b/.test(text) && !/--no-tls\b/.test(text) };
+}
+
+/** The end of portless's service log, for a proxy that never came up (EADDRINUSE: port 80 taken). */
+function serviceLogTail(stateDir: string): string {
+  try {
+    return readFileSync(join(stateDir, "service.log"), "utf8").trim().split("\n").slice(-3).join(" | ").slice(-400);
+  } catch {
+    return "";
   }
 }
 
@@ -369,12 +454,12 @@ export interface InboxNameOptions {
   probe?: NameProbe;
   /** Tests: Node's path and version without running it. */
   findNode?: () => Promise<{ node: string; version: string } | null>;
-  /** Tests: whether the proxy already answers. */
-  proxyAnswers?: (stateDir: string) => Promise<boolean>;
+  /** Tests: what answers on port 80. Default: `readProxyState`. */
+  proxyState?: () => Promise<ProxyState>;
+  /** Tests: portless's installed service. Default: `readExistingService`. */
+  existingService?: () => ExistingService | null;
   /** Tests: the person running the Inbox. Default: `os.userInfo()`. */
   user?: () => { username: string; uid: number; gid: number };
-  /** Tests: whether the OS trusts the CA. Default: macOS `security verify-cert`, null elsewhere. */
-  osTrust?: (stateDir: string) => Promise<boolean | null>;
   /** Tests: shorten the waits for the proxy and the route. */
   pollMs?: number;
   pollTries?: number;
@@ -400,7 +485,6 @@ export interface InboxName {
 export function createInboxName(options: InboxNameOptions): InboxName {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
-  const runner = options.runner ?? runDetached;
   const probe = options.probe ?? probeName;
   const pollMs = options.pollMs ?? 500;
   const pollTries = options.pollTries ?? 30;
@@ -410,7 +494,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   const exec: NameRunner = async (line, opts) => {
     const result = await (options.runner ?? runDetached)(line, opts);
     const tail = `${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-4).join(" | ").slice(0, 600);
-    log.push(`${new Date().toISOString()} ${[line.command, ...line.args].join(" ").slice(0, 300)} -> ${result.timedOut ? "timed out" : `exit ${result.code}`}${tail ? `: ${tail}` : ""}`);
+    log.push(`${new Date().toISOString()} ${[line.command, ...line.args].join(" ").slice(0, 900)} -> ${result.timedOut ? "timed out" : `exit ${result.code}`}${tail ? `: ${tail}` : ""}`);
     if (log.length > 20) log.splice(0, log.length - 20);
     return result;
   };
@@ -444,7 +528,6 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   let reason: string | null = null;
   let verifiedAt: string | null = null;
   let probeDetail: string | null = null;
-  let osTrusted: boolean | null = null;
   let node: { node: string; version: string } | null = null;
   let nodeChecked = false;
   let nodeLookup: Promise<{ node: string; version: string } | null> | null = null;
@@ -455,6 +538,8 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   const childEnv = (): Record<string, string | undefined> => ({
     ...env,
     PORTLESS_STATE_DIR: stateDir,
+    // Plain HTTP for every portless command the person runs too (alias reads the proxy's port from the state dir).
+    PORTLESS_HTTPS: "0",
     PATH: node ? `${dirname(node.node)}${delimiter}${env.PATH ?? ""}` : env.PATH,
     // Never let a portless child think it is a CI or non-interactive context it is not.
     PORTLESS: undefined,
@@ -535,15 +620,6 @@ export function createInboxName(options: InboxNameOptions): InboxName {
     setTimeout(() => closing.stop(true), 300);
   };
 
-  const checkTrust =
-    options.osTrust ??
-    (async (dir: string): Promise<boolean | null> => {
-      if (platform !== "darwin") return null;
-      const result = await runner({ command: "/usr/bin/security", args: ["verify-cert", "-c", join(dir, "ca.pem"), "-p", "ssl", "-L"] }, { env: { ...env }, timeoutMs: 10_000 });
-      return result.code === 0;
-    });
-  const untrustedNote = "The address works, but this computer does not trust portless's certificate, so browsers will warn. Run: portless trust";
-
   const lanMode = () => existsSync(join(stateDir, "proxy.lan"));
 
   const alias = async (port: number): Promise<string | null> => {
@@ -582,8 +658,18 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       step = null;
       return;
     }
+    // 2. Port 80 first, before anything is installed: refuse what we must not replace, with no prompt.
+    const readState = options.proxyState ?? (() => readProxyState());
+    const before = await readState();
+    const service = (options.existingService ?? (() => readExistingService(platform, cli)))();
+    if (before.kind === "other") {
+      return fail(`Port ${INBOX_NAME_PROXY_PORT} is already used by another program on this computer (${before.detail}). The fixed address needs that port. Nothing changed; the Inbox stays at localhost.`);
+    }
+    if ((before.kind === "https" || service?.https) && !service?.ours) {
+      return fail("portless is already set up on this computer with HTTPS, by something other than Plannotator. Plannotator leaves it alone. Nothing changed; the Inbox stays at localhost.");
+    }
     const port = openListener();
-    // 2. portless into <data dir>/portless, as the person.
+    // 3. portless into <data dir>/portless, as the person.
     if (!existsSync(cli)) {
       step = "installing";
       const npmCli = [join(dirname(node!.node), "node_modules", "npm", "bin", "npm-cli.js"), join(dirname(node!.node), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js")].find((p) => existsSync(p));
@@ -592,9 +678,8 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       const installed = await exec(npmInstallCommand(node!.node, npmCli, home), { env: childEnv(), timeoutMs: NPM_TIMEOUT_MS });
       if (installed.code !== 0 || !existsSync(cli)) return fail(`Installing portless ${PORTLESS_VERSION} failed: ${(installed.stderr || installed.stdout).trim().slice(-400) || `exit ${installed.code}`}`);
     }
-    // 3. The one privileged step, only when the proxy is not already up.
-    const answers = options.proxyAnswers ?? proxyAnswers;
-    if (!(await answers(stateDir))) {
+    // 4. The one privileged step, only when a plain-HTTP portless is not already answering.
+    if (before.kind !== "http") {
       step = "password";
       let line: CommandLine;
       try {
@@ -603,6 +688,8 @@ export function createInboxName(options: InboxNameOptions): InboxName {
           platform,
           { node: node!.node, cli, stateDir, user: me.username, uid: String(me.uid), gid: String(me.gid), home: userHome },
           elevation,
+          // Plannotator's own earlier service (the HTTPS one): replaced in the same prompt.
+          { replace: !!service?.ours },
         );
       } catch (error) {
         return fail(error instanceof Error ? error.message : String(error));
@@ -613,27 +700,30 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       let up = false;
       const until = Date.now() + proxyWaitMs;
       while (!stopped && Date.now() < until) {
-        if (await answers(stateDir)) {
+        if ((await readState()).kind === "http") {
           up = true;
           break;
         }
         await Bun.sleep(pollMs);
       }
-      if (!up) return fail(`portless was installed but its proxy did not answer on port 443 within ${Math.round(proxyWaitMs / 1000)} s. Run: portless doctor`);
+      if (!up) {
+        const tail = serviceLogTail(stateDir);
+        if (/EADDRINUSE/i.test(tail)) return fail(`Port ${INBOX_NAME_PROXY_PORT} is used by another program, so portless's proxy could not start. The Inbox stays at localhost. (${tail})`);
+        return fail(`portless was installed but its proxy did not answer on port ${INBOX_NAME_PROXY_PORT} within ${Math.round(proxyWaitMs / 1000)} s.${tail ? ` Its log: ${tail}` : ""} Run: portless doctor`);
+      }
     }
-    // 4. The alias, as the person.
+    // 5. The alias, as the person.
     step = "alias";
     const aliasError = await alias(port);
     if (aliasError) return fail(aliasError);
-    // 5. Verify.
+    // 6. Verify.
     step = "verifying";
     if (!(await verify())) return fail(`The address does not answer this Inbox yet: ${probeDetail ?? "no answer"}. localhost still works.`);
     saved = { ...readFile(), on: true, port };
     writeFile(saved);
-    osTrusted = await checkTrust(stateDir).catch(() => null);
     status = "on";
     step = null;
-    reason = osTrusted === false ? untrustedNote : null;
+    reason = null;
   };
 
   const state = (): InboxNameState => ({
@@ -648,7 +738,6 @@ export function createInboxName(options: InboxNameOptions): InboxName {
     verified_at: verifiedAt,
     probe: probeDetail,
     log: [...log],
-    os_trust: osTrusted,
     portless: { node: node?.node ?? null, cli: existsSync(cli) ? cli : null, state_dir: stateDir, home },
   });
 
@@ -699,10 +788,9 @@ export function createInboxName(options: InboxNameOptions): InboxName {
           saved = { ...readFile(), on: true, port };
           writeFile(saved);
         }
-        osTrusted = await checkTrust(stateDir).catch(() => null);
         status = "on";
         step = null;
-        reason = osTrusted === false ? untrustedNote : null;
+        reason = null;
       } catch (error) {
         fail(error instanceof Error ? error.message : String(error));
       }
