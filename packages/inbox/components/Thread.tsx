@@ -1018,7 +1018,6 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
    * keeps it.
    */
   const [full, setFull] = useState(false);
-  /** A narrow window (a phone): the open file is always full screen. */
   /** Bumped when the person opens a file, so focus moves into its pane. */
   const [paneFocus, setPaneFocus] = useState(0);
   const paneRef = useRef<AttachmentPaneHandle>(null);

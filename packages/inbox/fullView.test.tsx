@@ -130,6 +130,7 @@ function Pane({
   records: initialRecords = [RECORD],
   steps = STEPS,
   version = 'current',
+  replyLeaves = false,
 }: {
   start: InboxAttachmentState;
   harness: Harness;
@@ -139,6 +140,8 @@ function Pane({
   records?: InboxAnnotationRecord[];
   steps?: AttachmentStep[];
   version?: 'current' | 'sent';
+  /** Write the reply leaves full screen, as the thread does. */
+  replyLeaves?: boolean;
 }) {
   const [open, setOpen] = useState(start);
   const [full, setFull] = useState(startFull);
@@ -168,7 +171,14 @@ function Pane({
       onRemoved={noop}
       onOpenAt={noop}
       onClose={() => harness.closed++}
-      strip={{ picks: 0, annotations: records.length, onWriteReply: () => harness.reply++ }}
+      strip={{
+        picks: 0,
+        annotations: records.length,
+        onWriteReply: () => {
+          harness.reply++;
+          if (replyLeaves) setFull(false);
+        },
+      }}
       steps={steps}
       phone={phone}
       onStep={(id) => setOpen(all.find((a) => a.id === id)!)}
@@ -366,6 +376,46 @@ test.skipIf(!hasDom)('every opening of full screen starts with the toolbar showi
   await click(host!.querySelector('[data-full-screen-toggle]'));
   expect(barState()).toBe('pinned');
   expect(bar()!.inert).toBe(false);
+});
+
+test.skipIf(!hasDom)('back into full screen after leaving it tucked (Hide, the drawer, Write the reply): the toolbar is never tucked on entry and focus lands on its first button', async () => {
+  stubViews();
+  const harness = harnessOf();
+  await render(<Pane start={notes} harness={harness} startFull={false} replyLeaves />);
+  await click(host!.querySelector('[data-full-screen-toggle]'));
+  hideButton().focus();
+  await click(hideButton());
+  expect(barState()).toBe('tucked');
+  // The drawer from the tucked toolbar: the handle brings it out, the count opens the drawer.
+  await press(handle());
+  await click(host!.querySelector('[data-full-view-comments]'));
+  expect(pane().classList.contains('ib-drawer')).toBe(true);
+  // Write the reply: a press on the drawer's foot (outside the toolbar, so it tucks) leaves full screen.
+  const write = [...host!.querySelectorAll<HTMLButtonElement>('[data-full-view-foot] button')].find((b) => b.textContent === 'Write the reply')!;
+  await act(async () => {
+    write.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+  });
+  await click(write);
+  expect(harness.reply).toBe(1);
+  expect(bar()).toBeNull();
+
+  // Every change to the toolbar's state or inertness from here on is recorded: none may say tucked.
+  const seen: string[] = [];
+  const observer = new MutationObserver((records) => {
+    for (const r of records) {
+      const el = r.target as Element;
+      if (r.attributeName === 'data-bar') seen.push(`data-bar:${r.oldValue}->${el.getAttribute('data-bar')}`);
+      if (r.attributeName === 'inert' && el.hasAttribute('data-full-view-bar')) seen.push(`bar-inert:${el.hasAttribute('inert')}`);
+    }
+  });
+  observer.observe(host!, { subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ['data-bar', 'inert'] });
+  await click(host!.querySelector('.ib-vhead [data-full-screen-toggle]'));
+  observer.disconnect();
+  expect(barState()).toBe('pinned');
+  expect(bar()!.inert).toBe(false);
+  expect(seen.filter((s) => s.includes('tucked') || s === 'bar-inert:true')).toEqual([]);
+  expect(document.activeElement).toBe(bar()!.querySelector('button'));
+  expect(document.activeElement).not.toBe(document.body);
 });
 
 test.skipIf(!hasDom)('the count opens the comments drawer beside the page (it narrows; not covered); its foot says what rides the next Send; Escape and its close shut it, focus back on the count', async () => {

@@ -450,6 +450,14 @@ test('on an iPhone (WebKit): the same mode, the toolbar bottom right with 44 px 
       }
       await expect(bar(page).locator('[data-full-view-position]')).toHaveCount(0);
       await expect(bar(page).getByRole('button', { name: 'Exit full screen' })).toHaveCount(0);
+      // ⋯'s rows are 44 px targets on a phone too (the position, Download, the other version).
+      await bar(page).locator('[data-full-view-more]').click();
+      const rows = page.locator('[data-full-view-menu] [role="menuitem"]');
+      await expect(rows.first()).toBeVisible();
+      for (const row of await rows.all()) expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      if (scheme === 'dark') await page.screenshot({ path: join(shotsDir, 'phone-menu-dark.png') });
+      await page.keyboard.press('Escape');
+      await expect(rows).toHaveCount(0);
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(shotsDir, `phone-showing-${scheme}.png`) });
       await hide(page).click();

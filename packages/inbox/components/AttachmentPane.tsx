@@ -397,6 +397,8 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
     if (!full) {
       setChip(null);
       setMoreOpen(false);
+      // Leaving full screen forgets a tucked toolbar: the next entry draws it showing from its first frame (no tucked frame, no slide-in, focus never lands on something inert).
+      setToolbar('pinned');
     }
   }, [full]);
   // An image's or a film's comment row (a phone's "Comment at" button for a film) stays at the file's foot in full screen: the chip and a phone's toolbar sit above it.

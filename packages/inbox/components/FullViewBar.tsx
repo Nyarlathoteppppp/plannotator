@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { forwardRef, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Tooltip } from '@plannotator/ui/components/Tooltip';
 import { formatShortcutBindingText, formatShortcutBindingTokens } from '@plannotator/ui/shortcuts';
 import { Icon } from '../icons';
@@ -159,8 +159,8 @@ export const FullViewBar = forwardRef<FullViewBarHandle, FullViewBarProps>(funct
     if (focus === 'handle') handleRef.current?.focus({ preventScroll: true });
     else if (focus === 'bar') barRef.current?.querySelector<HTMLElement>('button:not([disabled]), a[href]')?.focus({ preventScroll: true });
   };
-  // Inert flips with the state: focus lands once it has. Focus is never lost: what held it and goes inert hands it on.
-  useEffect(() => {
+  // Inert flips with the state, before paint: focus lands once it has. Focus is never lost: what held it and goes inert hands it on.
+  useLayoutEffect(() => {
     const active = document.activeElement;
     if (!pendingFocus.current && active && active !== document.body) {
       if (state === 'tucked' && barRef.current?.contains(active)) pendingFocus.current = 'handle';
@@ -221,13 +221,14 @@ export const FullViewBar = forwardRef<FullViewBarHandle, FullViewBarProps>(funct
   };
 
   const count = props.handleCount;
-  // A comment saved while the drawer is closed bumps the count (never on the first draw).
+  // A comment saved while the drawer is closed bumps the count (never on the first draw; with the drawer open the new card shows there instead).
   const lastCount = useRef(count);
   const [bump, setBump] = useState(0);
+  const drawerOpen = comments?.open ?? false;
   useEffect(() => {
-    if (count > lastCount.current) setBump((n) => n + 1);
+    if (count > lastCount.current && !drawerOpen) setBump((n) => n + 1);
     lastCount.current = count;
-  }, [count]);
+  }, [count, drawerOpen]);
   const handleLabel = `Show tools${count ? `, ${plural(count, 'comment')}` : ''}${props.changed ? ', file changed since sent' : ''}`;
   const pinned = state === 'pinned';
   const hideText = pinned ? 'Hide tools' : 'Keep tools out';

@@ -889,6 +889,8 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-fvdock.ib-shift { right: 320px; }
 .ib-fvzone { position: absolute; top: 0; right: 0; width: 96px; height: 64px; pointer-events: none; }
 .ib-fvdock[data-bar="tucked"] .ib-fvzone, .ib-fvdock[data-bar="revealed"] .ib-fvzone { pointer-events: auto; }
+/* A touch screen has no pointer to rest in the corner: the box would only swallow taps on the page (the handle is tapped instead). */
+@media (hover: none) { .ib-fvdock .ib-fvzone, .ib-fvdock[data-bar] .ib-fvzone { pointer-events: none; } }
 .ib-fvbar { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 11px; white-space: nowrap; background: color-mix(in oklch, var(--popover) 94%, transparent); color: var(--popover-foreground); border: 1px solid color-mix(in oklch, var(--border) 85%, transparent); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.2); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); transition: transform 220ms cubic-bezier(0.23, 1, 0.32, 1), opacity 160ms ease; }
 :root.light .ib-fvbar { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08); }
 /* Tucked: the toolbar slides off to the right (it is inert, so nothing in it takes focus). */
@@ -907,7 +909,7 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 /* The peek from the toolbar's N/M: under it, at its right edge. */
 .ib-fvpeek { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; white-space: normal; }
 /* The handle: what is left of the toolbar when it is tucked, flush with the corner. */
-.pn-inbox .ib-fvhandle { position: absolute; top: 12px; right: 0; height: 34px; min-width: 34px; padding: 0 8px 0 9px; display: inline-flex; align-items: center; gap: 5px; border-radius: 10px 0 0 10px; border: 1px solid color-mix(in oklch, var(--border) 85%, transparent); border-right: 0; background: color-mix(in oklch, var(--popover) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: var(--popover-foreground); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28); font-size: 12.5px; font-weight: 600; transition: opacity 160ms ease, transform 220ms cubic-bezier(0.23, 1, 0.32, 1); }
+.pn-inbox .ib-fvhandle { position: absolute; top: 12px; right: env(safe-area-inset-right); height: 34px; min-width: 34px; padding: 0 8px 0 9px; display: inline-flex; align-items: center; gap: 5px; border-radius: 10px 0 0 10px; border: 1px solid color-mix(in oklch, var(--border) 85%, transparent); border-right: 0; background: color-mix(in oklch, var(--popover) 94%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: var(--popover-foreground); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28); font-size: 12.5px; font-weight: 600; transition: opacity 160ms ease, transform 220ms cubic-bezier(0.23, 1, 0.32, 1); }
 :root.light .ib-fvhandle { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1); }
 .pn-inbox .ib-fvhandle:hover { background: var(--popover); }
 .ib-fvdock:not([data-bar="tucked"]) .ib-fvhandle { opacity: 0; transform: translateX(100%); pointer-events: none; }
@@ -940,6 +942,10 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-fvfoot-pos .ib-stepn { color: var(--muted-foreground); font-variant-numeric: tabular-nums; font-size: 12.5px; white-space: nowrap; }
 .ib-fvfoot-nm { font-weight: 600; min-width: 0; overflow: hidden; white-space: nowrap; flex: 1; text-align: left; }
 /* A phone: the toolbar bottom right with 44 px targets, the handle a 44 × 52 px tab at the right edge. */
+/* ⋯'s menu on a phone: 44 px rows (the menu is portaled out of the pane, so it is matched by its own attribute). */
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
+  [data-full-view-menu] [role="menuitem"] { min-height: 44px; font-size: 14px; }
+}
 .ib-fvdock.ib-fvdock-phone { top: auto; bottom: 0; right: 0; }
 .ib-fvdock-phone .ib-fvbar { top: auto; right: calc(12px + env(safe-area-inset-right)); bottom: calc(14px + max(var(--ib-fvfoot, 0px), env(safe-area-inset-bottom))); padding: 4px; border-radius: 14px; }
 .pn-inbox .ib-fvdock-phone .ib-fvb { height: 44px; min-width: 44px; border-radius: 10px; font-size: 14px; padding: 0 8px; }
@@ -2424,6 +2430,8 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-split.ib-on .ib-st { background: var(--muted); color: var(--foreground); }
 .ib-split .ib-sa:hover:not(:disabled), .ib-split .ib-st:hover { background: color-mix(in oklch, var(--muted) 60%, transparent); }
 .ib-appi { width: 16px; height: 16px; flex: none; display: block; }
+/* A menu portals out of .pn-inbox (Open in, full screen's ⋯): its line glyphs keep their stroke there too, never a filled shape. */
+svg.ib-ic.ib-glyph { stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; color: var(--muted-foreground); }
 /* The menu portals to the body, outside .pn-inbox: its glyphs carry their own stroke. */
 [data-open-in-menu] svg.ib-ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 [data-open-in-menu] svg.ib-glyph { color: var(--muted-foreground); }
