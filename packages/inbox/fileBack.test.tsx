@@ -178,8 +178,9 @@ test.skipIf(!hasDom)('with a file open beside the thread, ‹ Inbox leads the he
   // Mark read follows the way back (after its divider), and Archive ends the header, where the × was.
   const buttons = [...head.querySelectorAll('button')];
   expect(buttons[0]).toBe(back(el)!);
-  const markRead = head.querySelector('[data-mark-read]');
-  if (markRead) expect(buttons[1]).toBe(markRead as HTMLButtonElement);
+  const markRead = head.querySelector<HTMLButtonElement>('[data-mark-read]');
+  expect(markRead).not.toBeNull();
+  expect(buttons[1]).toBe(markRead!);
   expect(head.lastElementChild).toBe(head.querySelector('[data-archive]'));
   expect(back(el)!.getAttribute('aria-label')).toBe('Back to Inbox');
   expect(back(el)!.textContent?.trim()).toBe('Inbox');

@@ -194,9 +194,8 @@ test('a thread that came back from the archive, and an archived one: the same or
   const backPane = page.locator(`section.ib-pane[data-thread-id="${threads.back}"]`);
   await expect(backPane.locator('[data-came-back]')).toBeVisible();
   await shot(page, '5-came-back');
-  const order = await headerOrder(backPane);
-  expect(order.slice(-2)).toEqual(['archive', 'close']);
-  if (order.includes('mark-read')) expect(order[0]).toBe('mark-read');
+  // A thread that came back is not resolved for the window, so Mark read is offered and leads.
+  expect(await headerOrder(backPane)).toEqual(['mark-read', 'expand', 'archive', 'close']);
 
   await page.goto(`${world.url}#thread=${threads.archived}`);
   const archivedPane = page.locator(`section.ib-pane[data-thread-id="${threads.archived}"]`);
