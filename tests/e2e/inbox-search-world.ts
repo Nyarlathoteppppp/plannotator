@@ -101,8 +101,16 @@ export async function seedSearchWorld(input: { binary: string; env: Record<strin
       file(projects.northwind, 'docs/spikes/SPIKE-claude-deploy-pipeline-investigation-for-northwind-customer-portal-20261011.md', '# Spike\n'),
     ],
   });
+  // A decision recorded from the person's answer (its row names the thread: a long subject and a long name).
+  {
+    const question = (northwind.questions as { key: string; kind: string; prompt: string }[])[0]!;
+    const answer = { v: 1, key: question.key, kind: question.kind, prompt: question.prompt, selected: ['Yes'] };
+    await windowPost(input.url, `/api/inbox/messages/${msg(northwind)}/picks`, { questions: [{ key: question.key, revision: 0, answer }] });
+    await windowPost(input.url, `/api/inbox/messages/${msg(northwind)}/decision`, { key: question.key, recording: true, draft: { text: 'Pin the CDN cache key to the build id for every deploy', reason: null } });
+    await windowPost(input.url, `/api/inbox/messages/${msg(northwind)}/reply`, { idempotency_key: 'k-northwind-pin', questions: [{ key: question.key, revision: 1 }] });
+  }
   await pause();
-  const japanese = await opencode.send({ project_path: projects.japanese, subject: 'デプロイ後の決済エラーの調査（deploy 2026-10-12）', thread: 'deploy', body: '昨夜の deploy の後、決済APIのタイムアウトが3倍に増えました。原因は接続プールの上限です。修正版を用意しました。' });
+  const japanese =await opencode.send({ project_path: projects.japanese, subject: 'デプロイ後の決済エラーの調査（deploy 2026-10-12）', thread: 'deploy', body: '昨夜の deploy の後、決済APIのタイムアウトが3倍に増えました。原因は接続プールの上限です。修正版を用意しました。' });
   await pause();
   const ranking = await pi.send({ project_path: projects.workspaces, subject: 'Search ranking: current-workspace boost', thread: 'search', body: `Should hits from the workspace you are in rank above others, or only win ties?${ask('How strong is the current-workspace boost?', ['Wins ties only', 'One tier', 'A filter'])}` });
   await personReply(input.url, msg(ranking), 'Keep the boost small, never a filter. Ties only.');

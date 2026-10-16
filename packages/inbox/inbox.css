@@ -2192,6 +2192,25 @@ dialog.ib-sp::backdrop { background: oklch(0 0 0 / 0.45); }
 /* Each user-written part of a composed line truncates by itself, so a right-to-left part loses its end, not its start. */
 .ib-sp-s bdi { display: inline-block; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .ib-sp-p .ib-sp-m, .ib-sp-s .ib-sp-m { font-weight: 650; color: var(--foreground); }
+/* A result that belongs to a thread names it (ThreadLine): what it is · the thread (a mark, the name chip,
+   the subject) · project · time, on one line. The subject gives way first, then the chip, then the project;
+   the lead and the time keep their place. Every part cuts at its own end (a right-to-left part included). */
+.ib-sp-s.ib-sp-tl { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ib-sp-tl > *, .ib-sp-tl .ib-sp-th > bdi { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ib-sp-tl bdi { max-width: none; }
+.ib-sp-tl .ib-sp-dot { flex: none; overflow: visible; }
+.ib-sp-tl .ib-sp-lead { flex: none; max-width: 28%; }
+.ib-sp-tl .ib-sp-lead > bdi { display: inline; }
+.ib-sp-tl .ib-sp-th { flex: 0 1000 auto; min-width: min(32%, 18em); display: flex; align-items: center; gap: 4px; color: color-mix(in oklch, var(--foreground) 72%, var(--muted-foreground)); }
+.pn-inbox .ib-sp-tl svg.ib-ic.ib-sp-thi { width: 12px; height: 12px; flex: none; color: var(--muted-foreground); }
+.ib-sp-tl .ib-sp-th > bdi { display: block; }
+.ib-sp-tl .ib-sp-tn { flex: 0 1 auto; min-width: 3em; max-width: 40%; font-family: var(--font-mono); font-size: 0.92em; line-height: 1.3; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.ib-sp-tl .ib-sp-tn:last-child { max-width: none; }
+/* Arabic, Hebrew: the monospace face has no joined letter forms; the chip keeps the row's face. */
+.ib-sp-tl .ib-sp-tn:dir(rtl) { font-family: inherit; font-size: 1em; }
+.ib-sp-tl .ib-sp-ts { flex: 0 100 auto; min-width: 3em; }
+.ib-sp-tl .ib-sp-pj { display: block; flex: 0 1 auto; min-width: 2em; max-width: 26%; }
+.ib-sp-tl .ib-sp-at { flex: none; }
 .ib-sp-snip { color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground)); }
 .ib-sp-chip { flex: none; border-radius: 4px; background: var(--muted); color: var(--muted-foreground); font-size: 11px; padding: 2px 6px; white-space: nowrap; }
 :root.light .ib-sp-chip { background: color-mix(in oklch, var(--muted) 85%, var(--border)); }
@@ -2237,6 +2256,8 @@ dialog.ib-sp::backdrop { background: oklch(0 0 0 / 0.45); }
   dialog.ib-sp[data-phone] .ib-sp-row { min-height: 56px; padding: 8px 8px; }
   dialog.ib-sp[data-phone] .ib-sp-p { font-size: 15px; }
   dialog.ib-sp[data-phone] .ib-sp-s { font-size: 12.5px; }
+  /* A phone keeps more of the thread: the project gives way sooner. */
+  dialog.ib-sp[data-phone] .ib-sp-tl .ib-sp-pj { max-width: 18%; }
   dialog.ib-sp[data-phone] .ib-sp-menu { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto; max-width: none; max-height: 60vh; padding: 6px; border-radius: 12px; }
   dialog.ib-sp[data-phone] .ib-sp-mi { height: 44px; font-size: 15px; }
 }

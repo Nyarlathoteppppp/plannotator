@@ -337,6 +337,42 @@ test('filters: a chip menu by keyboard, Escape closes the menu before the palett
   await expect(page.locator('.ib-side .ib-sp-entry')).toBeFocused();
 });
 
+test('a message and a decision recorded from an answer name their thread; every such row keeps its project and time', async () => {
+  await openFromSidebar(page);
+  await input(page).fill('retry budget');
+  await settled(page);
+  const budget = palette(page).locator(`[data-result="message"][data-result-id="${world.retryBudget}"]`);
+  // The subject starts with the thread's name ("retry"), so no chip, as in the list.
+  await expect(budget.locator('[data-result-thread-subject]')).toHaveText('Retry storm on the relay after a deploy');
+  await expect(budget.locator('[data-result-thread-name]')).toHaveCount(0);
+  await input(page).fill('CDN cache key');
+  await settled(page);
+  for (const kind of ['message', 'decision']) {
+    const row = palette(page).locator(`[data-result="${kind}"]`).first();
+    await expect(row.locator('[data-result-thread-name]')).toHaveText('nightly-deploy-investigation-for-the-customer-portal');
+    await expect(row.locator('[data-result-thread-subject]')).toHaveAttribute('title', /^Investigate why the nightly deploy/);
+  }
+  await shot(page, '09a-thread-on-row');
+  // Every part of the second line stays inside its row: the time is drawn whole, at desktop and phone widths.
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const q of ['deploy', 'CDN cache key', 'spike']) {
+      await input(page).fill(q);
+      await settled(page);
+      const bad = await palette(page).evaluate((dialog) =>
+        [...dialog.querySelectorAll<HTMLElement>('.ib-sp-tl')].filter((line) => {
+          const at = line.querySelector('.ib-sp-at') ?? line.lastElementChild!;
+          return line.scrollWidth > line.clientWidth + 1 || at.getBoundingClientRect().right > line.getBoundingClientRect().right + 1;
+        }).length,
+      );
+      expect(bad, `${q} at ${width}px`).toBe(0);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.keyboard.press('Escape');
+  await expect(palette(page)).toBeHidden();
+});
+
 test('long, right-to-left and CJK text stays inside the palette', async () => {
   await openFromSidebar(page);
   await input(page).fill('deploy');

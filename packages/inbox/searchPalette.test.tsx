@@ -448,3 +448,57 @@ test.skipIf(!hasDom)("compose's Actions: below real results unless the words nam
   await waitFor(() => host!.querySelector('[data-search-indexing]') !== null);
   expect(host!.querySelector('[data-compose-action="new"]')).not.toBeNull();
 });
+
+test.skipIf(!hasDom)('a result in a thread names its thread: the name chip and the subject, not repeated, whole in the DOM', async () => {
+  const at = '2026-10-09T14:03:00Z';
+  const where = { project, section: 'quiet' as const, archived: false, at };
+  const longSubject = 'Investigate why the nightly deploy of the customer-portal-frontend fails only on the second retry when the CDN cache is warm';
+  const rows: InboxSearchRow[] = [
+    // A named thread: the chip and the subject.
+    { type: 'message', id: 'msg_a', thread_id: 'msg_t1', ...where, author: { kind: 'agent', name: 'Claude Code' }, title: longSubject, thread_name: 'nightly-deploy', snippet: { text: 'The nightly deploy fails on the second retry', marks: [] }, question: null },
+    // The subject is the message's own words (drawn from its question): only the chip is left.
+    { type: 'message', id: 'msg_b', thread_id: 'msg_t2', ...where, author: { kind: 'me', name: 'You' }, title: 'Keep the rate limit at 20 a minute?', thread_name: 'relay', snippet: { text: 'Keep the rate limit at 20 a minute?', marks: [] }, question: { key: 'q-1', replaced: false } },
+    // The same, with no name: nothing to add.
+    { type: 'message', id: 'msg_c', thread_id: 'msg_t3', ...where, author: { kind: 'agent', name: 'Pi' }, title: 'Schema migration for the comments table', thread_name: null, snippet: { text: '…Schema migration for the comments table…', marks: [] }, question: null },
+    // The subject starts with the name: the list draws no chip, nor does search.
+    { type: 'file', id: 'att_1', thread_id: 'msg_t4', message_id: 'msg_t4', ...where, name: 'retry-policy.md', name_marks: [], folder: 'docs', kind: 'md', title: 'Retry storm on the relay after a deploy', thread_name: 'retry' },
+  ];
+  const decisions: InboxSearchRow[] = [
+    { type: 'decision', id: 'dec_1', ...where, text: 'Pin the CDN cache key to the build id', text_marks: [], state: 'current', from: 'me', thread_id: 'msg_t1', title: longSubject, thread_name: 'nightly-deploy' },
+    // An agent's record_decision: no thread.
+    { type: 'decision', id: 'dec_2', ...where, text: 'Deploy the relay by hand', text_marks: [], state: 'current', from: 'agent', thread_id: null, title: null, thread_name: null },
+  ];
+  respond = async (call) =>
+    call.url.searchParams.get('q')
+      ? answer({ q: 'x', terms: ['x'], totals: totals({ messages: 3, files: 1, decisions: 2 }), groups: { messages: rows.slice(0, 3), files: rows.slice(3), decisions }, recent: null })
+      : answer({});
+  await render();
+  await type('x');
+  await waitFor(() => options().length === 6);
+  const row = (id: string) => host!.querySelector<HTMLElement>(`[data-result-id="${id}"]`)!;
+  const thread = (id: string) => row(id).querySelector<HTMLElement>('[data-result-thread]');
+  const name = (id: string) => row(id).querySelector('[data-result-thread-name]');
+  const subject = (id: string) => row(id).querySelector('[data-result-thread-subject]');
+
+  // The whole subject and name are in the DOM (cut only by CSS), with titles and dir="auto".
+  expect(name('msg_a')!.textContent).toBe('nightly-deploy');
+  expect(subject('msg_a')!.textContent).toBe(longSubject);
+  expect(subject('msg_a')!.getAttribute('title')).toBe(longSubject);
+  expect(subject('msg_a')!.getAttribute('dir')).toBe('auto');
+  // The option's name says it is the thread, and the project and time still follow.
+  expect(row('msg_a').textContent).toContain(`in thread nightly-deploy: ${longSubject}`);
+  expect(row('msg_a').textContent).toMatch(/Claude Code·.*in thread.*·plannotator·/);
+  // A repeated subject is left out; the chip stays when there is one.
+  expect(name('msg_b')!.textContent).toBe('relay');
+  expect(subject('msg_b')).toBeNull();
+  expect(thread('msg_c')).toBeNull();
+  expect(row('msg_c').textContent).toContain('plannotator');
+  // The list's chip rule: no chip when the subject starts with the name.
+  expect(name('att_1')).toBeNull();
+  expect(subject('att_1')!.textContent).toBe('Retry storm on the relay after a deploy');
+  // A decision from an answer names its thread; one an agent recorded does not.
+  expect(name('dec_1')!.textContent).toBe('nightly-deploy');
+  expect(subject('dec_1')!.textContent).toBe(longSubject);
+  expect(thread('dec_2')).toBeNull();
+  expect(row('dec_2').textContent).toContain('Settled');
+});

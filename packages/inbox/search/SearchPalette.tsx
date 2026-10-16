@@ -33,6 +33,7 @@ import {
   markedRuns,
   moreLabel,
   resultTarget,
+  rowThread,
   scopeWords,
   searchTime,
   searchGroups,
@@ -40,6 +41,7 @@ import {
   type SearchFilters,
   type SearchGroupView,
   type SearchOption,
+  type RowThread,
 } from './model';
 
 /** How long typing settles before a query goes out. */
@@ -129,6 +131,59 @@ function Secondary({ parts }: { parts: readonly (ReactNode | null | false)[] }) 
   );
 }
 
+/**
+ * The second line of a result that belongs to a thread (a message, a file or
+ * guided review, a decision recorded from an answer): what it is, then the
+ * thread it is in (a thread mark, the name chip as the list shows it, the
+ * subject), then the project and the time. One line: the subject gives way
+ * first, then the chip, then the project; the lead and the time keep their
+ * place. Each user-written part is its own `<bdi dir="auto">`, cut with "…" at
+ * its own end, with its whole text in `title` (and in the DOM, so the
+ * option's name holds it).
+ */
+function ThreadLine({ lead, thread, project, at }: { lead: ReactNode; thread: RowThread | null; project: string; at: string | null }) {
+  const dot = (
+    <span className="ib-sp-dot" aria-hidden="true">
+      ·
+    </span>
+  );
+  return (
+    <span className="ib-sp-s ib-sp-tl">
+      <span className="ib-sp-lead">{lead}</span>
+      {thread && (
+        <>
+          {dot}
+          <span className="ib-sp-th" data-result-thread="">
+            <Icon name="comment" className="ib-sp-thi" />
+            <span className="ib-sr">in thread </span>
+            {thread.name && (
+              <bdi className="ib-sp-tn" dir="auto" title={thread.name} data-result-thread-name="">
+                {thread.name}
+              </bdi>
+            )}
+            {thread.name && thread.subject && <span className="ib-sr">: </span>}
+            {thread.subject && (
+              <bdi className="ib-sp-ts" dir="auto" title={thread.subject} data-result-thread-subject="">
+                {thread.subject}
+              </bdi>
+            )}
+          </span>
+        </>
+      )}
+      {dot}
+      <bdi className="ib-sp-pj" dir="auto" title={project}>
+        {project}
+      </bdi>
+      {at && (
+        <>
+          {dot}
+          <span className="ib-sp-at">{at}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
 function RowBody({ row, phone, projectName }: { row: InboxSearchRow; phone: boolean; projectName: string }) {
   const project = <bdi title={projectName}>{projectName}</bdi>;
   switch (row.type) {
@@ -153,7 +208,7 @@ function RowBody({ row, phone, projectName }: { row: InboxSearchRow; phone: bool
             <span className="ib-sp-p ib-sp-snip" dir="auto" title={row.snippet.text}>
               <Marked text={row.snippet.text} marks={row.snippet.marks} />
             </span>
-            <Secondary parts={[row.author.kind === 'me' ? 'You' : row.author.name, <bdi title={row.title}>{row.title}</bdi>, project, searchTime(row.at)]} />
+            <ThreadLine lead={row.author.kind === 'me' ? 'You' : <bdi dir="auto">{row.author.name}</bdi>} thread={rowThread(row)} project={projectName} at={searchTime(row.at)} />
           </span>
           {row.question && <span className="ib-sp-chip">Question</span>}
           {row.question?.replaced && <span className="ib-sp-chip">Replaced</span>}
@@ -169,7 +224,7 @@ function RowBody({ row, phone, projectName }: { row: InboxSearchRow; phone: bool
             <span className="ib-sp-p" dir="auto" title={row.name}>
               <Marked text={cut.text} marks={cut.marks} />
             </span>
-            <Secondary parts={[<bdi>{row.type === 'guide' ? 'Guided review' : row.folder ? `${row.folder}/` : 'File'}</bdi>, <bdi title={row.title}>{row.title}</bdi>, project]} />
+            <ThreadLine lead={<bdi dir="auto">{row.type === 'guide' ? 'Guided review' : row.folder ? `${row.folder}/` : 'File'}</bdi>} thread={rowThread(row)} project={projectName} at={null} />
           </span>
           <span className="ib-sp-chip ib-sp-kind">{row.kind}</span>
           {row.archived && <span className="ib-sp-chip">Archived</span>}
@@ -183,7 +238,7 @@ function RowBody({ row, phone, projectName }: { row: InboxSearchRow; phone: bool
             <span className="ib-sp-p" dir="auto" title={row.text}>
               <Marked text={row.text} marks={row.text_marks} />
             </span>
-            <Secondary parts={[row.state === 'current' ? 'Settled' : row.state === 'replaced' ? 'Replaced' : 'Retired', project, searchTime(row.at)]} />
+            <ThreadLine lead={row.state === 'current' ? 'Settled' : row.state === 'replaced' ? 'Replaced' : 'Retired'} thread={rowThread(row)} project={projectName} at={searchTime(row.at)} />
           </span>
           {row.state !== 'current' && <span className="ib-sp-chip">{row.state === 'replaced' ? 'Replaced' : 'Retired'}</span>}
         </>

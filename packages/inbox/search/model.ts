@@ -15,6 +15,7 @@ import {
   type InboxSearchThreadRow,
 } from '@plannotator/core/inbox-search';
 import { INBOX_SECTIONS, type InboxSectionId } from '@plannotator/core/inbox-types';
+import { threadChipName } from '../threadChip';
 
 export const GROUP_LABELS: Readonly<Record<InboxSearchGroupId, { heading: string; noun: string }>> = {
   threads: { heading: 'Threads', noun: 'threads' },
@@ -182,4 +183,44 @@ export function markedRuns(text: string, marks: readonly [number, number][]): { 
   }
   if (at < text.length) out.push({ text: text.slice(at), mark: false });
   return out;
+}
+
+/** Text as compared for "the row already shows it": a cut's "…" dropped, whitespace as one space, case folded. */
+const sameText = (text: string): string =>
+  text
+    .replace(/^\s*…|…\s*$/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .toLocaleLowerCase();
+
+/** The shortest first line that counts as showing the thread's subject when it is a piece of it (a word or two is not). */
+const SHOWN_MIN = 12;
+
+/** The thread a result belongs to, as its row names it. */
+export interface RowThread {
+  /** The thread's subject, or null when the row's first line already shows it. */
+  subject: string | null;
+  /** The thread's name as a chip, or null (unnamed, or the subject starts with it). */
+  name: string | null;
+}
+
+/**
+ * The thread a result belongs to, as its row names it: the subject, and the
+ * thread's name as a chip as the list shows it (`threadChipName`). The
+ * subject is left out when the row's first line already shows it: a message
+ * whose words are the subject (a subject drawn from the message's first line
+ * or its question), a decision or file worded the same. Null for a thread or
+ * project row, a decision recorded with no thread (or whose thread is gone),
+ * and when there is nothing left to say.
+ */
+export function rowThread(row: InboxSearchRow): RowThread | null {
+  if (row.type === 'thread' || row.type === 'project') return null;
+  const subject = row.title ?? null;
+  if (!subject) return null;
+  const name = threadChipName(row.thread_name, subject);
+  const first = sameText(row.type === 'message' ? row.snippet.text : row.type === 'decision' ? row.text : row.name);
+  const wanted = sameText(subject);
+  const shown = wanted.length > 0 && (first.includes(wanted) || (first.length >= SHOWN_MIN && wanted.includes(first)));
+  if (shown && !name) return null;
+  return { subject: shown ? null : subject, name };
 }

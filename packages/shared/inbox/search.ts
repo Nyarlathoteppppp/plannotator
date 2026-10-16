@@ -1128,6 +1128,7 @@ export class InboxSearchIndex {
           ...where,
           author: message.author.kind === "agent" ? { kind: "agent", name: inboxAgentName(message.author) } : { kind: "me", name: "You" },
           title: facts.subject || "(no subject)",
+          thread_name: facts.threadName,
           snippet: inboxSearchSnippet(best.text, inboxSearchRanges(best.text, terms)),
           question: best.question,
           at: message.created_at,
@@ -1148,6 +1149,7 @@ export class InboxSearchIndex {
           folder: fileFolder(hit.attachment.path),
           kind: fileKind(hit.attachment.kind, name),
           title: facts.subject || "(no subject)",
+          thread_name: facts.threadName,
           at: hit.message.created_at,
         };
       }
@@ -1166,6 +1168,7 @@ export class InboxSearchIndex {
           folder: null,
           kind: "guide",
           title: facts.subject || "(no subject)",
+          thread_name: facts.threadName,
           at: message.created_at,
         };
       }
@@ -1181,6 +1184,9 @@ export class InboxSearchIndex {
           text_marks: toMarks(inboxSearchRanges(decision.text, terms)),
           state: decision.state,
           from: decision.source.kind === "agent" ? "agent" : "me",
+          thread_id: facts ? doc.threadId : null,
+          title: facts ? facts.subject || "(no subject)" : null,
+          thread_name: facts ? facts.threadName : null,
           at: decision.changed_at ?? decision.created_at,
         };
       }
