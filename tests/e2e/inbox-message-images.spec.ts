@@ -81,15 +81,6 @@ test('an agent message shows images from its project and from outside it; the pe
       { ref: '.walkthrough/shots/not-yet.png', reason: 'does not exist yet; it will show if it is written there later', not_yet: true },
     ]);
 
-    // The person replies naming the same outside file, and one of the project.
-    const replied = await fetch(`${url}/api/inbox/messages/${id}/reply`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ idempotency_key: 'e2e-person-image', words: `Compare ![mine outside](${join(root, 'src', 'outside.png')}) with ![mine inside](.walkthrough/shots/after.png)` }),
-    });
-    expect(replied.status).toBe(200);
-    const replyId = ((await replied.json()) as { reply: { id: string } }).reply.id;
-
     // An agent working in the home folder itself.
     const atHome = await agent.send({ project_path: root, subject: 'From home', body: '![home hidden](.cache/thumb.png)' });
     expect(atHome.images_not_shown).toEqual([{ ref: '.cache/thumb.png', reason: 'in a hidden folder, or a hidden or .env file' }]);
@@ -109,6 +100,16 @@ test('an agent message shows images from its project and from outside it; the pe
     await expect(outside).toHaveAttribute('src', `/api/inbox/messages/${id}/image?path=${encodeURIComponent('../outside.png')}`);
     await expectLoaded(outside);
 
+    // The person replies naming the same outside file, and one of the project.
+    const replied = await fetch(new URL(`/api/inbox/messages/${id}/reply`, url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ idempotency_key: 'e2e-person-image', words: `Compare ![mine outside](${join(root, 'src', 'outside.png')}) with ![mine inside](.walkthrough/shots/after.png)` }),
+    });
+    expect(replied.status).toBe(200);
+    const replyId = ((await replied.json()) as { reply: { id: string } }).reply.id;
+    // The reply is now the thread's last message (the agent's folds behind it): read it fresh.
+    await page.reload();
     // The person's reply: the project's image loads, the outside one does not.
     const reply = page.locator(`[data-message-id="${replyId}"]`);
     await expectLoaded(reply.locator('img[alt="mine inside"]'));
