@@ -66,7 +66,7 @@ test('an image in a message is named by its path and the message; the same path 
 test('an image in the person\'s own message speaks as the person: "image in my … message"', () => {
   const mine = inline('att_m', 'msg_mine', '2026-10-15T15:22:05.000Z');
   const text = attachmentFeedback([comment('c1', mine, 'Like this.', 'msg_mine')], [mine], new Map(), '/work/shop', { personMessageIds: new Set(['msg_mine']) });
-  expect(text).toMatch(/## design\/b\.png \(image in my \d{1,2}:\d{2} [AP]M message\)/);
+  expect(text).toMatch(/## design\/b\.png \(image in my (?:\w{3} \d+, )?\d{1,2}:\d{2} [AP]M message\)/);
   expect(text).not.toContain('image in your');
 });
 
