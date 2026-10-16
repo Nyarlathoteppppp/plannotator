@@ -19,14 +19,14 @@ import { PHONE_QUERY } from './phone';
 const hasDom = typeof document !== 'undefined';
 const { InboxList, WIDE_ROWS_MIN_LIST_WIDTH } = (hasDom ? await import('./components/InboxList') : {}) as typeof import('./components/InboxList');
 const { SidebarProvider } = (hasDom ? await import('./shell/sidebar') : {}) as typeof import('./shell/sidebar');
-const { LIST_COLUMN_MIN, READING_PANE_MIN, LIST_COLUMN_WIDTH_KEY } = (hasDom ? await import('./shell/ListColumnEdge') : {}) as typeof import('./shell/ListColumnEdge');
+const { LIST_COLUMN_MIN, READING_PANE_RESERVE, LIST_COLUMN_WIDTH_KEY } = (hasDom ? await import('./shell/ListColumnEdge') : {}) as typeof import('./shell/ListColumnEdge');
 const { setStorageBackend, resetStorageBackend } = await import('@plannotator/ui/utils/storage');
 
 // The width persists through Plannotator's storage (cookies in the app); a map stands in for them here.
 const stored = new Map<string, string>();
 
 // The room `.ib-main` reports: happy-dom lays nothing out.
-const ROOM = 1400;
+const ROOM = 1424;
 
 function row(id: string): InboxListRow {
   return {
@@ -157,7 +157,7 @@ function press(sep: HTMLElement, key: string) {
 }
 
 const column = (el: HTMLElement) => el.querySelector<HTMLElement>('.ib-listcol')!;
-const max = () => ROOM - READING_PANE_MIN;
+const max = () => ROOM - READING_PANE_RESERVE;
 
 describe.if(hasDom)('the list column beside an open thread', () => {
   test('announces its range: today’s width is the floor, the thread pane keeps its minimum', () => {
@@ -176,13 +176,13 @@ describe.if(hasDom)('the list column beside an open thread', () => {
 
   test('the range is measured from the column’s room on mount, with no resize event', () => {
     // The window is narrower than the room here, so a window-based max would differ.
-    expect(window.innerWidth - READING_PANE_MIN).not.toBe(max());
+    expect(window.innerWidth - READING_PANE_RESERVE).not.toBe(max());
     const el = render(true);
     expect(separator(el).getAttribute('aria-valuemax')).toBe(String(max()));
   });
 
   test('no separator when the window leaves no room to widen into', () => {
-    room = LIST_COLUMN_MIN + READING_PANE_MIN;
+    room = LIST_COLUMN_MIN + READING_PANE_RESERVE;
     const el = render(true);
     expect(el.querySelector('[role="separator"]')).toBeNull();
     expect(column(el).classList.contains('ib-resizable')).toBe(true);
