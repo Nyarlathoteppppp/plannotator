@@ -172,6 +172,10 @@ test('compose: a pasted screenshot attaches with a dated name and rides the Send
   // Text alone: the browser's own paste, never prevented.
   expect(await paste(page, { text: 'plain words' })).toBe(false);
   await expect(dialog.locator('[data-compose-file]')).toHaveCount(0);
+  // A spreadsheet cell: its text plus the picture of it, a file named image.png. The text is the paste.
+  expect(await paste(page, { png: picture, text: 'Q3\t1,204\t+8%' })).toBe(false);
+  await page.waitForTimeout(300);
+  await expect(dialog.locator('[data-compose-file]')).toHaveCount(0);
   // A screenshot: the window takes it.
   expect(await paste(page, { png: picture })).toBe(true);
   const tile = dialog.locator('[data-compose-file="done"]');
@@ -218,7 +222,7 @@ test('the reply box: two pasted images (one still uploading), Send carries both 
   await shot(page, '02-reply-two-pasted-one-uploading');
   // Send while it uploads: nothing goes yet.
   await pane.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(pane.locator('.ib-error')).toHaveText('Wait for the files to finish uploading.');
+  await expect(pane.locator('.ib-error')).toContainText('Wait for the files to finish uploading');
   release();
   await expect(box.locator('[data-compose-file="done"]')).toHaveCount(2);
   await page.unroute('**/api/inbox/uploads?**');

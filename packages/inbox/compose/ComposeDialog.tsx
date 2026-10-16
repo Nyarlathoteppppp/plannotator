@@ -19,7 +19,7 @@ import { inboxId, type InboxDraftTo } from '@plannotator/core/inbox-types';
 import { InboxApiError, inboxApi, type DraftView } from '../api';
 import { whenTime } from '../format';
 import { HostMark, Icon } from '../icons';
-import { ComposeFileTiles, useComposeFiles } from './ComposeFiles';
+import { ComposeFileTiles, attachedAnnouncement, useComposeFiles } from './ComposeFiles';
 import { ToPicker } from './ToPicker';
 import { useComposeSessions } from './useComposeSessions';
 import { InboxComposerField } from '../components/ComposerField';
@@ -82,7 +82,14 @@ export function ComposeDialog(props: ComposeDialogProps) {
   const [draft, setDraft] = useState<DraftView | null>(request.draft ?? null);
   const [body, setBody] = useState(request.draft?.body ?? '');
   const [chosen, setChosen] = useState<string | null>(request.draft ? (request.draft.to?.session ?? null) : (request.session ?? null));
-  const files = useComposeFiles(request.draft?.files ?? []);
+  // A paste is said in the dialog's own polite region (the window's is outside the modal dialog).
+  const [pasteSaid, setPasteSaid] = useState('');
+  const files = useComposeFiles(request.draft?.files ?? [], {
+    onPasted: (names) => {
+      setPasteSaid('');
+      setTimeout(() => setPasteSaid(attachedAnnouncement(names)), 30);
+    },
+  });
   const { model, load } = useComposeSessions(true);
   const projects = model?.projects ?? [];
   const target = findTarget(projects, chosen);
@@ -580,6 +587,9 @@ export function ComposeDialog(props: ComposeDialogProps) {
           )}
         </div>
       )}
+      <div className="ib-sr" aria-live="polite" data-compose-paste-live="">
+        {pasteSaid}
+      </div>
       {dropping && (
         <div className="ib-cp-drop" aria-hidden="true">
           <Icon name="clip" size={20} />

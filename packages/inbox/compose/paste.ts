@@ -54,9 +54,15 @@ function extensionOf(file: Pick<File, 'name' | 'type'>): string {
  * else `pasted-image-<stamp>.<ext>` (`pasted-file-…` for anything else), with
  * `-2`, `-3` added when the name is already taken in this message.
  */
+/** A name nobody chose: what a browser or the system gives a clipboard picture (or none). */
+export function isGenericPasteName(name: string | undefined | null): boolean {
+  const own = (name ?? '').trim();
+  return own === '' || GENERIC_NAME.test(own);
+}
+
 export function pastedFileName(file: Pick<File, 'name' | 'type'>, at: Date, taken: ReadonlySet<string>): string {
   const own = (file.name ?? '').trim();
-  if (own && !GENERIC_NAME.test(own)) return own;
+  if (!isGenericPasteName(own)) return own;
   const kind = (file.type ?? '').startsWith('image/') ? 'image' : 'file';
   const stem = `pasted-${kind}-${pasteStamp(at)}`;
   const ext = extensionOf(file);
@@ -78,12 +84,32 @@ export function clipboardFiles(data: Pick<DataTransfer, 'files' | 'items'> | nul
   return Array.from(data.files ?? []);
 }
 
+/** The clipboard's plain text, read synchronously ('' when it has none or cannot say). */
+function plainText(data: Partial<Pick<DataTransfer, 'getData'>> | null): string {
+  try {
+    return typeof data?.getData === 'function' ? data.getData('text/plain') : '';
+  } catch {
+    return '';
+  }
+}
+
 /**
  * The files of one paste, named for attaching. Empty: let the browser paste
  * the text. `taken`: the names already attached to this message.
+ *
+ * Text with an unnamed picture is text: a cell copied in Excel, Numbers or
+ * Pages carries a rendering of itself, which Chromium hands over as a file
+ * named `image.png`. When the clipboard has plain text, only files with a
+ * real name attach (a file copied in Finder brings its name as the text); a
+ * screenshot or Chrome's "Copy image" carries no plain text and attaches.
  */
-export function pastedFiles(data: Pick<DataTransfer, 'files' | 'items'> | null, taken: Iterable<string>, at = new Date()): File[] {
-  const files = clipboardFiles(data);
+export function pastedFiles(
+  data: (Pick<DataTransfer, 'files' | 'items'> & Partial<Pick<DataTransfer, 'getData'>>) | null,
+  taken: Iterable<string>,
+  at = new Date(),
+): File[] {
+  let files = clipboardFiles(data);
+  if (files.length > 0 && plainText(data).trim() !== '') files = files.filter((file) => !isGenericPasteName(file.name));
   if (files.length === 0) return [];
   const names = new Set(taken);
   return files.map((file) => {

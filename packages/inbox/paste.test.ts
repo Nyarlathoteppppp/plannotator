@@ -7,11 +7,12 @@ import { clipboardFiles, clipboardHasText, pastedFileName, pastedFiles, pasteSta
 
 const at = new Date(2026, 9, 16, 9, 12, 40);
 const file = (name: string, type: string) => new File(['x'], name, { type });
-const data = (items: { kind: string; type: string; file?: File }[]) =>
+const data = (items: { kind: string; type: string; file?: File }[], text = '') =>
   ({
     items: items.map((item) => ({ kind: item.kind, type: item.type, getAsFile: () => item.file ?? null })),
     files: items.flatMap((item) => (item.file ? [item.file] : [])),
     types: items.map((item) => (item.kind === 'file' ? 'Files' : item.type)),
+    getData: (type: string) => (type === 'text/plain' ? text : ''),
   }) as unknown as DataTransfer;
 
 describe('a pasted file name', () => {
@@ -36,6 +37,19 @@ describe('a pasted file name', () => {
 });
 
 describe('what a paste carries', () => {
+  test('text with an unnamed picture (a cell copied in Excel, Numbers or Pages) attaches nothing; a named file beside its name attaches', () => {
+    const picture = { kind: 'file', type: 'image/png', file: file('image.png', 'image/png') };
+    const text = { kind: 'string', type: 'text/plain' };
+    expect(pastedFiles(data([text, picture], 'Q3\t1,204\t+8%'), [], at)).toEqual([]);
+    expect(pastedFiles(data([text, { ...picture, file: file('Pasted Graphic 2.png', 'image/png') }], 'Revenue'), [], at)).toEqual([]);
+    const fromFinder = file('chart.png', 'image/png');
+    expect(pastedFiles(data([text, { kind: 'file', type: 'image/png', file: fromFinder }], 'chart.png'), [], at)).toEqual([fromFinder]);
+    // A screenshot, and Chrome's "Copy image" (HTML, no plain text): no plain text, so the picture attaches.
+    expect(pastedFiles(data([picture]), [], at)).toHaveLength(1);
+    expect(pastedFiles(data([{ kind: 'string', type: 'text/html' }, picture], ''), [], at)).toHaveLength(1);
+    expect(pastedFiles(data([text, picture], '   '), [], at)).toHaveLength(1);
+  });
+
   test('text alone carries no files and has text: the browser pastes it', () => {
     const plain = data([{ kind: 'string', type: 'text/plain' }]);
     expect(clipboardFiles(plain)).toEqual([]);

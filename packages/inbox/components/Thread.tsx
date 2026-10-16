@@ -30,7 +30,7 @@ import { reportUnsentReply } from '../unsent';
 import { canToggleRead } from '../markRead';
 import { NewMessageButton, NewMessageComposer, NewMessagePopover, hostName, useLiveSessions, type NewMessageMode } from './NewMessage';
 import { SendToAnotherSession } from '../compose/SendToAnotherSession';
-import { ComposeFileTiles, useComposeFiles } from '../compose/ComposeFiles';
+import { ComposeFileTiles, attachedAnnouncement, useComposeFiles } from '../compose/ComposeFiles';
 import {
   AskerEndedNote,
   CLOSED_ROUTE,
@@ -699,7 +699,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
    * focused in a reply"): compose's tiles and upload path. They live with the
    * box: Cancel, Escape, a Send and another thread forget them.
    */
-  const replyFiles = useComposeFiles(NO_UPLOADS);
+  // A paste is said in the thread's polite live region ("Attached pasted-image-….png").
+  const replyFiles = useComposeFiles(NO_UPLOADS, { onPasted: (names) => announce(attachedAnnouncement(names)) });
   const replyUploads = replyFiles.uploaded.map((upload) => upload.upload_id);
   const closeBox = () => {
     setBox({ open: false, text: '' });
@@ -718,6 +719,13 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sendKeys = useRef<Map<string, string> | null>(null);
+  /**
+   * What the last Send that did not finish carried (words, pasted files,
+   * annotations). A retry with other contents takes a new key for the reply
+   * that carries them, so it is never answered as the earlier reply (which
+   * may have gone through) and silently dropped.
+   */
+  const sendContents = useRef<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<HTMLButtonElement>(null);
@@ -995,7 +1003,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   // sessions poll the Inbox can be known to have ended). It is the session
   // the Send actually reaches: the latest agent message's when words or
   // annotations ride on it, else the last message a pick or a skip answers.
-  const asking = askingSessionOf(thread, { skip: !keepOpen, carries: (box.open && box.text.trim() !== '') || records.length > 0 || replyFiles.files.length > 0 });
+  // Only finished uploads count: a tile still uploading or refused is not what Send carries.
+  const asking = askingSessionOf(thread, { skip: !keepOpen, carries: (box.open && box.text.trim() !== '') || records.length > 0 || replyUploads.length > 0 });
   const askerToWatch = asking && askerCanEnd(asking) ? asking.session : null;
   // New message (record 5.x): the project's live sessions, and what the button opened.
   const { model: live, load: loadLive } = useLiveSessions(thread.thread_id, askerToWatch);
@@ -1135,6 +1144,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
     setRoute(CLOSED_ROUTE);
     setSkipChoice('auto');
     sendKeys.current = null;
+    sendContents.current = null;
     revisions.current.clear();
   }, [thread.thread_id]);
 
@@ -1567,6 +1577,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       const skip = skipsUnanswered(skipChoice, sendAnswersAny(current) || sendAnswersAny(thread, pending));
       const pendingAnnotations = records;
       const uploads = box.open ? replyUploads : [];
+      // The tiles this Send carries: a file pasted while it is in flight stays for the next one.
+      const sentFiles = new Set(box.open ? replyFiles.files.filter((f) => f.state === 'done' && f.upload).map((f) => f.key) : []);
       const carries = words !== '' || pendingAnnotations.length > 0 || uploads.length > 0;
       // The latest agent message rides last only to carry the words, the
       // annotations and the pasted files; with none, a target with nothing to send is left out.
@@ -1577,6 +1589,10 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
         return;
       }
       if (!sendKeys.current) sendKeys.current = new Map(targets.map((t) => [t.message.id, crypto.randomUUID()]));
+      // A retry whose words, files or annotations changed: the reply carrying them is a new one.
+      const contents = JSON.stringify([words, uploads, pendingAnnotations.map((r) => [r.id, r.updated_at])]);
+      if (sendContents.current !== null && sendContents.current !== contents) sendKeys.current.set(targets.at(-1)!.message.id, crypto.randomUUID());
+      sendContents.current = contents;
       const notRecorded: { key: string; message: string }[] = [];
       // The words and the annotations ride the last reply, after its picks;
       // the skills they reference ride it too, as one block at its end
@@ -1603,9 +1619,13 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       }
       setRefused(notRecorded);
       sendKeys.current = null;
+      sendContents.current = null;
       setRoute(CLOSED_ROUTE);
       setSkipChoice('auto');
-      closeBox();
+      // Only the files this Send carried go; one pasted while it was in flight keeps the box open.
+      const later = replyFiles.current().some((f) => !sentFiles.has(f.key));
+      replyFiles.forget(sentFiles);
+      setBox({ open: later, text: '' });
       setFull(false);
       setFullView(false);
       await onChanged();

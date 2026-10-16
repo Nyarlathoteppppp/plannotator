@@ -4,15 +4,15 @@
  * (pasted into the reply box).
  *
  *   inbox/uploads/pending/<upl_id>.json   an upload not sent yet; a draft may name it
- *   inbox/uploads/<att_id>/<name>         a sent upload: a read-only hard link of its blob
+ *   inbox/uploads/<att_id>/<name>         a sent upload: a read-only copy of its blob
  *   inbox/blobs/<sha256>                  the bytes, in the store agents' files use
  *
  * Agents attach paths; the person uploads bytes. Both end as the same
  * `InboxAttachment` record, so the window's tiles, viewers, download route and
  * the phone door carry an upload unchanged. At send each upload becomes a
- * real file with its real name (a hard link of the blob, a copy where links
- * fail), so the agent can open it; that file never changes, so it never reads
- * as "changed since sent".
+ * real file with its real name (a copy of the blob, a clone where the
+ * filesystem has them, never a hard link), so the agent can open it; it is
+ * read-only, so it reads as the version sent.
  *
  * Rules: the name is a plain file name (no path separator, no control
  * character, at most 255 bytes) outside the dotenv family; the body is

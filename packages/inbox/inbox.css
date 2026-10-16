@@ -394,7 +394,7 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-cfield [data-skill-menu] { margin-bottom: 8px; }
 .ib-cfield [data-skill-human-only-notice] { padding: 0 12px 6px; margin-top: -2px; }
 /* Files pasted into the reply box: compose's tiles, inside the box above its chips. A tile never runs past
-   the box: at most 200 px wide in a row, the whole box on a narrow one (a 320 px phone). */
+   the box: at least 200 px wide in a row, the whole box when that is narrower (a 320 px phone). */
 .ib-rfiles { padding: 0 8px 4px; }
 .ib-rfiles .ib-cp-files { margin-top: 2px; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); }
 .ib-rfoot { display: flex; gap: 6px; padding: 6px 8px 8px; }
