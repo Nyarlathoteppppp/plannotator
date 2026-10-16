@@ -448,7 +448,7 @@ describe("the fixed address's routes", () => {
     const kinds = r.calls.map((c) => (c.args.some((a) => a.endsWith("npm-cli.js")) ? "npm" : isPrivileged(c) ? "privileged" : c.args.includes("alias") ? "alias" : c.command));
     expect(kinds).toEqual(["npm", "privileged", "alias"]);
     const privilegedCall = r.calls.find(isPrivileged)!;
-    expect(privilegedCall.args.join(" ")).toContain("'service' 'install' '--no-tls' '--port' '80'");
+    expect(privilegedCall.args.join(" ")).toContain(PLATFORM === "win32" ? "service install --no-tls --port 80" : "'service' 'install' '--no-tls' '--port' '80'");
     expect(privilegedCall.args.join(" ")).not.toContain("uninstall");
     const aliasCall = r.calls.find((c) => c.args.includes("alias"))!;
     expect(aliasCall.args.slice(1)).toEqual(["alias", "inbox.plannotator", String(listener)]);
