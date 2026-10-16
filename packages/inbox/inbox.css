@@ -380,7 +380,7 @@ button.ib-band:hover { background: var(--ib-hover); color: var(--foreground); }
 /* Where relative colours are there, the badge's words step toward black on a light card and white on a dark
    one rather than toward the text colour, so a palette's red or amber reads on its own tint. */
 @supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
-  .ib-badge.ib-b-stop { color: color-mix(in oklab, var(--destructive) 55%, var(--ib-card-ink)); }
+  .ib-badge.ib-b-stop { color: color-mix(in oklab, var(--destructive) 50%, var(--ib-card-ink)); }
   .ib-badge.ib-b-hold { color: color-mix(in oklab, var(--warning) 45%, var(--ib-card-ink)); }
 }
 /* The two-line row (beside a thread): the dot, the subject and the time; then, under the subject, the mark,
