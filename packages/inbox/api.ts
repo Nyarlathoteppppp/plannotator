@@ -37,6 +37,12 @@ export interface InboxNameState {
   reason: string | null;
   /** preparing: fetching portless; password: the OS prompt is up; installing: the password went in; starting: the proxy and the name; verifying: checking it. */
   step: 'preparing' | 'password' | 'installing' | 'starting' | 'verifying' | null;
+  /** Why it failed, for the dialog's words (null unless failed; absent from an older Inbox). */
+  failure?: 'port_taken' | 'cancelled' | 'timed_out' | 'other' | null;
+  /** What answered on port 80 when it is taken (its Server header). */
+  port_holder?: string | null;
+  /** The Inbox's OS: which prompt asks (Mac password, Windows prompt, polkit). */
+  platform?: string;
   listener_port: number | null;
   dialog_due: boolean;
   /** The prototype is switched on in the Inbox's environment; off, the window shows nothing. */

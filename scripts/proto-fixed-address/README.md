@@ -15,6 +15,7 @@ Plain HTTP on purpose. The proxy answers this computer only, and `http://*.local
 | Hidden `plannotator inbox --name on\|off\|status` | `apps/hook/server/inbox-command.ts` |
 | Dialog (third in the chain, after sound and agent note) and Settings → Devices row | `packages/inbox/components/FixedAddress.tsx`, `App.tsx`, `Settings.tsx` |
 | Unit and route tests (scripted runner; nothing real runs) | `packages/server/inbox-name.test.ts` |
+| The dialog (approved variant "Address bar", `.product/approved/inbox-fixed-address-dialog/`): DOM tests for every state, and a screenshot harness (scripted states; nothing privileged runs) | `packages/inbox/fixedAddressDialog.test.tsx`, `scripts/proto-fixed-address/dialog-shots.ts` |
 
 The prototype is inert unless the Inbox starts with `PLANNOTATOR_PROTO_FIXED_ADDRESS=1`. Without it, nothing looks up Node, opens a listener, spawns a process, or draws the row.
 

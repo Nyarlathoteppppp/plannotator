@@ -2291,3 +2291,98 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .pn-inbox .ib-att-more:hover, .pn-inbox .ib-att-more[data-popup-open] { background: var(--muted); color: var(--foreground); }
 @media (hover: none) { .pn-inbox .ib-att-more { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .pn-inbox .ib-att-more { transition: none; } }
+
+/* ───────── PROTOTYPE: the fixed-address dialog (components/FixedAddress.tsx) ─────────
+   Approved variant "Address bar" (.product/approved/inbox-fixed-address-dialog/): a roomier
+   dialog with the Now → After address panel kept on screen through every step. */
+.pn-inbox .ib-dlg.ib-fa-dlg, dialog.ib-dlg.ib-fa-dlg { width: min(560px, calc(100vw - 32px)); border-radius: 14px; }
+.ib-fa-dlg .ib-dlg-in { padding: 26px 28px 22px; font-size: 14px; }
+.ib-fa h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.012em; line-height: 1.3; text-wrap: balance; }
+.ib-fa h2:focus { outline: none; }
+.ib-fa-lead { margin: 8px 0 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.55; max-width: 60ch; text-wrap: pretty; }
+.ib-fa-lead b { color: var(--foreground); font-weight: 550; }
+.ib-fa-acts { display: flex; align-items: center; gap: 8px; margin-top: 24px; }
+.ib-fa-acts .ib-fa-left, .ib-fa-acts .ib-fa-note { margin-right: auto; }
+.ib-fa-note { font-size: 12.5px; color: var(--muted-foreground); }
+.pn-inbox .ib-fa-dlg .ib-btn { height: 34px; padding: 0 15px; }
+.ib-fa-credit { margin: 18px 0 0; font-size: 12.5px; color: var(--muted-foreground); }
+.pn-inbox .ib-fa-credit .ib-lnk { display: inline; margin: 0; font-size: inherit; }
+.ib-fa-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.ib-fa-facts { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 12px; }
+.ib-fa-facts li { display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start; font-size: 13.5px; line-height: 1.5; }
+.ib-fa-fi { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: color-mix(in oklch, var(--muted) 80%, transparent); color: var(--muted-foreground); }
+.ib-fa-facts b { display: block; font-weight: 600; color: var(--foreground); }
+.ib-fa-facts span { color: var(--muted-foreground); }
+
+.ib-fa-omni { margin-top: 20px; border-radius: 11px; border: 1px solid var(--border); background: color-mix(in oklch, var(--background) 70%, var(--popover)); padding: 14px 16px 15px; position: relative; overflow: hidden; }
+:root.light .ib-fa-omni { background: oklch(0.975 0.004 260); }
+.ib-fa-row { display: flex; align-items: center; gap: 10px; min-height: 26px; }
+.ib-fa-k { width: 46px; flex: none; font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted-foreground); }
+.ib-fa-v { font-family: var(--font-mono); letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ib-fa-sch { color: var(--muted-foreground); }
+.ib-fa-old .ib-fa-v { color: var(--muted-foreground); font-size: 13.5px; }
+.ib-fa-new .ib-fa-v { color: var(--foreground); font-weight: 500; font-size: 16px; }
+.ib-fa-host { color: var(--primary); }
+.ib-fa-div { height: 1px; margin: 10px 0 10px 56px; background: color-mix(in oklch, var(--border) 70%, transparent); }
+.ib-fa-badge { margin-left: auto; flex: none; display: inline-flex; align-items: center; color: var(--muted-foreground); }
+.pn-inbox .ib-fa-badge svg.ib-ic { width: 16px; height: 16px; }
+.ib-fa-badge.ib-fa-ok { color: var(--success); }
+.ib-fa-badge.ib-fa-warn { color: var(--warning, oklch(0.75 0.15 85)); }
+/* One motivated motion: the new address arrives under the old one once, so the change is seen. */
+.ib-fa-omni[data-intro] .ib-fa-new { animation: ib-fa-arrive 420ms cubic-bezier(0.23, 1, 0.32, 1) 280ms both; }
+.ib-fa-omni[data-intro] .ib-fa-div { animation: ib-fa-fade 300ms ease-out 200ms both; }
+@keyframes ib-fa-arrive { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes ib-fa-fade { from { opacity: 0; } to { opacity: 1; } }
+/* Work in progress rides on the address being made: an indeterminate line along the panel's foot. */
+.ib-fa-omni[data-busy]::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--primary), transparent); background-size: 40% 100%; background-repeat: no-repeat; animation: ib-fa-run 1.1s linear infinite; }
+@keyframes ib-fa-run { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+
+.ib-fa-spin { width: 15px; height: 15px; flex: none; border-radius: 50%; border: 2px solid color-mix(in oklch, var(--primary) 25%, transparent); border-top-color: var(--primary); animation: ib-fa-rot 0.8s linear infinite; }
+@keyframes ib-fa-rot { to { transform: rotate(360deg); } }
+
+.ib-fa-steps { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 10px; }
+.ib-fa-steps li { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--muted-foreground); }
+.ib-fa-steps li[data-s="done"] { color: var(--foreground); }
+.ib-fa-steps li[data-s="now"] { color: var(--foreground); font-weight: 550; }
+.ib-fa-dot { width: 18px; height: 18px; flex: none; display: grid; place-items: center; }
+.pn-inbox .ib-fa-dot svg.ib-ic { width: 16px; height: 16px; stroke: var(--success); stroke-width: 2; }
+.ib-fa-dot i { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in oklch, var(--muted-foreground) 45%, transparent); }
+.ib-fa-t { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+.ib-fa-status { display: flex; align-items: center; gap: 10px; margin-top: 18px; font-size: 14px; }
+
+.ib-fa-mac { margin-top: 18px; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; border: 1px dashed var(--border); }
+.ib-fa-mac-ic { width: 34px; height: 34px; flex: none; border-radius: 8px; display: grid; place-items: center; background: color-mix(in oklch, var(--muted) 85%, transparent); color: var(--muted-foreground); }
+.pn-inbox .ib-fa-mac-ic svg.ib-ic { width: 18px; height: 18px; }
+.ib-fa-mac-t { font-size: 13px; line-height: 1.45; min-width: 0; }
+.ib-fa-mac-t b { display: block; font-weight: 600; }
+.ib-fa-mac-t span { color: var(--muted-foreground); }
+
+.ib-fa-err { margin-top: 18px; display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; border: 1px solid color-mix(in oklch, var(--destructive) 38%, transparent); background: color-mix(in oklch, var(--destructive) 7%, transparent); font-size: 13.5px; line-height: 1.55; }
+.pn-inbox .ib-fa-err svg.ib-ic { width: 17px; height: 17px; margin-top: 2px; color: var(--destructive); }
+.ib-fa-err.ib-fa-calm { border-color: var(--border); background: transparent; }
+.pn-inbox .ib-fa-err.ib-fa-calm svg.ib-ic { color: var(--muted-foreground); }
+.ib-fa-err b { font-weight: 600; }
+.ib-fa-err p { margin: 0; overflow-wrap: anywhere; }
+.ib-fa-err p + p { margin-top: 6px; color: var(--muted-foreground); }
+
+/* A phone (phone.ts PHONE_QUERY): the footer stacks with 44 px targets, the address drops its scheme. */
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
+  .ib-fa-dlg .ib-dlg-in { padding: 22px 20px 18px; }
+  .ib-fa h2 { font-size: 18px; }
+  .ib-fa-acts { flex-direction: column-reverse; align-items: stretch; }
+  .ib-fa-acts .ib-fa-left, .ib-fa-acts .ib-fa-note { margin-right: 0; text-align: center; }
+  .pn-inbox .ib-fa-dlg .ib-btn { height: 44px; justify-content: center; }
+  .ib-fa-k { width: 40px; }
+  .ib-fa-div { margin-left: 50px; }
+  .ib-fa-v .ib-fa-sch { display: none; }
+  .ib-fa-new .ib-fa-v { font-size: 14.5px; }
+  /* The whole name, never cut: it wraps at a dot when the badge leaves too little room. */
+  .ib-fa-v { white-space: normal; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ib-fa-omni[data-intro] .ib-fa-new, .ib-fa-omni[data-intro] .ib-fa-div { animation: none; }
+  .ib-fa-spin { animation-duration: 2.4s; }
+  .ib-fa-omni[data-busy]::after { animation: none; background: color-mix(in oklch, var(--primary) 60%, transparent); }
+}

@@ -379,6 +379,18 @@ export type NameStatus = "unavailable" | "off" | "working" | "on" | "failed";
  * - `starting`: waiting for the proxy on port 80, then registering the name.
  * - `verifying`: checking the address answers this Inbox.
  */
+export type NameFailure = "port_taken" | "cancelled" | "timed_out" | "other";
+
+/** The program that answered on port 80, from readProxyState's detail (`it answered HTTP 200 as "nginx"`). */
+export function portHolder(detail: string): string | null {
+  return /as "([^"]{1,80})"/.exec(detail)?.[1] ?? null;
+}
+
+/** The OS prompt was cancelled (the same rules explainPrivilegedFailure words). */
+export function isCancelledPrompt(platform: NodeJS.Platform, code: number | null, stderr: string): boolean {
+  return explainPrivilegedFailure(platform, code, stderr).startsWith("You cancelled");
+}
+
 export type NameStep = "preparing" | "password" | "installing" | "starting" | "verifying";
 
 export interface InboxNameState {
@@ -387,6 +399,16 @@ export interface InboxNameState {
   host: string;
   /** unavailable: why; failed: what went wrong (and that nothing changed when so). */
   reason: string | null;
+  /**
+   * What kind of failure, for the window's words (null unless failed):
+   * `port_taken` (another program holds port 80; `port_holder` names it when it answered HTTP),
+   * `cancelled` (the person closed the OS prompt), `timed_out` (the prompt went unanswered), `other`.
+   */
+  failure: NameFailure | null;
+  /** What answered on port 80 (its Server header), when `failure` is `port_taken` and it said. */
+  port_holder: string | null;
+  /** The Inbox's OS, so the window names the right prompt (Mac password, Windows prompt, polkit). */
+  platform: NodeJS.Platform;
   step: NameStep | null;
   /** The name listener's loopback port while on. */
   listener_port: number | null;
@@ -605,6 +627,8 @@ export function createInboxName(options: InboxNameOptions): InboxName {
   let status: NameStatus = "off";
   let step: NameStep | null = null;
   let reason: string | null = null;
+  let failure: NameFailure | null = null;
+  let portHolderName: string | null = null;
   let verifiedAt: string | null = null;
   let probeDetail: string | null = null;
   let node: { node: string; version: string } | null = null;
@@ -779,9 +803,11 @@ export function createInboxName(options: InboxNameOptions): InboxName {
     return false;
   };
 
-  const fail = (message: string) => {
+  const fail = (message: string, kind: NameFailure = "other", holder: string | null = null) => {
     status = "failed";
     reason = message;
+    failure = kind;
+    portHolderName = holder;
     step = null;
   };
 
@@ -799,7 +825,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
     const before = await readState();
     const service = (options.existingService ?? (() => readExistingService(platform, cli)))();
     if (before.kind === "other") {
-      return fail(`Port ${INBOX_NAME_PROXY_PORT} is already used by another program on this computer (${before.detail}). The fixed address needs that port. Nothing changed; the Inbox stays at localhost.`);
+      return fail(`Port ${INBOX_NAME_PROXY_PORT} is already used by another program on this computer (${before.detail}). The fixed address needs that port. Nothing changed; the Inbox stays at localhost.`, "port_taken", portHolder(before.detail));
     }
     if ((before.kind === "https" || service?.https) && !service?.ours) {
       return fail("portless is already set up on this computer with HTTPS, by something other than Plannotator. Plannotator leaves it alone. Nothing changed; the Inbox stays at localhost.");
@@ -835,8 +861,11 @@ export function createInboxName(options: InboxNameOptions): InboxName {
         return fail(error instanceof Error ? error.message : String(error));
       }
       const result = await runPrivileged(line, marker);
-      if (result.timedOut) return fail("The password prompt timed out. Nothing changed.");
-      if (result.code !== 0) return fail(explainPrivilegedFailure(platform, result.code, result.stderr || result.stdout));
+      if (result.timedOut) return fail("The password prompt timed out. Nothing changed.", "timed_out");
+      if (result.code !== 0) {
+        const text = result.stderr || result.stdout;
+        return fail(explainPrivilegedFailure(platform, result.code, text), isCancelledPrompt(platform, result.code, text) ? "cancelled" : "other");
+      }
       step = "starting";
       let up = false;
       const waitBegan = Date.now();
@@ -851,7 +880,7 @@ export function createInboxName(options: InboxNameOptions): InboxName {
       note(up ? `the proxy answered on port ${INBOX_NAME_PROXY_PORT} after ${Date.now() - waitBegan} ms` : `the proxy did not answer within ${proxyWaitMs} ms`);
       if (!up) {
         const tail = serviceLogTail(stateDir);
-        if (/EADDRINUSE/i.test(tail)) return fail(`Port ${INBOX_NAME_PROXY_PORT} is used by another program, so portless's proxy could not start. The Inbox stays at localhost. (${tail})`);
+        if (/EADDRINUSE/i.test(tail)) return fail(`Port ${INBOX_NAME_PROXY_PORT} is used by another program, so portless's proxy could not start. The Inbox stays at localhost. (${tail})`, "port_taken");
         return fail(`portless was installed but its proxy did not answer on port ${INBOX_NAME_PROXY_PORT} within ${Math.round(proxyWaitMs / 1000)} s.${tail ? ` Its log: ${tail}` : ""} Run: portless doctor`);
       }
     }
@@ -877,6 +906,9 @@ export function createInboxName(options: InboxNameOptions): InboxName {
     url: INBOX_NAME_URL,
     host: INBOX_NAME_HOST,
     reason,
+    failure: status === "failed" ? failure : null,
+    port_holder: status === "failed" ? portHolderName : null,
+    platform,
     step,
     listener_port: listener ? (listener.port as number) : null,
     dialog_due: enabledHere && status === "off" && !readFile().dialog_shown,

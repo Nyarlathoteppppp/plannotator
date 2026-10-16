@@ -18,10 +18,12 @@ import {
   classifyPort80,
   explainPrivilegedFailure,
   INBOX_NAME_HOST,
+  isCancelledPrompt,
   isLoopbackAddress,
   launchctlShimLines,
   nodeMajor,
   npmInstallCommand,
+  portHolder,
   privilegedInstallCommand,
   readExistingService,
   readProxyState,
@@ -209,6 +211,15 @@ describe("the privileged command", () => {
     expect(aliasRemoveCommand("/n", "/c.js").args).toEqual(["/c.js", "alias", "--remove", "inbox.plannotator"]);
     expect(npmInstallCommand("/n", "/npm-cli.js", "/h").args).toContain("portless@0.15.8");
     for (const line of [aliasCommand("/n", "/c.js", 1), aliasRemoveCommand("/n", "/c.js"), npmInstallCommand("/n", "/m", "/h")]) expect(line.args).not.toContain("--force");
+  });
+
+  test("what answered on port 80, and which failures are a cancelled prompt", () => {
+    expect(portHolder('it answered HTTP 200 as "nginx/1.27"')).toBe("nginx/1.27");
+    expect(portHolder("it answered HTTP 404")).toBeNull();
+    expect(portHolder("something holds the port but did not answer HTTP (timeout)")).toBeNull();
+    expect(isCancelledPrompt("darwin", 1, "0:191: execution error: User canceled. (-128)")).toBe(true);
+    expect(isCancelledPrompt("win32", 1, "This command cannot be run due to the error: The operation was canceled by the user.")).toBe(true);
+    expect(isCancelledPrompt("darwin", 1, "launchctl: Bootstrap failed: 5: Input/output error")).toBe(false);
   });
 
   test("Node versions and failure messages", () => {
@@ -583,6 +594,8 @@ describe("the fixed address's routes", () => {
     expect(failed.reason).toContain("Port 80 is already used by another program");
     expect(failed.reason).toContain("nginx");
     expect(failed.reason).toContain("Nothing changed");
+    // The window's words: what kind of failure, and what answered.
+    expect(failed).toMatchObject({ failure: "port_taken", port_holder: "nginx", platform: PLATFORM });
     expect(r.calls).toEqual([]);
     expect(r.inbox.name.listenerPort()).toBeNull();
   });
@@ -629,6 +642,7 @@ describe("the fixed address's routes", () => {
     await post(r, "/api/inbox/name", { on: true, serverSession: r.inbox.serverSession });
     const failed = await waitFor("failed", () => (r.inbox.name.state().status === "failed" ? r.inbox.name.state() : null));
     expect(failed.reason).toBe(CANCELLED[1]!);
+    expect(failed).toMatchObject({ failure: "cancelled", port_holder: null });
     expect(r.calls.some((c) => c.args.includes("alias"))).toBe(false);
     const file = join(r.dataDir, "inbox", "name.json");
     expect(existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).on : false).toBe(false);
