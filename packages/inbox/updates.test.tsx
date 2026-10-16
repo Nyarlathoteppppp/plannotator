@@ -71,9 +71,10 @@ test.skipIf(!hasDom)('available: the filled Update button, named for the version
   let pressed = 0;
   const el = render(<UpdateButton update={update('available')} restarting={false} updated={null} onPress={() => pressed++} onWhatsNew={() => {}} />);
   const button = el.querySelector('.ib-upd-btn') as HTMLButtonElement;
-  expect(button.getAttribute('aria-label')).toBe('Update to Plannotator 0.28.12');
-  // A deliberate action label (approval inbox-whats-new-header): the sidebar's Update names its version.
+  // A deliberate action label (approval inbox-whats-new-header): the sidebar's Update names its version,
+  // and its accessible name contains those visible words (WCAG 2.5.3 Label in Name).
   expect(button.textContent).toBe('Update to 0.28.12');
+  expect(button.getAttribute('aria-label')).toBe('Update to 0.28.12');
   expect(button.disabled).toBe(false);
   expect(button.classList.contains('ib-outline')).toBe(false);
   expect(el.querySelector('#ib-upd-tip')?.textContent).toBe('Plannotator 0.28.12 is available');
@@ -91,6 +92,7 @@ test.skipIf(!hasDom)('updating and restarting are disabled; failed is the neutra
   expect(button().disabled).toBe(true);
   act(() => root!.render(<UpdateButton update={update('ready')} restarting={false} updated={null} onPress={() => {}} onWhatsNew={() => {}} />));
   expect(button().textContent).toBe('Update to 0.28.12');
+  expect(button().getAttribute('aria-label')).toBe('Update to 0.28.12');
   expect(button().disabled).toBe(false);
   act(() => root!.render(<UpdateButton update={update('failed')} restarting={false} updated={null} onPress={() => {}} onWhatsNew={() => {}} />));
   expect(button().textContent).toBe('Update failed');

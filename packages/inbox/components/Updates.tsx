@@ -93,8 +93,9 @@ export function UpdateButton({ update, restarting, updated, onPress, onWhatsNew 
       ? `Update to ${update.version}`
       : LABEL[update.state];
   const tip = tipFor(update, restarting);
-  const aria =
-    update.state === 'failed' ? `Update failed: Plannotator ${update.version} didn't install` : busy ? label : `Update to Plannotator ${update.version}`;
+  // The name contains the visible words (WCAG 2.5.3 Label in Name: "click Update to 0.28.22" works by voice);
+  // "Plannotator X" stays in the tooltip.
+  const aria = update.state === 'failed' && !restarting ? `Update failed: Plannotator ${update.version} didn't install` : label;
   return (
     <div className="ib-upd" data-update-state={restarting ? 'restarting' : update.state}>
       <button

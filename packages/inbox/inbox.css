@@ -1800,6 +1800,8 @@ button.ib-vtime:hover { background: color-mix(in oklch, var(--primary) 22%, tran
   .ib-wn-gh-l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .pn-inbox .ib-wn-acts .ib-btn { height: 44px; padding: 0 13px; }
   .ib-wn-hero { padding: 24px 0 20px; }
+  /* The jump to the skipped releases lands below the phone's taller bar and the safe area above it. */
+  .ib-wn-skipped { scroll-margin-top: calc(68px + env(safe-area-inset-top)); }
   .ib-wn-hero h1 { font-size: 32px; }
   .ib-wn-line { font-size: 14.5px; }
   /* The chip keeps its look (one line at 320 px) and takes a 44 px tall hit area. */
