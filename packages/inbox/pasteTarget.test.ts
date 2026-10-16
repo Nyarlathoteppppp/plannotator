@@ -37,6 +37,8 @@ afterEach(() => {
   if (!hasDom) return;
   uninstall?.();
   uninstall = null;
+  // A selection a test made must not decide the next test's paste.
+  document.getSelection()?.removeAllRanges();
   document.body.innerHTML = '';
 });
 
@@ -178,17 +180,22 @@ test.skipIf(!hasDom)('several fields remembered: one that went away (search, clo
   expect([reply.selectionStart, reply.selectionEnd]).toEqual([7, 7]);
 });
 
-test.skipIf(!hasDom)('text selected on the page (about to be commented on): the paste is not redirected', () => {
-  page(`<textarea id="reply"></textarea><p id="text">The plan says retry three times.</p><button id="b">x</button>`);
-  $<HTMLTextAreaElement>('#reply').focus();
-  $<HTMLButtonElement>('#b').focus();
-  const text = $<HTMLElement>('#text').firstChild!;
+/** Select characters [start, end) of an element's first text node, as a drag or a double-click would. */
+function selectText(el: HTMLElement, start: number, end: number): Selection {
   const range = document.createRange();
-  range.setStart(text, 4);
-  range.setEnd(text, 8);
+  range.setStart(el.firstChild!, start);
+  range.setEnd(el.firstChild!, end);
   const selection = document.getSelection()!;
   selection.removeAllRanges();
   selection.addRange(range);
+  return selection;
+}
+
+test.skipIf(!hasDom)('text selected in an attached file to comment on: the paste is not redirected', () => {
+  page(`<textarea id="reply"></textarea><section class="ib-view"><p id="text">The plan says retry three times.</p></section><button id="b">x</button>`);
+  $<HTMLTextAreaElement>('#reply').focus();
+  $<HTMLButtonElement>('#b').focus();
+  const selection = selectText($('#text'), 4, 8);
   commandV();
   expect(document.activeElement).toBe($('#b'));
   expect(selection.toString()).toBe('plan');
@@ -196,6 +203,76 @@ test.skipIf(!hasDom)('text selected on the page (about to be commented on): the 
   selection.removeAllRanges();
   commandV();
   expect(document.activeElement).toBe($('#reply'));
+});
+
+test.skipIf(!hasDom)('a word selected in a thread message or a choice label (double-click) does not turn the paste off', () => {
+  page(`
+    <textarea id="reply"></textarea>
+    <article class="ib-message"><p id="message">Retry with the same idempotency key.</p></article>
+    <label><input id="choice" type="radio" name="q"> <span id="label">Fail the job</span></label>
+  `);
+  const reply = $<HTMLTextAreaElement>('#reply');
+  reply.focus();
+  // A word double-clicked in the agent's message.
+  $<HTMLInputElement>('#choice').focus();
+  selectText($('#message'), 0, 5); // "Retry"
+  commandV();
+  expect(document.activeElement).toBe(reply);
+  // A word double-clicked in a choice's label.
+  $<HTMLInputElement>('#choice').focus();
+  selectText($('#label'), 0, 4); // "Fail"
+  commandV();
+  expect(document.activeElement).toBe(reply);
+});
+
+test.skipIf(!hasDom)('every selection toolbar is checked, not only the first: a hidden one before a showing one', () => {
+  page(`
+    <textarea id="reply"></textarea>
+    <div data-hidden data-pn-annotation-toolbar-row="true"></div>
+    <div class="toolbar"><div data-pn-annotation-toolbar-row="true"><button id="comment">Comment</button></div></div>
+    <button id="b">x</button>
+  `);
+  // page() leaves a data-hidden element with no client rects; it is the first toolbar in the document.
+  $('[data-hidden]').getClientRects = () => [] as unknown as DOMRectList;
+  $<HTMLTextAreaElement>('#reply').focus();
+  $<HTMLButtonElement>('#b').focus();
+  commandV();
+  expect(document.activeElement).toBe($('#b'));
+  // The showing toolbar closed: only the hidden one is left, and the paste follows the reply box.
+  $('.toolbar').remove();
+  commandV();
+  expect(document.activeElement).toBe($('#reply'));
+});
+
+test.skipIf(!hasDom)('a field clipped out of its pane is not on screen, even when the hit lands on the pane that holds it', () => {
+  page(`<div id="pane" style="overflow: auto; height: 300px"><div id="list"><textarea id="note"></textarea></div></div><button id="b">x</button>`);
+  const note = $<HTMLTextAreaElement>('#note');
+  const pane = $<HTMLElement>('#pane');
+  const rect = (top: number, height: number, left = 0, width = 400) =>
+    ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON() {} }) as DOMRect;
+  const saved = document.elementFromPoint;
+  try {
+    note.focus();
+    $<HTMLButtonElement>('#b').focus();
+    // The pane shows y 0 to 300; the note sits at y 500, scrolled below its edge, still inside the window.
+    pane.getBoundingClientRect = () => rect(0, 300);
+    note.getBoundingClientRect = () => rect(500, 40, 10, 200);
+    // What a browser hits there is the page or an element holding the pane, never the note.
+    document.elementFromPoint = () => $('#list');
+    commandV();
+    expect(document.activeElement).toBe($('#b'));
+    // Even with no hit test at all, the pane's own clip refuses it.
+    document.elementFromPoint = (() => null) as typeof document.elementFromPoint;
+    commandV();
+    expect(document.activeElement).toBe($('#b'));
+    // Scrolled into the pane: the note is on screen and takes the paste.
+    note.getBoundingClientRect = () => rect(100, 40, 10, 200);
+    document.elementFromPoint = () => note;
+    commandV();
+    expect(document.activeElement).toBe(note);
+  } finally {
+    document.elementFromPoint = saved;
+  }
 });
 
 test.skipIf(!hasDom)("a document's selection toolbar showing (the words drawn as a pending highlight): not redirected", () => {
