@@ -136,6 +136,7 @@ import {
   displayPath,
   inboxAgentReach,
   inboxConnectDisabled,
+  inboxPluginInstalled,
   readInboxAgents,
   setInboxAgentReach,
   setInboxTool,
@@ -775,7 +776,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         // With PLANNOTATOR_INBOX_NOTES=0 only a note already written is listed, so it can still be turned off.
         const status = (INBOX_NOTE_AGENT_IDS as readonly string[]).includes(id) ? noteStatus(id as InboxNoteAgentId, dataDir, agentEnvironment) : null;
         const note = status && (!notesOff || status.state === "added" || status.state === "edited") ? status : null;
-        return { id, label: INBOX_AGENT_LABELS[id], detected, reach, tool, reminder, note };
+        const installed = inboxPluginInstalled(id, agentEnvironment);
+        return { id, label: INBOX_AGENT_LABELS[id], detected, reach, tool, reminder, note, plugin: installed === null ? null : { installed } };
       }),
     );
     return {

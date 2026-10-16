@@ -76,6 +76,30 @@ test("each agent's reach, reminder and note, read without writing anything", asy
   expect(fake.calls()).toEqual([]);
 });
 
+test("the first-run screen's plugin field: Claude Code found on PATH without the plugin is left to the person; with the plugin it is the tool; Pi and OpenCode say whether theirs is installed", async () => {
+  // A `claude` on PATH that is never run (reading the model runs no agent CLI).
+  writeFileSync(join(fake.bin, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fake.install("pi", "opencode");
+  mkdirSync(join(fake.home, ".pi", "agent"), { recursive: true });
+  writeFileSync(join(fake.home, ".pi", "agent", "settings.json"), JSON.stringify({ packages: ["npm:@plannotator/pi-extension"] }));
+  const s = await start();
+  const before = (await get(s)) as Model & { agents: (AgentRow & { plugin?: { installed: boolean } | null })[] };
+  const claude = before.agents.find((agent) => agent.id === "claude-code")!;
+  expect(claude).toMatchObject({ detected: true, reach: { kind: "manual", on: false, state: "manual" }, plugin: { installed: false } });
+  expect(before.agents.find((agent) => agent.id === "pi")).toMatchObject({ detected: true, reach: { kind: "tool" }, plugin: { installed: true } });
+  expect(before.agents.find((agent) => agent.id === "opencode")).toMatchObject({ detected: true, reach: { kind: "manual" }, plugin: { installed: false } });
+  expect(before.agents.find((agent) => agent.id === "codex")).toMatchObject({ plugin: null });
+  // Turning Claude Code on without its plugin is refused: there is nothing to turn on.
+  const refused = (await (await post(s, "/api/inbox/agents", { agent: "claude-code", reach: true })).json()) as Model;
+  expect(refused.error).toContain("Claude Code is connected by hand");
+
+  mkdirSync(join(fake.home, ".claude"), { recursive: true });
+  writeFileSync(join(fake.home, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: { "plannotator@plannotator": true } }));
+  const after = (await get(s)) as Model & { agents: (AgentRow & { plugin?: { installed: boolean } | null })[] };
+  expect(after.agents.find((agent) => agent.id === "claude-code")).toMatchObject({ detected: true, reach: { kind: "tool", on: true }, plugin: { installed: true } });
+  expect(fake.calls()).toEqual([]);
+});
+
 test("reach off removes Plannotator's entry and stays off at the next run; on adds it again", async () => {
   fake.install("codex");
   const s = await start();
@@ -110,7 +134,9 @@ test("PLANNOTATOR_INBOX_TOOL locks the tool and reminder switches", async () => 
   const s = await start({ PLANNOTATOR_INBOX_TOOL: "0" });
   const model = (await (await post(s, "/api/inbox/agents", { agent: "claude-code", reminder: true })).json()) as Model;
   expect(model.error).toBe("PLANNOTATOR_INBOX_TOOL decides this");
-  expect(row(model, "claude-code").reach.locked).toBe(true);
+  // No plugin in this home: the lock shows on the tool switch (with the plugin it is the reach switch).
+  expect(row(model, "claude-code").tool?.locked).toBe(true);
+  expect(row(model, "claude-code").plugin).toEqual({ installed: false });
   expect(loadConfig().inboxReminder).toBeUndefined();
 });
 

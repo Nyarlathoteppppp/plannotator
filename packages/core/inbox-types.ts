@@ -1008,6 +1008,13 @@ export interface InboxAgentRow {
   /** Claude Code, Pi and OpenCode only. `needs_tool`: the tool is off, so there is no reminder. */
   reminder: { on: boolean; locked: boolean; needs_tool: boolean } | null;
   note: InboxAgentNoteStatus | null;
+  /**
+   * Claude Code, Pi and OpenCode only: whether Plannotator's own plugin or
+   * extension is installed (Claude Code's plugin enabled, Pi's settings
+   * `packages`, OpenCode's global `plugin`/`plugins`). Absent from an older
+   * Inbox; null for every other agent.
+   */
+  plugin?: { installed: boolean } | null;
 }
 
 export interface InboxAgentsModel {
@@ -1028,6 +1035,30 @@ export interface InboxAgentsModel {
   note_text: string;
   /** A switch's refusal, after POST /api/inbox/agents. */
   error?: string | null;
+}
+
+/** The hosts whose every request carries the `plannotator_inbox` tool in full once it is on (Claude Code defers it behind tool search). */
+export type InboxToolCostHost = "pi" | "opencode";
+
+/**
+ * What turning the Inbox tool on adds to every request on Pi and OpenCode 2,
+ * measured on the real hosts (apps/pi-extension/inbox.test.ts and
+ * apps/opencode-plugin/inbox-v2.test.ts read the request the host sends a
+ * scripted model, and fail when the tool's entry drifts more than 5% from
+ * `bytes`). `tokens` was counted from the same entry with the o200k_base
+ * tokenizer and rounded to the nearest 50. The window shows `tokens`
+ * (Settings → Agents, the first-run screen). Before the tool's long field
+ * descriptions were shortened (INBOX_AGENT_FIELD_DESCRIPTIONS) its entry was
+ * 11,736 bytes, about 2,800 tokens, on both hosts.
+ */
+export const INBOX_TOOL_COST: Readonly<Record<InboxToolCostHost, { bytes: number; tokens: number }>> = {
+  pi: { bytes: 6993, tokens: 1650 },
+  opencode: { bytes: 6993, tokens: 1650 },
+};
+
+/** "about 1,200 tokens" for a host's measured cost. */
+export function inboxToolCostText(host: InboxToolCostHost): string {
+  return `about ${INBOX_TOOL_COST[host].tokens.toLocaleString("en-US")} tokens`;
 }
 
 /** "Codex, Gemini CLI and Pi" for note agents. */

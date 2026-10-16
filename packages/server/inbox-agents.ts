@@ -583,7 +583,8 @@ async function cliWay(
 export const AGENT_SPECS: readonly AgentSpec[] = [
   {
     id: "claude-code",
-    detect: (e) => claudeCodePluginEnabled(e),
+    // The plugin, or `claude` on PATH without it (the first-run screen offers the plugin's install command).
+    detect: (e) => claudeCodePluginEnabled(e) || !!e.which("claude"),
     way: async () => ({ kind: "none" }),
     file: () => null,
     raw: () => null,
@@ -1227,11 +1228,24 @@ export interface InboxAgentReachState {
   reason: string | null;
 }
 
+/** Claude Code reaches the Inbox through Plannotator's plugin (its mod registers the tool); without the plugin only a person can connect it. */
+function claudeCodeWay(e: AgentEnvironment): ConnectWay {
+  return claudeCodePluginEnabled(e) ? { kind: "tool", host: "claude-code" } : { kind: "manual", why: "install Plannotator's Claude Code plugin" };
+}
+
+/** Whether Plannotator's own connection is installed for one of its three hosts (null for every other agent). */
+export function inboxPluginInstalled(id: InboxAgentId, e: AgentEnvironment): boolean | null {
+  if (id === "claude-code") return claudeCodePluginEnabled(e);
+  if (id === "pi") return piExtensionInstalled(e);
+  if (id === "opencode") return openCodePluginInstalled(e);
+  return null;
+}
+
 /** How one agent reaches the Inbox now (read only; may ask a CLI its version). */
 export async function inboxAgentReach(id: InboxAgentId, options: ConnectOptions): Promise<InboxAgentReachState> {
   const e = options.environment;
   const spec = agentSpec(id);
-  const way: ConnectWay = id === "claude-code" ? { kind: "tool", host: "claude-code" } : await spec.way(e);
+  const way: ConnectWay = id === "claude-code" ? claudeCodeWay(e) : await spec.way(e);
   const path = displayPath(spec.file(e), e);
   const record = readInboxAgents(options.dataDir).agents[id];
   if (way.kind === "tool") {
@@ -1279,7 +1293,7 @@ export async function setInboxAgentReach(id: InboxAgentId, on: boolean, options:
   if (!agentHomeAllowed(e)) return "not in a test's scratch home";
   const at = (options.now ?? (() => new Date()))().toISOString();
   const spec = agentSpec(id);
-  const way: ConnectWay = id === "claude-code" ? { kind: "tool", host: "claude-code" } : await spec.way(e, true);
+  const way: ConnectWay = id === "claude-code" ? claudeCodeWay(e) : await spec.way(e, true);
   const file = readInboxAgents(options.dataDir);
   if (way.kind === "manual") return `${INBOX_AGENT_LABELS[id]} is connected by hand: ${way.why}`;
   if (way.kind === "none") return `${INBOX_AGENT_LABELS[id]} is connected by hand`;
