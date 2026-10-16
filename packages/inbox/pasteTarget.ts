@@ -10,18 +10,21 @@
  * the reply box stays open (and keeps its border). A ⌘V then pastes into
  * nothing, and the dictated words are lost, seemingly at random.
  *
- * So: the window remembers the last text field that had focus (the reply
- * box, a question card's note or Other field, compose, any input), and when a
- * ⌘V (Ctrl+V off macOS) arrives while focus is on something that takes no
- * text, it puts focus back in that field, the caret where the person left it
- * (a range they had selected collapses to its end, so the dictation replaces
- * nothing), before the browser runs the paste. The keydown is never
- * cancelled, so the browser's own paste runs (Chrome runs it after the page
- * has handled the keydown), now into the field. Nothing changes when focus is
- * already in a text field, inside a frame (an attached HTML page), or when
- * the field is gone, hidden, disabled or read-only, sits outside a cover over
- * the thread (a full-screen file, a guided review, an open modal dialog), or
- * has something else drawn over it.
+ * So: the window remembers the text fields that last had focus (the reply
+ * box, a question card's note or Other field, compose, a comment box, any
+ * input), and when a ⌘V (Ctrl+V off macOS) arrives while focus is on
+ * something that takes no text, it puts focus back in the newest of them that
+ * is still on screen, the caret where the person left it (a range they had
+ * selected collapses to its end, so the dictation replaces nothing), before
+ * the browser runs the paste. The keydown is never cancelled, so the
+ * browser's own paste runs (Chrome runs it after the page has handled the
+ * keydown), now into the field.
+ *
+ * Nothing changes when focus is already in a text field or inside a frame (an
+ * attached HTML page), when text is selected on the page (the person is about
+ * to comment on it), or when no remembered field is on screen: gone, hidden,
+ * disabled, read-only, scrolled out of view, behind a modal dialog, under a
+ * full-screen file or a guided review, or with something else drawn over it.
  */
 
 import { isModKeyHeld } from '@plannotator/ui/utils/platform';
@@ -31,11 +34,17 @@ const TEXT_INPUT_TYPES = new Set(['text', 'search', 'url', 'email', 'tel', 'pass
 
 /**
  * What covers the thread while it stays laid out under it: a file shown full
- * screen (`.ib-view.ib-full`, fixed over the window), an open guided review
- * (`.ib-viewer`, over the thread pane) and a modal dialog. A field outside
- * such a cover is hidden from the person, so a paste must not go into it.
+ * screen (`.ib-view.ib-full`, fixed over the window) and an open guided review
+ * (`.ib-viewer`, over the thread pane). A field outside such a cover is hidden
+ * from the person, unless the field is drawn over the cover (a comment box, the
+ * search palette or compose, which are portaled to the page's end): the hit
+ * test at its first line decides that.
  */
-const COVERS = '.ib-view.ib-full, .ib-viewer, dialog[open], [aria-modal="true"]';
+const COVERS = '.ib-view.ib-full, .ib-viewer';
+const MODALS = 'dialog[open], [aria-modal="true"]';
+
+/** How many recently focused fields are remembered: the newest still on screen takes the paste. */
+const REMEMBERED = 8;
 
 type TextField = HTMLTextAreaElement | HTMLInputElement | HTMLElement;
 
@@ -62,28 +71,37 @@ export function isPasteKey(event: KeyFields, mod: (e: { metaKey: boolean; ctrlKe
   return event.code === 'KeyV';
 }
 
-function isModal(dialog: HTMLDialogElement): boolean {
+function isModal(el: Element): boolean {
+  if (!(el instanceof HTMLDialogElement)) return true; // [aria-modal="true"]
   try {
-    return dialog.matches(':modal');
+    return el.matches(':modal');
   } catch {
     return true; // no :modal in this browser: count an open dialog as modal (refusing is the safe side)
   }
 }
 
-/** Something else is drawn over the field's first line (a sheet, a popover, a cover the selectors do not name). */
-function drawnOver(field: TextField): boolean {
+/**
+ * Where the field's first line is on screen, by the topmost element there:
+ * `top` (the field, or the box drawn behind it such as a highlight mirror),
+ * `covered` (something else is drawn over it), `offscreen` (the point is
+ * outside the window), or `unknown` (the browser cannot tell).
+ */
+type Sight = 'top' | 'covered' | 'offscreen' | 'unknown';
+
+function sight(field: TextField): Sight {
   const doc = field.ownerDocument;
   const view = doc.defaultView;
-  if (!view || typeof doc.elementFromPoint !== 'function') return false;
+  if (!view) return 'unknown';
   const rect = field.getBoundingClientRect();
   const x = rect.left + rect.width / 2;
   const y = rect.top + Math.min(rect.height / 2, 12);
-  // Scrolled out of view inside its pane: nothing covers it, the person scrolled.
-  if (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight) return false;
+  if (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight) return 'offscreen';
+  if (typeof doc.elementFromPoint !== 'function') return 'unknown';
   const hit = doc.elementFromPoint(x, y);
-  if (!hit) return false;
-  // The field itself, or the box around it (a highlight mirror drawn behind a transparent textarea).
-  return !(hit === field || field.contains(hit) || hit.contains(field));
+  if (!hit) return 'unknown';
+  // Scrolled out of its pane while still inside the window: the pane's own edge, or what lies
+  // beside it, is hit, which is "covered" like anything drawn over it.
+  return hit === field || field.contains(hit) || hit.contains(field) ? 'top' : 'covered';
 }
 
 function usable(field: TextField): boolean {
@@ -91,12 +109,41 @@ function usable(field: TextField): boolean {
   if ((field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) && (field.disabled || field.readOnly)) return false;
   if (field.closest('[inert], [aria-hidden="true"]')) return false;
   if (field.getClientRects().length === 0) return false;
-  // A cover over the thread owns the screen: a field outside it is hidden, though still laid out.
-  for (const cover of field.ownerDocument.querySelectorAll(COVERS)) {
-    if (cover instanceof HTMLDialogElement && !isModal(cover)) continue;
-    if (!cover.contains(field)) return false;
+  const doc = field.ownerDocument;
+  // A modal dialog owns the keys: only a field inside it counts.
+  for (const modal of doc.querySelectorAll(MODALS)) {
+    if (isModal(modal) && !modal.contains(field)) return false;
   }
-  return !drawnOver(field);
+  const seen = sight(field);
+  if (seen === 'covered' || seen === 'offscreen') return false;
+  // A full-screen file or a guided review hides what is under it, though it stays laid out. A field
+  // outside one counts only when the hit test shows it on top (a box portaled over the cover).
+  for (const cover of doc.querySelectorAll(COVERS)) {
+    if (!cover.contains(field) && seen !== 'top') return false;
+  }
+  return true;
+}
+
+/**
+ * Text the person selected on the page (outside any text field): a ⌘V is not
+ * aimed at a field then. A document's selection toolbar counts too: ui's
+ * viewer draws the selected words as a pending highlight and clears the
+ * browser's own selection while its toolbar (Delete, Comment, labels) shows.
+ */
+function pageSelection(doc: Document): boolean {
+  const toolbar = doc.querySelector('[data-pn-annotation-toolbar-row]');
+  if (toolbar && toolbar.getClientRects().length > 0) return true;
+  return nativeSelection(doc);
+}
+
+function nativeSelection(doc: Document): boolean {
+  const selection = doc.getSelection?.();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+  if (!selection.toString().trim()) return false;
+  const node = selection.anchorNode;
+  const el = node instanceof Element ? node : (node?.parentElement ?? null);
+  // A selection inside a text field is that field's own, not a selection on the page.
+  return !(el && (isTextField(el) || el.closest('textarea, input, [contenteditable="true"], [contenteditable=""]')));
 }
 
 /**
@@ -105,13 +152,17 @@ function usable(field: TextField): boolean {
  */
 export function installPasteFollowsField(win: Window = window, mod?: (e: { metaKey: boolean; ctrlKey: boolean }) => boolean): () => void {
   const doc = win.document;
-  let last: TextField | null = null;
-  // Where each field's caret was when it lost focus. Kept apart from `last`, so focusing the field
+  // The fields that last had focus, newest first. One field is not enough: a field that took focus
+  // and then went away (the search palette, closed with Escape) must not hide the one before it.
+  let recent: TextField[] = [];
+  // Where each field's caret was when it lost focus. Kept apart from `recent`, so focusing the field
   // again (which fires focusin) cannot clear it before it is put back.
   const carets = new WeakMap<TextField, number>();
 
   const remember = (event: FocusEvent) => {
-    if (isTextField(event.target)) last = event.target;
+    const target = event.target;
+    if (!isTextField(target)) return;
+    recent = [target, ...recent.filter((field) => field !== target && field.isConnected)].slice(0, REMEMBERED);
   };
   const leave = (event: FocusEvent) => {
     const target = event.target;
@@ -128,8 +179,10 @@ export function installPasteFollowsField(win: Window = window, mod?: (e: { metaK
     const active = doc.activeElement;
     // Already in a text field, or in a frame (the page in it gets the keys): the paste is aimed.
     if (isTextField(active) || active instanceof HTMLIFrameElement) return;
-    const field = last;
-    if (!field || !usable(field)) return;
+    // Text selected on the page: the person is commenting on it, keep the selection and its toolbar.
+    if (pageSelection(doc)) return;
+    const field = recent.find(usable);
+    if (!field) return;
     // Read before focus(): a range the person selected earlier, no longer visible, would otherwise
     // be what the paste replaces.
     const caret = carets.get(field);

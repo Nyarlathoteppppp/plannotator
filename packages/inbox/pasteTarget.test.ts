@@ -17,7 +17,7 @@
  * never cancelled.
  *
  * The whole window in a real Chromium (the reply box, a question card's note,
- * compose): tests/e2e/inbox-paste.spec.ts.
+ * compose): tests/e2e/inbox-dictation-paste.spec.ts.
  *
  * DOM-gated: runs under DOM_TESTS=1 (happy-dom), from the test.yml DOM list.
  */
@@ -126,6 +126,113 @@ test.skipIf(!hasDom)('a cover over the thread: a full-screen file or a guided re
   $<HTMLButtonElement>('#b').focus();
   commandV();
   expect(document.activeElement).toBe($('#comment'));
+});
+
+test.skipIf(!hasDom)('a box portaled over a full-screen file (a comment box) takes the paste when it is drawn on top', () => {
+  // The comment box is portaled to the page's end, outside the full-screen file it belongs to.
+  page(`<section><textarea id="reply"></textarea></section><div class="ib-view ib-full"><button id="tile">x</button></div><div id="popover"><textarea id="comment"></textarea><button id="cancel">Cancel</button></div>`);
+  const comment = $<HTMLTextAreaElement>('#comment');
+  const reply = $<HTMLTextAreaElement>('#reply');
+  const saved = document.elementFromPoint;
+  try {
+    // The hit test sees the comment box on top, and the reply box under the file.
+    let onTop: Element = comment;
+    document.elementFromPoint = () => onTop;
+    reply.focus();
+    comment.focus();
+    $<HTMLButtonElement>('#cancel').focus();
+    commandV();
+    expect(document.activeElement).toBe(comment);
+    // The comment box closed: the reply box under the file is what is left, and it is covered.
+    comment.remove();
+    $<HTMLButtonElement>('#cancel').focus();
+    onTop = $('#tile');
+    commandV();
+    expect(document.activeElement).toBe($('#cancel'));
+  } finally {
+    document.elementFromPoint = saved;
+  }
+  // Without a hit test the browser cannot say the box is on top: a field outside the cover is refused.
+  page(`<div class="ib-viewer"><button id="b">x</button></div><textarea id="palette"></textarea>`);
+  $<HTMLTextAreaElement>('#palette').focus();
+  $<HTMLButtonElement>('#b').focus();
+  commandV();
+  expect(document.activeElement).toBe($('#b'));
+});
+
+test.skipIf(!hasDom)('several fields remembered: one that went away (search, closed) leaves the one before it', () => {
+  page(`<textarea id="reply"></textarea><dialog id="palette"><input id="search" type="search"></dialog><label><input id="choice" type="radio" name="q"> Retry</label>`);
+  const reply = $<HTMLTextAreaElement>('#reply');
+  reply.focus();
+  reply.value = 'Start. ';
+  reply.setSelectionRange(7, 7);
+  // Search opens over the window and takes focus; Escape closes it.
+  const palette = $<HTMLDialogElement>('#palette');
+  palette.setAttribute('open', '');
+  $<HTMLInputElement>('#search').focus();
+  palette.removeAttribute('open');
+  palette.remove();
+  $<HTMLInputElement>('#choice').focus();
+  commandV();
+  expect(document.activeElement).toBe(reply);
+  expect([reply.selectionStart, reply.selectionEnd]).toEqual([7, 7]);
+});
+
+test.skipIf(!hasDom)('text selected on the page (about to be commented on): the paste is not redirected', () => {
+  page(`<textarea id="reply"></textarea><p id="text">The plan says retry three times.</p><button id="b">x</button>`);
+  $<HTMLTextAreaElement>('#reply').focus();
+  $<HTMLButtonElement>('#b').focus();
+  const text = $<HTMLElement>('#text').firstChild!;
+  const range = document.createRange();
+  range.setStart(text, 4);
+  range.setEnd(text, 8);
+  const selection = document.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  commandV();
+  expect(document.activeElement).toBe($('#b'));
+  expect(selection.toString()).toBe('plan');
+  // Once the selection is gone, the paste follows the reply box again.
+  selection.removeAllRanges();
+  commandV();
+  expect(document.activeElement).toBe($('#reply'));
+});
+
+test.skipIf(!hasDom)("a document's selection toolbar showing (the words drawn as a pending highlight): not redirected", () => {
+  page(`<textarea id="reply"></textarea><div class="toolbar"><div data-pn-annotation-toolbar-row="true"><button id="comment">Comment</button></div></div><button id="b">x</button>`);
+  $<HTMLTextAreaElement>('#reply').focus();
+  $<HTMLButtonElement>('#b').focus();
+  commandV();
+  expect(document.activeElement).toBe($('#b'));
+  // The toolbar closed: the paste follows the reply box again.
+  $('.toolbar').remove();
+  commandV();
+  expect(document.activeElement).toBe($('#reply'));
+});
+
+test.skipIf(!hasDom)('a field out of view, out of the window or out of its pane, is left alone', () => {
+  page(`<div id="pane"><textarea id="note"></textarea></div><div id="beside"></div><button id="b">x</button>`);
+  const note = $<HTMLTextAreaElement>('#note');
+  const saved = document.elementFromPoint;
+  try {
+    note.focus();
+    $<HTMLButtonElement>('#b').focus();
+    // Scrolled above the window.
+    note.getBoundingClientRect = () => ({ left: 10, top: -400, width: 200, height: 40, right: 210, bottom: -360, x: 10, y: -400, toJSON() {} }) as DOMRect;
+    commandV();
+    expect(document.activeElement).toBe($('#b'));
+    // Inside the window but scrolled out of its pane: what is hit there is the pane beside it.
+    note.getBoundingClientRect = () => ({ left: 10, top: 100, width: 200, height: 40, right: 210, bottom: 140, x: 10, y: 100, toJSON() {} }) as DOMRect;
+    document.elementFromPoint = () => $('#beside');
+    commandV();
+    expect(document.activeElement).toBe($('#b'));
+    // Scrolled back into view.
+    document.elementFromPoint = () => note;
+    commandV();
+    expect(document.activeElement).toBe(note);
+  } finally {
+    document.elementFromPoint = saved;
+  }
 });
 
 test.skipIf(!hasDom)('something drawn over the field (a sheet, a popover): left alone', () => {

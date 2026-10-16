@@ -9,10 +9,12 @@
  * chip in the reply box moves it to the page, and the reply box stays open.
  * Before the fix the ⌘V then pasted into nothing. Each case below writes the
  * clipboard, moves focus the way a person does, presses ⌘V, and expects the
- * words in the field: the reply box, a question card's note, and compose. And
- * the other side: a paste aimed at a field stays in it, a page where no field
- * was used keeps it nowhere, and a file shown full screen over the thread
- * keeps it out of the reply box hidden under it.
+ * words in the field: the reply box, a question card's note, compose, and a
+ * full-screen file's own comment box (portaled outside the file); after search
+ * opened and closed, the reply box still. And the other side: a paste aimed at
+ * a field stays in it, a page where no field was used keeps it nowhere, a file
+ * shown full screen over the thread keeps it out of the reply box hidden under
+ * it, and words selected in a file to comment on keep their toolbar.
  *
  * Build the binary first (see inbox.spec.ts), then `bun run test:e2e:inbox`.
  */
@@ -212,6 +214,90 @@ test('a file full screen over the thread: the reply box hidden under it takes no
     await p.waitForTimeout(300);
     await expect(box).toHaveValue('Under the file.');
     await expect(box).not.toBeFocused();
+  } finally {
+    await p.close();
+  }
+});
+
+test('a full-screen file: its own comment box (portaled outside the file) takes the paste', async () => {
+  const p = await context.newPage();
+  try {
+    await p.goto(`${url}#thread=${filesThreadId}`);
+    await p.locator('section.ib-pane .ib-atts [data-attachment-id]').first().click();
+    await p.getByRole('button', { name: 'Full screen' }).click();
+    await expect(p.locator('.ib-view.ib-full')).toBeVisible();
+    await p.getByRole('button', { name: /Global comment/ }).first().click();
+    const comment = p.getByPlaceholder(/comment/i).last();
+    await expect(comment).toBeFocused();
+    await dictate(p, 'First thought. ');
+    await expectLanded(comment, 'First thought.');
+    // Focus moves to a button in the comment box.
+    await p.keyboard.press('Shift+Tab');
+    await expect(comment).not.toBeFocused();
+    await dictate(p, 'Second thought. ');
+    await expectLanded(comment, 'Second thought.');
+    expect(await comment.inputValue()).toBe('First thought. Second thought. ');
+  } finally {
+    await p.close();
+  }
+});
+
+test('search opened and closed between: the paste still goes to the reply box', async () => {
+  const p = await context.newPage();
+  try {
+    await p.goto(`${url}#thread=${threadId}`);
+    await p.locator('.ib-pfoot').getByRole('button', { name: 'Reply' }).click();
+    const box = p.locator('section.ib-pane .ib-rbox textarea');
+    await box.fill('Start. ');
+    await p.locator('[data-open-search]').first().click();
+    await expect(p.locator('dialog[data-search-palette][open]')).toBeVisible();
+    await p.keyboard.press('Escape');
+    await expect(p.locator('dialog[data-search-palette][open]')).toHaveCount(0);
+    await p.getByText('Fail the job').click();
+    await expect(box).not.toBeFocused();
+    await dictate(p, 'After search.');
+    await expect(box).toHaveValue('Start. After search.');
+  } finally {
+    await p.close();
+  }
+});
+
+test('text selected in a file to comment on: the paste is not taken to the reply box', async () => {
+  const p = await context.newPage();
+  try {
+    await p.goto(`${url}#thread=${filesThreadId}`);
+    await p.locator('.ib-pfoot').getByRole('button', { name: 'Reply' }).click();
+    const box = p.locator('section.ib-pane .ib-rbox textarea');
+    await box.fill('My reply.');
+    await p.locator('section.ib-pane .ib-atts [data-attachment-id]').first().click();
+    const text = p.locator('.ib-view').getByText('Retry with the same key');
+    await expect(text).toBeVisible();
+    // Drag across the words, as a person selects text to comment on (the rect of the words themselves).
+    const rect = await p.evaluate(() => {
+      const walker = document.createTreeWalker(document.querySelector('.ib-view')!, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.textContent?.includes('Retry with the same key')) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const r = range.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      }
+      return null;
+    });
+    expect(rect).not.toBeNull();
+    await p.mouse.move(rect!.x + 2, rect!.y + rect!.height / 2);
+    await p.mouse.down();
+    await p.mouse.move(rect!.x + rect!.width / 2, rect!.y + rect!.height / 2, { steps: 8 });
+    await p.mouse.up();
+    // The viewer draws the selected words as a pending highlight under its comment toolbar.
+    const toolbar = p.locator('[data-pn-annotation-toolbar-row]');
+    await expect(toolbar).toBeVisible();
+    await dictate(p, 'Not into the reply. ');
+    await p.waitForTimeout(300);
+    await expect(box).toHaveValue('My reply.');
+    await expect(box).not.toBeFocused();
+    // The toolbar is still there: the person can still comment on the words they chose.
+    await expect(toolbar).toBeVisible();
   } finally {
     await p.close();
   }
