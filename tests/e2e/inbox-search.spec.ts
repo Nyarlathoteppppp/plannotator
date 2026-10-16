@@ -337,20 +337,24 @@ test('filters: a chip menu by keyboard, Escape closes the menu before the palett
   await expect(page.locator('.ib-side .ib-sp-entry')).toBeFocused();
 });
 
-test('a message and a decision recorded from an answer name their thread; every such row keeps its project and time', async () => {
+test('a message, a file and a decision recorded from an answer draw their thread’s chip; every second line keeps its time', async () => {
   await openFromSidebar(page);
   await input(page).fill('retry budget');
   await settled(page);
   const budget = palette(page).locator(`[data-result="message"][data-result-id="${world.retryBudget}"]`);
-  // The subject starts with the thread's name ("retry"), so no chip, as in the list.
-  await expect(budget.locator('[data-result-thread-subject]')).toHaveText('Retry storm on the relay after a deploy');
-  await expect(budget.locator('[data-result-thread-name]')).toHaveCount(0);
+  // The list's chip: the thread's name.
+  const budgetChip = budget.locator('.ib-key[data-result-thread="name"]');
+  await expect(budgetChip.locator('.ib-keyt')).toHaveText('retry');
+  await expect(budgetChip).toHaveAttribute('title', 'Thread: retry: Retry storm on the relay after a deploy');
+  await input(page).fill('retry-policy');
+  await settled(page);
+  await expect(palette(page).locator('[data-result="file"]').first().locator('.ib-key .ib-keyt')).toHaveText('retry');
   await input(page).fill('CDN cache key');
   await settled(page);
   for (const kind of ['message', 'decision']) {
-    const row = palette(page).locator(`[data-result="${kind}"]`).first();
-    await expect(row.locator('[data-result-thread-name]')).toHaveText('nightly-deploy-investigation-for-the-customer-portal');
-    await expect(row.locator('[data-result-thread-subject]')).toHaveAttribute('title', /^Investigate why the nightly deploy/);
+    const chip = palette(page).locator(`[data-result="${kind}"]`).first().locator('.ib-key[data-result-thread]');
+    await expect(chip.locator('.ib-keyt')).toHaveText('nightly-deploy-investigation-for-the-customer-portal');
+    await expect(chip).toHaveAttribute('title', /^Thread: nightly-deploy-investigation-for-the-customer-portal: Investigate why the nightly deploy/);
   }
   await shot(page, '09a-thread-on-row');
   // Every part of the second line stays inside its row: the time is drawn whole, at desktop and phone widths.

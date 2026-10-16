@@ -196,33 +196,41 @@ const sameText = (text: string): string =>
 /** The shortest first line that counts as showing the thread's subject when it is a piece of it (a word or two is not). */
 const SHOWN_MIN = 12;
 
-/** The thread a result belongs to, as its row names it. */
-export interface RowThread {
-  /** The thread's subject, or null when the row's first line already shows it. */
-  subject: string | null;
-  /** The thread's name as a chip, or null (unnamed, or the subject starts with it). */
-  name: string | null;
+/** The thread chip a result row draws: the list's chip (`.ib-key`), on the row's second line. */
+export interface RowThreadChip {
+  /** What the chip says: the thread's name, or its subject when it has none. */
+  text: string;
+  kind: 'name' | 'subject';
+  /** The thread's subject, for the chip's title and its accessible words. */
+  subject: string;
 }
 
 /**
- * The thread a result belongs to, as its row names it: the subject, and the
- * thread's name as a chip as the list shows it (`threadChipName`). The
- * subject is left out when the row's first line already shows it: a message
- * whose words are the subject (a subject drawn from the message's first line
- * or its question), a decision or file worded the same. Null for a thread or
- * project row, a decision recorded with no thread (or whose thread is gone),
- * and when there is nothing left to say.
+ * The one thread chip a result draws, in the form the list uses for a thread.
+ *
+ * - A thread row: the list's own rule (`threadChipName`): its name, unless its
+ *   subject (the row's first line) already starts with it; no name, no chip.
+ * - A message, file, guided review or decision recorded from an answer: the
+ *   thread's name; with no name, the thread's subject in the chip. That
+ *   subject chip is left out only when the row's first line is the subject,
+ *   begins with it, or is a start of it at least 12 characters long (a message
+ *   whose words became the subject); never for a word or two met inside the
+ *   text ("Deploy" in "We should deploy tomorrow").
+ * - A project, or a decision with no thread (an agent's `record_decision`, or
+ *   its thread deleted): none.
  */
-export function rowThread(row: InboxSearchRow): RowThread | null {
-  if (row.type === 'thread' || row.type === 'project') return null;
+export function rowThreadChip(row: InboxSearchRow): RowThreadChip | null {
+  if (row.type === 'project') return null;
   const subject = row.title ?? null;
   if (!subject) return null;
-  const name = threadChipName(row.thread_name, subject);
+  if (row.type === 'thread') {
+    const name = threadChipName(row.thread_name, subject);
+    return name ? { text: name, kind: 'name', subject } : null;
+  }
+  if (row.thread_name) return { text: row.thread_name, kind: 'name', subject };
   const first = sameText(row.type === 'message' ? row.snippet.text : row.type === 'decision' ? row.text : row.name);
   const wanted = sameText(subject);
-  // Shown only when the first line is the subject, begins with it, or is a long enough start of it (a cut subject):
-  // never a word or two met inside the text ("Deploy" in "We should deploy tomorrow").
   const shown = wanted.length > 0 && (first.startsWith(wanted) || (first.length >= SHOWN_MIN && wanted.startsWith(first)));
-  if (shown && !name) return null;
-  return { subject: shown ? null : subject, name };
+  return shown ? null : { text: subject, kind: 'subject', subject };
 }
+
