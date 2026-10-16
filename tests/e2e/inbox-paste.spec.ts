@@ -9,7 +9,7 @@
  * screenshot of the window itself).
  *
  *  1. Compose: a pasted screenshot attaches as `pasted-image-<date>-<time>.png`
- *     and rides the Send; a text paste is left to the browser.
+ *     and rides the Send; a text paste attaches nothing and is inserted as text.
  *  2. The reply box: two pasted images (one held mid-upload for the picture),
  *     Send carries both; the agent's wait_for_reply names them; the sent reply
  *     shows them in the thread's tiles.
@@ -157,7 +157,7 @@ async function screenshotBytes(page: Page, clip: { x: number; y: number; width: 
   return page.screenshot({ clip });
 }
 
-test('compose: a pasted screenshot attaches with a dated name and rides the Send; a text paste is left to the browser', async () => {
+test('compose: a pasted screenshot attaches with a dated name and rides the Send; a text paste is inserted as text', async () => {
   const { page } = world;
   await page.goto(world.url);
   await expect(page.locator(`[data-thread-id="${world.threadId}"]`).first()).toBeVisible();
@@ -169,8 +169,9 @@ test('compose: a pasted screenshot attaches with a dated name and rides the Send
   await expect(text).toBeFocused();
   await text.fill('The list header wraps on a narrow window. This is what I see:');
 
-  // Text alone: the browser's own paste, never prevented.
-  expect(await paste(page, { text: 'plain words' })).toBe(false);
+  // Text alone: nothing attached; the page inserts it itself (pasteInsert.ts, the Chrome 155-156 workaround).
+  expect(await paste(page, { text: 'plain words' })).toBe(true);
+  await expect(text).toHaveValue('The list header wraps on a narrow window. This is what I see:plain words');
   await expect(dialog.locator('[data-compose-file]')).toHaveCount(0);
   // A spreadsheet cell: its text plus the picture of it, a file named image.png. The text is the paste.
   expect(await paste(page, { png: picture, text: 'Q3\t1,204\t+8%' })).toBe(false);

@@ -4,8 +4,9 @@
  * carries files (a screenshot, an image copied from a page, a file copied
  * in the file manager where the browser hands it over) attaches them through
  * the same upload path as the paperclip. Text is never taken from the
- * browser: a paste of text alone is left wholly to its native path (nothing
- * prevented, nothing re-read later), and a paste that carries text beside
+ * browser: a paste of text alone is left alone here (nothing prevented,
+ * nothing re-read later; the window's plain-text insertion,
+ * `@plannotator/ui/utils/pasteInsert`, then inserts it), and a paste that carries text beside
  * its files (an image copied from a page brings HTML, a file copied in the
  * file manager its name) attaches the files and still lets the browser
  * insert the text. Only a paste of files and no text is prevented.
