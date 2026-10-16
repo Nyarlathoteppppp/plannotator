@@ -8,10 +8,13 @@
  * Proved here on the real handler, with several kinds of field (a textarea
  * like the reply box, a text input like a question's Other, a contenteditable,
  * a field inside a modal dialog like compose): focus comes back, with the
- * caret where it was, before the browser pastes; a paste already aimed at a
- * field, a frame, a field that is gone, disabled, read-only or hidden, or one
- * behind a modal dialog, is left alone; other chords are untouched and the
- * keydown is never cancelled.
+ * caret where it was (a selected range collapsed to its end), before the
+ * browser pastes; a paste already aimed at a field, a frame, a field that is
+ * gone, disabled, read-only or hidden, one behind a modal dialog, a
+ * full-screen file or a guided review, or one with something drawn over it,
+ * is left alone; other chords (the ⌘K, ⌘D and ⌘C that sit on V's key on
+ * Dvorak, Colemak-DH and Workman included) are untouched and the keydown is
+ * never cancelled.
  *
  * The whole window in a real Chromium (the reply box, a question card's note,
  * compose): tests/e2e/inbox-paste.spec.ts.
@@ -68,6 +71,80 @@ test.skipIf(!hasDom)('isPasteKey: the platform modifier with V, Shift allowed; n
   expect(isPasteKey({ ...base, altKey: true }, mac)).toBe(false);
   expect(isPasteKey({ ...base, isComposing: true }, mac)).toBe(false);
   expect(isPasteKey({ ...base, key: 'c', code: 'KeyC' }, mac)).toBe(false);
+});
+
+test.skipIf(!hasDom)('isPasteKey on Latin layouts that move V: the letter decides, never the physical key', () => {
+  const base = { metaKey: true, ctrlKey: false, altKey: false, isComposing: false };
+  // The key in QWERTY's V place types another letter: ⌘ with it is that letter's command.
+  expect(isPasteKey({ ...base, key: 'k', code: 'KeyV' }, mac)).toBe(false); // Dvorak ⌘K
+  expect(isPasteKey({ ...base, key: 'd', code: 'KeyV' }, mac)).toBe(false); // Colemak-DH ⌘D
+  expect(isPasteKey({ ...base, key: 'c', code: 'KeyV' }, mac)).toBe(false); // Workman ⌘C
+  // Their V sits elsewhere, and ⌘ with it pastes.
+  expect(isPasteKey({ ...base, key: 'v', code: 'Period' }, mac)).toBe(true); // Dvorak
+  expect(isPasteKey({ ...base, key: 'v', code: 'KeyB' }, mac)).toBe(true); // Colemak-DH, Workman
+  // No Latin letter on the key (Cyrillic, Greek): its place decides.
+  expect(isPasteKey({ ...base, key: 'м', code: 'KeyV' }, mac)).toBe(true);
+  expect(isPasteKey({ ...base, key: 'ω', code: 'KeyV' }, mac)).toBe(true);
+  expect(isPasteKey({ ...base, key: 'с', code: 'KeyC' }, mac)).toBe(false);
+});
+
+test.skipIf(!hasDom)('a range selected before focus left collapses to its end: the dictation replaces nothing', () => {
+  page(`<textarea id="reply"></textarea><label><input id="choice" type="radio" name="q"> Retry</label>`);
+  const reply = $<HTMLTextAreaElement>('#reply');
+  reply.focus();
+  reply.value = 'one two three';
+  reply.setSelectionRange(4, 7, 'forward'); // "two", selected, then the person picks a choice
+  $<HTMLInputElement>('#choice').focus();
+  commandV();
+  expect(document.activeElement).toBe(reply);
+  expect([reply.selectionStart, reply.selectionEnd]).toEqual([7, 7]);
+
+  // A backward selection collapses to its end too (the larger offset).
+  reply.setSelectionRange(0, 3, 'backward');
+  $<HTMLInputElement>('#choice').focus();
+  commandV();
+  expect([reply.selectionStart, reply.selectionEnd]).toEqual([3, 3]);
+});
+
+test.skipIf(!hasDom)('a cover over the thread: a full-screen file or a guided review hides the reply box', () => {
+  for (const cover of ['<div class="ib-view ib-full"><button id="b">x</button></div>', '<div class="ib-viewer"><button id="b">x</button></div>']) {
+    page(`<section><textarea id="reply"></textarea></section>${cover}`);
+    $<HTMLTextAreaElement>('#reply').focus();
+    $<HTMLButtonElement>('#b').focus();
+    commandV();
+    expect(document.activeElement).toBe($('#b'));
+  }
+  // A file beside the thread (not full screen) covers nothing.
+  page(`<section><textarea id="reply"></textarea></section><div class="ib-view"><button id="b">x</button></div>`);
+  $<HTMLTextAreaElement>('#reply').focus();
+  $<HTMLButtonElement>('#b').focus();
+  commandV();
+  expect(document.activeElement).toBe($('#reply'));
+  // A field inside the full-screen file (a comment box on it) is reachable.
+  page(`<div class="ib-view ib-full"><textarea id="comment"></textarea><button id="b">x</button></div>`);
+  $<HTMLTextAreaElement>('#comment').focus();
+  $<HTMLButtonElement>('#b').focus();
+  commandV();
+  expect(document.activeElement).toBe($('#comment'));
+});
+
+test.skipIf(!hasDom)('something drawn over the field (a sheet, a popover): left alone', () => {
+  page(`<textarea id="reply"></textarea><div id="sheet"><button id="b">x</button></div>`);
+  const reply = $<HTMLTextAreaElement>('#reply');
+  const saved = document.elementFromPoint;
+  try {
+    reply.focus();
+    $<HTMLButtonElement>('#b').focus();
+    document.elementFromPoint = () => $('#sheet');
+    commandV();
+    expect(document.activeElement).toBe($('#b'));
+    // The field itself on top: the paste follows it.
+    document.elementFromPoint = () => reply;
+    commandV();
+    expect(document.activeElement).toBe(reply);
+  } finally {
+    document.elementFromPoint = saved;
+  }
 });
 
 test.skipIf(!hasDom)('several fields: a ⌘V on a choice, a button or the page goes back to the field last written in, caret kept', () => {

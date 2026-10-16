@@ -13,19 +13,29 @@
  * So: the window remembers the last text field that had focus (the reply
  * box, a question card's note or Other field, compose, any input), and when a
  * ⌘V (Ctrl+V off macOS) arrives while focus is on something that takes no
- * text, it puts focus back in that field, with its caret or selection where
- * the person left it, before the browser runs the paste. The keydown is never
+ * text, it puts focus back in that field, the caret where the person left it
+ * (a range they had selected collapses to its end, so the dictation replaces
+ * nothing), before the browser runs the paste. The keydown is never
  * cancelled, so the browser's own paste runs (Chrome runs it after the page
  * has handled the keydown), now into the field. Nothing changes when focus is
  * already in a text field, inside a frame (an attached HTML page), or when
- * the field is gone, hidden, disabled or read-only, or sits outside an open
- * modal dialog.
+ * the field is gone, hidden, disabled or read-only, sits outside a cover over
+ * the thread (a full-screen file, a guided review, an open modal dialog), or
+ * has something else drawn over it.
  */
 
 import { isModKeyHeld } from '@plannotator/ui/utils/platform';
 
 /** Input types that take typed text. */
-const TEXT_INPUT_TYPES = new Set(['text', 'search', 'url', 'email', 'tel', 'password', 'number', '']);
+const TEXT_INPUT_TYPES = new Set(['text', 'search', 'url', 'email', 'tel', 'password', 'number']);
+
+/**
+ * What covers the thread while it stays laid out under it: a file shown full
+ * screen (`.ib-view.ib-full`, fixed over the window), an open guided review
+ * (`.ib-viewer`, over the thread pane) and a modal dialog. A field outside
+ * such a cover is hidden from the person, so a paste must not go into it.
+ */
+const COVERS = '.ib-view.ib-full, .ib-viewer, dialog[open], [aria-modal="true"]';
 
 type TextField = HTMLTextAreaElement | HTMLInputElement | HTMLElement;
 
@@ -36,10 +46,44 @@ export function isTextField(target: EventTarget | null | undefined): target is T
   return target.isContentEditable;
 }
 
-/** A ⌘V / Ctrl+V keydown (Shift allowed: paste and match style). */
-export function isPasteKey(event: Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'altKey' | 'isComposing'>, mod: (e: { metaKey: boolean; ctrlKey: boolean }) => boolean = isModKeyHeld): boolean {
+type KeyFields = Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'altKey' | 'isComposing'>;
+
+/**
+ * A ⌘V / Ctrl+V keydown (Shift allowed: paste and match style). When the key
+ * names a Latin letter, that letter decides: on Dvorak, Colemak-DH or Workman
+ * the key in V's place types another letter, and ⌘ with it is that letter's
+ * command (⌘K, ⌘D, ⌘C), not paste. Only a key that names no Latin letter (a
+ * Cyrillic or Greek layout, where the shortcut still pastes) is read by its
+ * physical place.
+ */
+export function isPasteKey(event: KeyFields, mod: (e: { metaKey: boolean; ctrlKey: boolean }) => boolean = isModKeyHeld): boolean {
   if (event.isComposing || event.altKey || !mod(event)) return false;
-  return event.key === 'v' || event.key === 'V' || event.code === 'KeyV';
+  if (/^[a-z]$/i.test(event.key)) return event.key.toLowerCase() === 'v';
+  return event.code === 'KeyV';
+}
+
+function isModal(dialog: HTMLDialogElement): boolean {
+  try {
+    return dialog.matches(':modal');
+  } catch {
+    return true; // no :modal in this browser: count an open dialog as modal (refusing is the safe side)
+  }
+}
+
+/** Something else is drawn over the field's first line (a sheet, a popover, a cover the selectors do not name). */
+function drawnOver(field: TextField): boolean {
+  const doc = field.ownerDocument;
+  const view = doc.defaultView;
+  if (!view || typeof doc.elementFromPoint !== 'function') return false;
+  const rect = field.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + Math.min(rect.height / 2, 12);
+  // Scrolled out of view inside its pane: nothing covers it, the person scrolled.
+  if (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight) return false;
+  const hit = doc.elementFromPoint(x, y);
+  if (!hit) return false;
+  // The field itself, or the box around it (a highlight mirror drawn behind a transparent textarea).
+  return !(hit === field || field.contains(hit) || hit.contains(field));
 }
 
 function usable(field: TextField): boolean {
@@ -47,14 +91,12 @@ function usable(field: TextField): boolean {
   if ((field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) && (field.disabled || field.readOnly)) return false;
   if (field.closest('[inert], [aria-hidden="true"]')) return false;
   if (field.getClientRects().length === 0) return false;
-  // An open modal dialog owns the keys: a field behind it is not a paste target.
-  let modals: Element[];
-  try {
-    modals = [...field.ownerDocument.querySelectorAll('dialog[open]:modal, [aria-modal="true"]')];
-  } catch {
-    modals = [...field.ownerDocument.querySelectorAll('dialog[open], [aria-modal="true"]')];
+  // A cover over the thread owns the screen: a field outside it is hidden, though still laid out.
+  for (const cover of field.ownerDocument.querySelectorAll(COVERS)) {
+    if (cover instanceof HTMLDialogElement && !isModal(cover)) continue;
+    if (!cover.contains(field)) return false;
   }
-  return modals.every((modal) => modal.contains(field));
+  return !drawnOver(field);
 }
 
 /**
@@ -64,23 +106,20 @@ function usable(field: TextField): boolean {
 export function installPasteFollowsField(win: Window = window, mod?: (e: { metaKey: boolean; ctrlKey: boolean }) => boolean): () => void {
   const doc = win.document;
   let last: TextField | null = null;
-  let selection: { start: number | null; end: number | null; direction: 'forward' | 'backward' | 'none' | null } | null = null;
+  // Where each field's caret was when it lost focus. Kept apart from `last`, so focusing the field
+  // again (which fires focusin) cannot clear it before it is put back.
+  const carets = new WeakMap<TextField, number>();
 
   const remember = (event: FocusEvent) => {
-    const target = event.target;
-    if (isTextField(target)) {
-      last = target;
-      selection = null;
-    }
+    if (isTextField(event.target)) last = event.target;
   };
-  // Where the caret was when the field lost focus, to put it back there.
   const leave = (event: FocusEvent) => {
     const target = event.target;
-    if (target !== last || !(target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement)) return;
+    if (!(target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) || !isTextField(target)) return;
     try {
-      selection = { start: target.selectionStart, end: target.selectionEnd, direction: target.selectionDirection };
+      if (target.selectionEnd !== null) carets.set(target, target.selectionEnd);
     } catch {
-      selection = null; // input types without a selection (number, email)
+      // input types without a selection (number, email)
     }
   };
 
@@ -91,14 +130,17 @@ export function installPasteFollowsField(win: Window = window, mod?: (e: { metaK
     if (isTextField(active) || active instanceof HTMLIFrameElement) return;
     const field = last;
     if (!field || !usable(field)) return;
+    // Read before focus(): a range the person selected earlier, no longer visible, would otherwise
+    // be what the paste replaces.
+    const caret = carets.get(field);
     field.focus({ preventScroll: true });
     if (doc.activeElement !== field) return;
-    if (selection && (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement)) {
+    if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
       try {
         const length = field.value.length;
-        const start = Math.min(selection.start ?? length, length);
-        const end = Math.min(selection.end ?? start, length);
-        field.setSelectionRange(start, end, selection.direction ?? 'none');
+        const at = Math.min(caret ?? field.selectionEnd ?? length, length);
+        // Collapsed at its end: the paste lands where the caret was and replaces nothing.
+        field.setSelectionRange(at, at, 'none');
       } catch {
         // input types without a selection
       }
