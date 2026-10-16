@@ -371,6 +371,8 @@ const ERROR_STATUS: Record<string, number> = {
   // Compose: a new thread the person starts (packages/server/inbox-compose.ts).
   already_delivered: 409,
   not_addressed: 422,
+  // A thread name another open thread of the project already has.
+  thread_name_taken: 409,
   draft_conflict: 409,
   upload_refused: 422,
   upload_too_large: 413,

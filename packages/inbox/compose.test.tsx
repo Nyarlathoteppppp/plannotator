@@ -370,3 +370,46 @@ test.skipIf(!hasDom)('a thread name: out of the way until pressed, kept by a dra
   const row = sections.flatMap((s) => s.threads).find((t) => t.subject === 'I want to explore what adding a board would look like')!;
   expect(row.thread_name).toBe('Kanban board');
 });
+
+test.skipIf(!hasDom)('a thread name another open thread has: Send is refused (409) and says so beside the marked field; the limit counts characters, not UTF-16 units', async () => {
+  await poll('ses_taken', 'claude-code', projects[0]!);
+  // An open thread of the project already has the name.
+  const { serverSession } = JSON.parse((await loopback('/api/inbox/settings')).text) as { serverSession: string };
+  const first = await loopback(
+    '/api/inbox/messages',
+    'POST',
+    JSON.stringify({ serverSession, to: { session: 'ses_taken' }, body: 'Relay retry budget, five a minute.', idempotency_key: 'taken-1', thread_name: 'Relay budget' }),
+  );
+  expect(first.status).toBe(200);
+
+  const el = await renderApp();
+  await openCompose(el);
+  await until(() => dialog()!.querySelector('[data-compose-to^="ses_"]') !== null, 'To prefilled');
+  act(() => (dialog()!.querySelector('[data-compose-thread-name-add]') as HTMLButtonElement).click());
+  const input = () => dialog()!.querySelector('[data-compose-thread-name] input') as HTMLInputElement;
+  await until(() => !!input(), 'the field');
+  const fill = (value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input(), value);
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+  // 130 emoji (260 UTF-16 units): kept to 120 characters, as the server counts them.
+  fill('🎉'.repeat(130));
+  expect([...input().value].length).toBe(120);
+
+  type('Another idea about the relay.');
+  fill('relay  BUDGET');
+  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
+  await until(() => dialog()!.querySelector('[data-compose-error]') !== null, 'the refusal');
+  expect(dialog()!.querySelector('[data-compose-error]')!.textContent).toContain('already named "relay  BUDGET"');
+  expect(dialog()!.querySelector('[data-compose-thread-name]')!.hasAttribute('data-invalid')).toBe(true);
+  expect(input().getAttribute('aria-invalid')).toBe('true');
+  // Editing the name clears the mark and the message.
+  fill('Relay budget v2');
+  expect(dialog()!.querySelector('[data-compose-thread-name]')!.hasAttribute('data-invalid')).toBe(false);
+  expect(dialog()!.querySelector('[data-compose-error]')).toBeNull();
+  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
+  await until(() => dialog() === null, 'sent');
+});

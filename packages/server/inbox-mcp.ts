@@ -16,7 +16,7 @@ import { isAbsolute } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import { QUESTION_AUTHORING_GUIDE } from "@plannotator/core/question-block";
-import { INBOX_NAME_THIS_THREAD_HINT, INBOX_SECTIONS, PERSON_THREAD_NAMING_FIELD, INBOX_THREAD_NAME_MAX, type InboxGuideRef, type InboxSectionId, type InboxLine, type InboxMessage, type InboxProject } from "@plannotator/core/inbox-types";
+import { INBOX_NAME_THIS_THREAD_HINT, INBOX_SECTIONS, INBOX_THREAD_NAME_MAX, type InboxGuideRef, type InboxSectionId, type InboxLine, type InboxMessage, type InboxProject } from "@plannotator/core/inbox-types";
 import { INBOX_WAKES_META_KEY } from "@plannotator/shared/inbox/connection";
 import { inboxBodyForAgent } from "@plannotator/shared/inbox/uploads";
 import { bodyShowsLocalImages, captureInboxInlineImages } from "@plannotator/shared/inbox/inline-images";
@@ -120,7 +120,7 @@ export const SEND_ROUTING_FIELDS = {
     .string()
     .optional()
     .describe(
-      `A short thread name (1-${INBOX_THREAD_NAME_MAX} characters, one line). Without it, your messages join your session's open thread in this project (a new one the first time, or once the person resolved it; a thread keeps its first subject). With it, the same name in this project is the same open thread, across sessions (compared without case, spacing or invisible characters). Use it to split separate work, or to join another session's thread. Ignored with reply_to, with one exception: in a thread the person started (read_thread or wait_for_reply says name_this_thread: true, or the Inbox's message asks you to name it), your reply's \`thread\` names that thread, once: a few words saying what it is about.`,
+      `A short thread name (1-${INBOX_THREAD_NAME_MAX} characters, one line). Without it, your messages join your session's open thread in this project (a new one the first time, or once the person resolved it; a thread keeps its first subject). With it, the same name in this project is the same open thread, across sessions (compared without case, spacing or invisible characters). Use it to split separate work, or to join another session's thread. Ignored with reply_to, with one exception: in a thread the person started (read_thread or wait_for_reply says name_this_thread: true, or the Inbox's message asks you to name it), your reply's \`thread\` names that thread, once: a few words saying what it is about, not the name of another open thread in the project.`,
     ),
   reply_to: z.string().optional().describe("A message id: post this as a reply in that message's thread."),
   supersedes: z
@@ -462,7 +462,9 @@ export async function sendAgentMessage(
       cursor: store.messageCursor(message.id) ?? store.cursor(),
       url: threadUrl(context.baseUrl(), message.thread_id),
       // A reply into a thread the person started that this agent may name (approval "inbox-agent-names-own-thread").
-      ...(result.naming?.status === "named" ? { named_thread: result.naming.name } : {}),
+      // `named_thread` is the name set, or null while the thread stays unnamed (`naming_refused` says why a name was refused).
+      ...(result.naming ? { named_thread: result.naming.status === "named" ? result.naming.name : null } : {}),
+      ...(result.naming?.status === "refused" ? { naming_refused: result.naming.code } : {}),
       ...(result.naming && result.naming.status !== "named" ? { name_this_thread: true } : {}),
     },
   };
@@ -472,8 +474,11 @@ export async function sendAgentMessage(
 export function namingLine(naming: InboxSendResult["naming"] | null | undefined): string {
   if (!naming) return "";
   if (naming.status === "named") return ` Named this thread: ${naming.name}.`;
-  if (naming.status === "refused") return ` The thread was not named: ${naming.reason} Pass a valid \`${PERSON_THREAD_NAMING_FIELD}\` (a few words) on a later reply to name it.`;
-  return ` This thread the person started has no name yet: pass \`${PERSON_THREAD_NAMING_FIELD}\` (a few words saying what it is about) on a later reply to name it, once.`;
+  if (naming.status === "refused" && naming.code === "thread_name_taken") {
+    return ` The thread was not named: ${naming.reason} Pick another name and reply again with it in \`thread\`.`;
+  }
+  if (naming.status === "refused") return ` The thread was not named: ${naming.reason} Pass a valid \`thread\` (a few words) on a later reply to name it.`;
+  return " This thread the person started has no name yet: pass `thread` (a few words saying what it is about) on a later reply to name it, once.";
 }
 
 export function createInboxMcpServer(context: InboxMcpContext): McpServer {

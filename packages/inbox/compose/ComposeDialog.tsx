@@ -119,6 +119,8 @@ export function ComposeDialog(props: ComposeDialogProps) {
   const [picker, setPicker] = useState(false);
   const [question, setQuestion] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The server refused the thread name (409 `thread_name_taken`): the field is marked until the name changes.
+  const [nameTaken, setNameTaken] = useState(false);
   const [conflict, setConflict] = useState<DraftView | null>(null);
   const [busy, setBusy] = useState<null | 'send' | 'save' | 'delete'>(null);
   const [dropping, setDropping] = useState(false);
@@ -212,6 +214,9 @@ export function ComposeDialog(props: ComposeDialogProps) {
       if (cause instanceof InboxApiError && cause.code === 'session_not_live') {
         void load();
         setError('That session is not live any more: nothing was sent. Pick a live session, or save it as a draft.');
+      } else if (cause instanceof InboxApiError && cause.code === 'thread_name_taken') {
+        setNameTaken(true);
+        setError(cause.message);
       } else if (cause instanceof InboxApiError && cause.code === 'project_unresolved') {
         // git did not answer in time (#1919): the server's words are for an agent; the person presses Send again.
         setError('Could not tell which project that session works in: git did not answer in time. Nothing was sent; press Send again.');
@@ -494,8 +499,10 @@ export function ComposeDialog(props: ComposeDialogProps) {
           )}
           <ThreadNameField
             value={threadName}
+            invalid={nameTaken}
             onChange={(value) => {
               setThreadName(value);
+              setNameTaken(false);
               if (error) setError(null);
             }}
             onDone={() => textRef.current?.focus()}

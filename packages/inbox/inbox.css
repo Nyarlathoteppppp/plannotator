@@ -2328,6 +2328,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .pn-inbox .ib-cp-tname-add:hover { color: var(--foreground); border-color: var(--muted-foreground); }
 .ib-key.ib-cp-tname { margin-left: auto; flex: none; align-items: center; gap: 2px; padding: 0 2px 0 6px; height: 22px; color: var(--foreground); max-width: 60%; }
 .ib-key.ib-cp-tname:focus-within { border-color: var(--ring); }
+.ib-key.ib-cp-tname[data-invalid] { border-color: var(--destructive); }
 .pn-inbox .ib-cp-tname-in { min-width: 0; width: auto; border: 0; outline: none; background: transparent; color: inherit; font: inherit; padding: 0; }
 .pn-inbox .ib-cp-tname-in::placeholder { color: var(--muted-foreground); }
 .pn-inbox .ib-cp-tname-x { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
@@ -2405,7 +2406,9 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   .pn-inbox .ib-cp-tname-add, .ib-key.ib-cp-tname { position: relative; height: 28px; }
   .pn-inbox .ib-cp-tname-add::after { content: ''; position: absolute; inset: -8px -4px; }
   .pn-inbox .ib-cp-tname-in { font-size: 16px; }
-  .pn-inbox .ib-cp-tname-x { width: 28px; height: 28px; }
+  /* The × is drawn 28 px and takes a 44 px hit area. */
+  .pn-inbox .ib-cp-tname-x { width: 28px; height: 28px; position: relative; }
+  .pn-inbox .ib-cp-tname-x::after { content: ''; position: absolute; inset: -8px; }
   .ib-cp-foot { min-height: 52px; }
   .pn-inbox .ib-cp-clip { width: 44px; height: 44px; }
   .ib-cp-ask { flex-wrap: wrap; border-radius: 0; }

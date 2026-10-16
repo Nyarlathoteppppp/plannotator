@@ -7,12 +7,17 @@
  * it, so the two never differ. Never throws.
  */
 
+import { findQuestionBlocks, parseQuestionBlock } from "./question-block";
+
 /**
  * How wide a subject the person's own thread gets, in columns: a CJK or emoji
  * character counts two, so a Japanese subject is about as wide on screen as
  * an English one. The ellipsis counts one.
  */
 export const PERSON_THREAD_SUBJECT_COLUMNS = 60;
+
+/** Bidi controls: never in a subject, where they could reorder what the list shows. */
+const BIDI_CONTROLS = /[؜‎‏‪-‮⁦-⁩]/gu;
 
 /**
  * The subject of a thread the person starts:
@@ -32,11 +37,15 @@ export const PERSON_THREAD_SUBJECT_COLUMNS = 60;
  *     plus "…"; text without spaces (CJK) is cut between two characters.
  *  7. A body with no words: the first image's alt text or file name, else the
  *     first attached file's name (`files`), else "Image", else the first line
- *     of code.
+ *     of code, else the first question's prompt (a body that is only a
+ *     `:::question` block), else the first line with anything on it (an
+ *     unclosed directive).
  *
- * Null only when there is nothing at all to name it by.
+ * Bidi controls never reach the subject. Null only for a body with nothing on
+ * any line.
  */
-export function derivePersonThreadSubject(body: string, options: { files?: readonly string[] } = {}): string | null {
+export function derivePersonThreadSubject(input: string, options: { files?: readonly string[] } = {}): string | null {
+  const body = typeof input === "string" ? input.replace(BIDI_CONTROLS, "") : "";
   const images: { alt: string; src: string }[] = [];
   let code: string | null = null;
   let words: string | null = null;
@@ -79,7 +88,7 @@ export function derivePersonThreadSubject(body: string, options: { files?: reado
     const name = fileNameOf(image.src);
     if (name) return cutColumns(name, PERSON_THREAD_SUBJECT_COLUMNS);
   }
-  const files = (options.files ?? []).map((name) => name.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const files = (options.files ?? []).map((name) => name.replace(BIDI_CONTROLS, "").replace(/\s+/g, " ").trim()).filter(Boolean);
   if (files.length > 0) {
     const more = files.length - 1;
     const tail = more === 0 ? "" : ` and ${more} more file${more === 1 ? "" : "s"}`;
@@ -87,7 +96,36 @@ export function derivePersonThreadSubject(body: string, options: { files?: reado
   }
   if (images.length > 0) return "Image";
   if (code) return cutColumns(code.replace(/\s+/g, " "), PERSON_THREAD_SUBJECT_COLUMNS);
+  const prompt = firstQuestionPrompt(body);
+  if (prompt) return shortenSubject(prompt);
+  return firstLineSubject(body);
+}
+
+/** The prompt of the body's first `:::question` block, as plain words. */
+function firstQuestionPrompt(body: string): string | null {
+  if (!body.includes(":::question")) return null;
+  for (const location of findQuestionBlocks(body, { frontmatter: false })) {
+    const lines = location.text.replace(/\r\n?/g, "\n").split("\n");
+    const inner = lines.slice(1, lines.length > 1 && lines.at(-1)!.trim() === ":::" ? -1 : undefined);
+    const prompt = parseQuestionBlock(location.directiveKind, inner.join("\n"))?.prompt;
+    const plain = prompt ? plainSubjectLine(prompt.replace(/\s+/g, " ").trim(), []) : "";
+    if (plain) return plain;
+  }
   return null;
+}
+
+/** The first line with anything on it: its words when it has some (directive and fence marks skipped), else the line itself. */
+function firstLineSubject(body: string): string | null {
+  let first: string | null = null;
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    first ??= line;
+    if (/^(?:`{3,}|~{3,}|:::)/.test(line)) continue;
+    const plain = plainSubjectLine(line, []);
+    if (plain) return shortenSubject(plain);
+  }
+  return first === null ? null : cutColumns(first.replace(/\s+/g, " "), PERSON_THREAD_SUBJECT_COLUMNS);
 }
 
 /** One markdown line as plain words; the images on it are added to `images`. */
@@ -120,21 +158,35 @@ function plainSubjectLine(line: string, images: { alt: string; src: string }[]):
 }
 
 const FILLER_WORD = "(?:so|ok|okay|alright|all right|well|right|anyway|anyways|yeah|basically)";
-const ADDRESSEE = "(?:claude|codex|pi|opencode|amp|gemini|cursor|droid|there|team|buddy|friend|folks|all)";
+/** An agent's name: "Hey Claude can you…" needs no comma after it. */
+const AGENT_NAME = "(?:claude|codex|pi|opencode|amp|gemini|cursor|droid)";
+/** A word that is an addressee only before punctuation: "Hey there, …", never "Hey there is a bug". */
+const ADDRESSEE_WORD = "(?:there|team|buddy|friend|folks|all|everyone)";
 /**
- * A filler counts only before a comma or dash, before another filler, or
- * before words that start a request ("So I want…", not "So many tests…").
+ * What ends a greeting or filler: punctuation followed by a space or the end,
+ * or a dash with spaces around it. A dash inside a word ("Right-click",
+ * "Hi-DPI", "Well-known", "So-called") never does.
+ */
+const SEPARATOR = "(?:\\s*[,.!:;]+(?=\\s|$)\\s*|\\s+[—–-]+\\s+)";
+/**
+ * A filler counts only before a separator, before another filler, or before
+ * words that start a request ("So I want…", not "So many tests…").
  */
 const FILLER_LEAD = new RegExp(
-  `^${FILLER_WORD}(?:\\s*[,.!:;—–-]+\\s*|\\s+(?=(?:${FILLER_WORD.slice(3, -1)}|um+|uh+|i|i'm|i've|i'd|i'll|we|we're|we've|let's|can|could|would|will|please|quick|just|here|what|how|why|is|are|do|does|the|this)\\b))`,
+  `^${FILLER_WORD}(?:${SEPARATOR}|\\s+(?=(?:${FILLER_WORD.slice(3, -1)}|um+|uh+|i|i'm|i've|i'd|i'll|we|we're|we've|let's|can|could|would|will|please|quick|just|here|what|how|why|is|are|do|does|the|this)\\b))`,
   "iu",
 );
 /** "Hey Claude can you…": a greeting needs no comma. */
-const GREETING = new RegExp(`^(?:hey|hi|hello|yo)(?:\\s+${ADDRESSEE})?(?:\\s*[,.!:;—–-]+\\s*|\\s+)`, "iu");
+const GREETING = new RegExp(
+  `^(?:hey|hi|hello|yo)(?:\\s+${AGENT_NAME}(?:${SEPARATOR}|\\s+)|\\s+${ADDRESSEE_WORD}${SEPARATOR}|${SEPARATOR}|\\s+)`,
+  "iu",
+);
 /** A hesitation never starts what the person means. */
-const HESITATION = /^(?:um+|uh+|erm+|hmm+|ah+)(?:\s*[,.!:;—–-]+\s*|\s+)/iu;
+const HESITATION = new RegExp(`^(?:um+|uh+|erm+|hmm+|ah+)(?:${SEPARATOR}|\\s+)`, "iu");
+/** What is left when the greeting was the whole message: a name, or nothing. */
+const ONLY_A_NAME = new RegExp(`^(?:${AGENT_NAME}|${ADDRESSEE_WORD})?[\\s,.!:;—–-]*$`, "iu");
 
-/** "Hey Claude, so I want to…" → "I want to…". */
+/** "Hey Claude, so I want to…" → "I want to…"; "Hey Claude" alone stays as it is. */
 function dropFiller(text: string): string {
   let out = text;
   for (let i = 0; i < 6; i += 1) {
@@ -142,7 +194,7 @@ function dropFiller(text: string): string {
     if (!match || match[0].length >= out.length) break;
     out = out.slice(match[0].length).trimStart();
   }
-  if (out === text) return text;
+  if (out === text || ONLY_A_NAME.test(out)) return text;
   return out.replace(/^\p{Ll}/u, (letter) => letter.toLocaleUpperCase());
 }
 
@@ -214,7 +266,8 @@ function firstSentence(text: string): string {
     }
     if (ch === "." && !ellipsis) {
       const word = /(\S+)$/.exec(text.slice(0, i))?.[1]?.toLowerCase() ?? "";
-      if (ABBREVIATIONS.has(word) || /^\p{L}$/u.test(word)) continue;
+      // "e.g", "Dr", a lone initial, or single letters with dots ("U.S", "a.m").
+      if (ABBREVIATIONS.has(word) || /^(?:\p{L}\.)*\p{L}$/u.test(word)) continue;
     }
     end = after;
     break;

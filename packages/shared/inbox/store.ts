@@ -65,7 +65,7 @@ import {
   type InboxThread,
   type InboxThreadSummary,
   checkInboxThreadName,
-  PERSON_THREAD_NAMING_TARGET,
+  type InboxThreadNaming,
   inboxThreadNameKey,
   isInboxNote,
 } from "@plannotator/core/inbox-types";
@@ -155,11 +155,13 @@ export interface InboxSendResult {
   replayed: boolean;
   /**
    * A reply into a thread the person started that this agent may still name
-   * (`canNameThread`): `named` when its `thread` (or `subject`) named the
-   * thread, `refused` (with why) when that was not a valid thread name,
-   * `unnamed` when it gave none. Absent everywhere else, and on a replay.
+   * (`canNameThread`): `named` when its `thread` named the thread, `refused`
+   * (with a code and why) when that name was not valid or another open thread
+   * of the project has it, `unnamed` when it gave none. A replay answers what
+   * the first call answered (kept on the reply as `thread_naming`). Absent
+   * everywhere else.
    */
-  naming?: { status: "named"; name: string } | { status: "refused"; reason: string } | { status: "unnamed" };
+  naming?: InboxThreadNaming;
 }
 
 export interface InboxAnswerEntry {
@@ -702,6 +704,29 @@ export class InboxStore {
   /** May this agent session name the thread now? See `threadNamers`. */
   canNameThread(threadId: string, session: string | null | undefined): boolean {
     return !!session && this.threadNamers(threadId).includes(session);
+  }
+
+  /**
+   * `canNameThread` for a reply about to be written: once the address moved
+   * and no agent has replied yet, this sender is about to be the first one.
+   */
+  private mayNameWithReply(threadId: string, session: string | null): boolean {
+    if (!session) return false;
+    const namers = this.threadNamers(threadId);
+    if (namers.includes(session)) return true;
+    if (namers.length === 0 || !this.readdressed.has(threadId)) return false;
+    return !(this.threadMembers.get(threadId) ?? []).some((member) => this.messages.get(member)?.author.kind === "agent");
+  }
+
+  /**
+   * Does another OPEN thread of the project already have this name? Naming a
+   * thread the person started refuses such a name: a later send with it would
+   * otherwise move from that thread (perhaps another session's work) into
+   * this one, which is addressed to someone else.
+   */
+  private threadNameTaken(projectId: string, name: string, exceptRoot: string | null): boolean {
+    const roots = this.namedThreads.get(`${projectId}\0${inboxThreadNameKey(name)}`) ?? [];
+    return roots.some((rootId) => rootId !== exceptRoot && !this.isResolved(rootId));
   }
 
   thread(threadId: string): InboxThread | null {
@@ -1508,6 +1533,8 @@ export class InboxStore {
       replyTo = parent.id;
     }
     if (!this.projectsById.has(projectId)) throw new InboxError("project_not_found", `No project ${projectId}.`);
+    // A reply's `thread` routes nothing; it may name a thread the person started (below).
+    const replyThread = replyTo && typeof input.thread === "string" && input.thread.trim() !== "" ? input.thread.trim() : null;
 
     const supersedes = this.normalizeSupersedes(input.supersedes);
     const key = input.idempotency_key?.trim() || null;
@@ -1515,10 +1542,13 @@ export class InboxStore {
       for (const message of this.messages.values()) {
         if (message.project_id !== projectId || message.idempotency_key !== key || message.author.kind !== "agent") continue;
         // A retry is the same call: the same body, reply target, thread
-        // name (compared as routing compares names) and superseded ids. The
-        // thread it joined is the first call's, whatever the routing would
-        // say now.
-        const sameName = inboxThreadNameKey(message.thread_name ?? "") === inboxThreadNameKey(threadName ?? "");
+        // name (a reply's `thread` included; compared as routing compares
+        // names) and superseded ids. The thread it joined is the first
+        // call's, whatever the routing would say now, and so is what its
+        // naming came to.
+        const sameName =
+          inboxThreadNameKey(message.thread_name ?? "") === inboxThreadNameKey(threadName ?? "") &&
+          inboxThreadNameKey(message.reply_thread ?? "") === inboxThreadNameKey(replyThread ?? "");
         const sameGuide = (message.guide?.input_sha256 ?? null) === (input.guide?.input_sha256 ?? null);
         const sameSupersedes = [...(message.supersedes ?? [])].sort().join("\n") === [...supersedes].sort().join("\n");
         if (message.body !== body || message.reply_to !== replyTo || !sameName || !sameGuide || !sameSupersedes) {
@@ -1528,11 +1558,36 @@ export class InboxStore {
             { message_id: message.id },
           );
         }
-        return { message: this.wire(message), replayed: true };
+        return { message: this.wire(message), replayed: true, ...(message.thread_naming ? { naming: message.thread_naming } : {}) };
       }
     }
 
     if (!replyTo) threadId = this.routeThread(projectId, input.author.session, threadName);
+
+    // A reply into a thread the person started may name it, once (approval
+    // "inbox-agent-names-own-thread"): its `thread`, checked by the
+    // thread-name rules, and refused when another open thread of the project
+    // already has the name (`threadNameTaken`). Decided before the reply is
+    // written and kept on it (`thread_naming`), so a retry answers the same.
+    let naming: InboxThreadNaming | undefined;
+    if (replyTo && threadId && this.mayNameWithReply(threadId, input.author.session)) {
+      if (replyThread === null) {
+        naming = { status: "unnamed" };
+      } else {
+        const checked = checkInboxThreadName(replyThread);
+        if (!checked.ok) {
+          naming = { status: "refused", code: "invalid_thread_name", reason: `The name ${checked.message}` };
+        } else if (this.threadNameTaken(projectId, checked.name, threadId)) {
+          naming = {
+            status: "refused",
+            code: "thread_name_taken",
+            reason: `Another open thread in this project is already named "${checked.name}".`,
+          };
+        } else {
+          naming = { status: "named", name: checked.name };
+        }
+      }
+    }
 
     const at = this.stamp();
     const id = inboxId("msg");
@@ -1562,6 +1617,8 @@ export class InboxStore {
       ...(input.guide ? { guide: input.guide } : {}),
       ...(input.base_path ? { base_path: input.base_path } : {}),
       ...(input.wakes === true ? { wakes: true } : {}),
+      ...(replyThread !== null ? { reply_thread: replyThread } : {}),
+      ...(naming ? { thread_naming: naming } : {}),
     };
     this.appendMessage(message, at);
     for (const question of parsed) {
@@ -1597,38 +1654,22 @@ export class InboxStore {
       const record = this.questions.get(questionId)!;
       this.appendQuestion({ ...record, superseded_by: by, ...(record.decision_draft ? { decision_draft: null } : {}) }, at);
     }
-    // A reply into a thread the person started may name it, once (approval
-    // "inbox-agent-names-own-thread"). Decided after the reply is written, so
-    // "the first agent to reply" (a moved address) can be this sender. The
-    // name is the reply's `thread` (else its `subject`), checked by the
-    // thread-name rules; `PERSON_THREAD_NAMING_TARGET` says which field of the
-    // root it sets. The root is written again with it and `named_by`:
-    // append-only, and a replay reads the same last root line (`apply`
-    // indexes a name it gains, in seq order, so routing replays the same).
-    let naming: InboxSendResult["naming"];
-    if (replyTo && threadId && this.canNameThread(threadId, input.author.session)) {
-      const given = [input.thread, input.subject].find((value) => typeof value === "string" && value.trim() !== "");
-      if (given === undefined) {
-        naming = { status: "unnamed" };
-      } else {
-        const checked = checkInboxThreadName(given);
-        if (!checked.ok) {
-          naming = { status: "refused", reason: `the name ${checked.message}` };
-        } else {
-          const root = this.messages.get(threadId)!;
-          const target = PERSON_THREAD_NAMING_TARGET;
-          this.appendMessage(
-            {
-              ...root,
-              ...(target === "subject" || target === "both" ? { subject: checked.name } : {}),
-              ...(target === "thread_name" || target === "both" ? { thread_name: checked.name } : {}),
-              named_by: { kind: "agent", host: input.author.host, session: input.author.session!, message_id: id, at },
-            },
-            at,
-          );
-          naming = { status: "named", name: checked.name };
-        }
-      }
+    // The name, last: the root written again with `thread_name` and
+    // `named_by` (append-only; `apply` indexes a name it gains at that line,
+    // in seq order, so a replay routes the same). A crash between the reply
+    // line and this one leaves the reply saying `named` over an unnamed
+    // thread, which a later reply can still name; accepted, as for any
+    // half-written send.
+    if (naming?.status === "named" && threadId) {
+      const root = this.messages.get(threadId)!;
+      this.appendMessage(
+        {
+          ...root,
+          thread_name: naming.name,
+          named_by: { kind: "agent", host: input.author.host, session: input.author.session!, message_id: id, at },
+        },
+        at,
+      );
     }
     // A reply from the agent reopens nothing: a resolved thread stays resolved.
     return { message: this.wire(message), replayed: false, ...(naming ? { naming } : {}) };
@@ -2673,6 +2714,13 @@ export class InboxStore {
     }
     if (!body) throw new InboxError("validation_error", "body: write a message.", { field: "body" });
     if (!this.projectsById.has(input.project_id)) throw new InboxError("project_not_found", `No project ${input.project_id}.`);
+    if (threadName && this.threadNameTaken(input.project_id, threadName, null)) {
+      throw new InboxError(
+        "thread_name_taken",
+        `Another open thread in this project is already named "${threadName}". Pick another name, or leave it empty.`,
+        { field: "thread_name" },
+      );
+    }
     const at = this.stamp();
     const id = inboxId("msg");
     const message: InboxMessage = {

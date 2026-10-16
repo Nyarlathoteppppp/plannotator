@@ -95,7 +95,8 @@ describe("an agent names a thread the person started", () => {
     // A reply with no name: the result says the thread can still be named.
     const first = await call(client, "send_message", { body: "On it.", reply_to: sent.message.id, project_path: project, agent_session: "ses-live", agent_host: "claude-code" });
     expect(first.content[0]!.text).toContain("has no name yet: pass `thread`");
-    expect(first.structuredContent).toMatchObject({ name_this_thread: true });
+    expect(first.structuredContent).toMatchObject({ name_this_thread: true, named_thread: null });
+    expect(first.structuredContent.naming_refused).toBeUndefined();
 
     // read_thread (the caller may name it) carries the flag and the hint; another session's read does not.
     const read = await call(client, "read_thread", { thread_id: sent.message.id, agent_session: "ses-live" });
@@ -177,6 +178,26 @@ describe("an agent names a thread the person started", () => {
     // Later named sends join it.
     const joined = await call(client, "send_message", { body: "joins", thread: "board", project_path: project, agent_session: "ses-x", agent_host: "pi" });
     expect(joined.structuredContent.thread_id).toBe(sent.message.id);
+  });
+
+  test("a name another open thread has is refused, in the reply's result and in compose (409)", async () => {
+    const { server, client, project } = await setup();
+    // Session B already posts to "Auth refactor".
+    const b = await call(client, "send_message", { body: "B's work", thread: "Auth refactor", project_path: project, agent_session: "ses-b", agent_host: "pi" });
+    await poll(server, "ses-live", project);
+    const sent = (await (await compose(server, { to: { session: "ses-live" }, body: IDEA, idempotency_key: "c1" })).json()) as { message: InboxMessage };
+
+    const refused = await call(client, "send_message", { body: "ok", reply_to: sent.message.id, thread: "auth refactor", project_path: project, agent_session: "ses-live", agent_host: "claude-code" });
+    expect(refused.structuredContent).toMatchObject({ named_thread: null, naming_refused: "thread_name_taken", name_this_thread: true });
+    expect(refused.content[0]!.text).toContain("Pick another name and reply again with it in `thread`.");
+    expect((await thread(server, sent.message.id)).thread_name ?? null).toBeNull();
+    // B's next send still lands in B's thread.
+    const again = await call(client, "send_message", { body: "B again", thread: "Auth refactor", project_path: project, agent_session: "ses-b", agent_host: "pi" });
+    expect(again.structuredContent.thread_id).toBe(b.structuredContent.thread_id);
+
+    const taken = await compose(server, { to: { session: "ses-live" }, body: "another idea", idempotency_key: "c2", thread_name: "AUTH REFACTOR" });
+    expect(taken.status).toBe(409);
+    expect(((await taken.json()) as { code: string }).code).toBe("thread_name_taken");
   });
 
   test("a draft keeps the name the person typed", async () => {

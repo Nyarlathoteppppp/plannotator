@@ -562,6 +562,8 @@ describe("InboxStore invariants", () => {
             if (m.id === m.thread_id && m.started_by_person && m.thread_name != null && !named.has(m.id)) {
               named.add(m.id);
               const key = `${m.project_id}\0${nameKey(m.thread_name)}`;
+              // Naming never takes a name another open thread has (it would pull that thread's sends in).
+              expect((byName.get(key) ?? []).filter((root) => !resolved.get(root))).toEqual([]);
               byName.set(key, [...(byName.get(key) ?? []), m.id]);
             }
             continue;
@@ -590,6 +592,8 @@ describe("InboxStore invariants", () => {
             if (m.thread_name != null) {
               named.add(m.id);
               const key = `${m.project_id}\0${nameKey(m.thread_name)}`;
+              // A name the person gave in compose is refused while another open thread has it.
+              if (m.started_by_person) expect((byName.get(key) ?? []).filter((root) => !resolved.get(root))).toEqual([]);
               byName.set(key, [...(byName.get(key) ?? []), m.id]);
             }
             else if (m.author.kind === "agent" && m.author.session) bySession.set(`${m.project_id}\0${m.author.session}`, m.id);

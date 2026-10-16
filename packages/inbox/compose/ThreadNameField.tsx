@@ -6,14 +6,22 @@
  * input drawn as the outlined chip the list shows. A name given here is never
  * replaced by the agent's; without one, the agent names the thread on its
  * first reply. The Send checks it by the thread-name rules (one line, at most
- * 120 characters).
+ * 120 characters, counted as the server counts them: code points, so an emoji
+ * is one). `invalid` marks it when the server refused it (another open thread
+ * of the project already has the name).
  */
 import { useEffect, useRef, useState } from 'react';
 import { INBOX_THREAD_NAME_MAX } from '@plannotator/core/inbox-types';
 import { Icon } from '../icons';
 
-export function ThreadNameField(props: { value: string; onChange: (value: string) => void; onDone: () => void }) {
-  const { value, onChange, onDone } = props;
+/** At most `INBOX_THREAD_NAME_MAX` code points; `maxLength` would count UTF-16 units and stop an emoji name early. */
+export function capThreadName(value: string): string {
+  const points = [...value];
+  return points.length > INBOX_THREAD_NAME_MAX ? points.slice(0, INBOX_THREAD_NAME_MAX).join('') : value;
+}
+
+export function ThreadNameField(props: { value: string; onChange: (value: string) => void; onDone: () => void; invalid?: boolean }) {
+  const { value, onChange, onDone, invalid = false } = props;
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
@@ -47,20 +55,20 @@ export function ThreadNameField(props: { value: string; onChange: (value: string
   }
 
   return (
-    <span className="ib-key ib-cp-tname" data-compose-thread-name="">
+    <span className="ib-key ib-cp-tname" data-compose-thread-name="" data-invalid={invalid ? "" : undefined}>
       <input
         ref={inputRef}
         type="text"
         className="ib-cp-tname-in"
         aria-label="Thread name"
         placeholder="Thread name"
-        maxLength={INBOX_THREAD_NAME_MAX}
+        aria-invalid={invalid || undefined}
         spellCheck={false}
         autoComplete="off"
         dir="auto"
         value={value}
         size={Math.max(10, Math.min(28, [...value].length + 1))}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(capThreadName(event.target.value))}
         onBlur={() => {
           if (value.trim() === '') {
             onChange('');

@@ -338,6 +338,18 @@ export interface InboxMessage {
    */
   named_by?: InboxThreadNamedBy;
   /**
+   * On an agent's reply: the `thread` it carried, as given (trimmed), so a
+   * retry with the same idempotency key and another `thread` is told apart.
+   * Absent when it carried none, and on every other message.
+   */
+  reply_thread?: string;
+  /**
+   * On an agent's reply into a thread the person started that it could name:
+   * what the naming came to (`InboxThreadNaming`), so a retry answers the
+   * same. Absent everywhere else.
+   */
+  thread_naming?: InboxThreadNaming;
+  /**
    * On an agent's message: the person's 👍 Looks good (design record
    * "inbox-acknowledge", approved 2026-10-15). Silent: nothing is sent, no
    * session is woken; the thread is marked read. Null after Undo. Absent on
@@ -362,28 +374,26 @@ export type InboxThreadNamedBy =
     };
 
 /**
- * Which field of a thread the person started the agent's name sets (approval
- * "inbox-agent-names-own-thread"; the field is the owner's open question):
- * `thread_name`, the chip, which also routes later sends with that name to
- * the thread (the bold subject stays the short name the Inbox derived);
- * `subject`, the bold subject only; or `both`. The store accepts the name in
- * the reply's `thread` or `subject` field either way; the instructions name
- * `PERSON_THREAD_NAMING_FIELD`. Switching the target changes the wording of
- * the hint below, and of INBOX_NEW_THREAD_INSTRUCTION (shared/inbox/
- * connection.ts and its copy in the mod), which spell the field out.
+ * What a reply's naming of a thread the person started came to (approval
+ * "inbox-agent-names-own-thread"), kept on the reply so a retry answers the
+ * same: `named` (the thread's `thread_name` is now `name`); `refused`, with a
+ * code (`invalid_thread_name`, or `thread_name_taken` when another open
+ * thread of the project already has the name) and one sentence saying why;
+ * `unnamed` when the reply gave no `thread`.
  */
-export type PersonThreadNamingTarget = "thread_name" | "subject" | "both";
-export const PERSON_THREAD_NAMING_TARGET = "thread_name" as PersonThreadNamingTarget;
-/** The send_message field the naming instructions tell an agent to pass. */
-export const PERSON_THREAD_NAMING_FIELD: "thread" | "subject" = PERSON_THREAD_NAMING_TARGET === "subject" ? "subject" : "thread";
+export type InboxThreadNaming =
+  | { status: "named"; name: string }
+  | { status: "refused"; code: "invalid_thread_name" | "thread_name_taken"; reason: string }
+  | { status: "unnamed" };
 
 /**
  * The one line an agent is handed while a thread the person started still
  * has no name an agent gave and that agent may name it: in `wait_for_reply`
  * and `read_thread` beside `name_this_thread: true`. The wake of the thread
- * (INBOX_NEW_THREAD_INSTRUCTION) carries the same ask.
+ * (INBOX_NAME_THREAD_LINE in shared/inbox/connection.ts) carries the same ask.
  */
-export const INBOX_NAME_THIS_THREAD_HINT = `Name this thread: pass \`${PERSON_THREAD_NAMING_FIELD}\` (a few words saying what it is about) with your reply. The first name you give sets it, once.`;
+export const INBOX_NAME_THIS_THREAD_HINT =
+  "Name this thread: pass `thread` (a few words saying what it is about) with your reply. The first name you give sets it, once.";
 
 /** The one acknowledgment the window offers (plan review's 👍 says the same words). */
 export const INBOX_ACK_LABEL = "Looks good";

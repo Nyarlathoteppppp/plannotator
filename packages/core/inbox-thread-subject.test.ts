@@ -100,6 +100,37 @@ describe("derivePersonThreadSubject: a thread the person starts gets a short nam
     expect(derivePersonThreadSubject("")).toBeNull();
   });
 
+  test("a hyphenated first word is a word, not a filler and a dash", () => {
+    expect(derivePersonThreadSubject("Right-click menu is missing on threads.")).toBe("Right-click menu is missing on threads");
+    expect(derivePersonThreadSubject("Hi-DPI screenshots look blurry in the viewer.")).toBe("Hi-DPI screenshots look blurry in the viewer");
+    expect(derivePersonThreadSubject("Well-known paths should resolve from the root.")).toBe("Well-known paths should resolve from the root");
+    expect(derivePersonThreadSubject("So-called drafts never sync to the phone.")).toBe("So-called drafts never sync to the phone");
+    // A dash with spaces around it still ends a filler.
+    expect(derivePersonThreadSubject("So — I want a board view.")).toBe("I want a board view");
+  });
+
+  test("abbreviations, greetings that are words, and greetings alone", () => {
+    expect(derivePersonThreadSubject("U.S. users see the wrong date format. Fix it.")).toBe("U.S. users see the wrong date format");
+    expect(derivePersonThreadSubject("Hey there is a bug in the list sorting.")).toBe("There is a bug in the list sorting");
+    expect(derivePersonThreadSubject("Hey there, can you look at the sorting?")).toBe("Can you look at the sorting?");
+    expect(derivePersonThreadSubject("Hey Claude")).toBe("Hey Claude");
+    expect(derivePersonThreadSubject("Hey Claude!")).toBe("Hey Claude!");
+    expect(derivePersonThreadSubject("Hi")).toBe("Hi");
+  });
+
+  test("a body that is only a question block or an unclosed directive still gets a name", () => {
+    expect(derivePersonThreadSubject(":::question\nShould archived threads count in the badge?\n\n- [ ] Yes\n- [ ] No\n:::")).toBe(
+      "Should archived threads count in the badge?",
+    );
+    expect(derivePersonThreadSubject(":::note\nThe relay drops pushes after midnight.")).toBe("The relay drops pushes after midnight");
+    expect(derivePersonThreadSubject(":::note")).toBe(":::note");
+  });
+
+  test("bidi controls never reach the subject", () => {
+    expect(derivePersonThreadSubject("Fix ‮evil‬ name in the list.")).toBe("Fix evil name in the list");
+    expect(derivePersonThreadSubject("<br>", { files: ["⁧spec.md⁩"] })).toBe("spec.md");
+  });
+
   test("never wider than the limit, whatever the text", () => {
     const samples = [
       "a".repeat(300),
