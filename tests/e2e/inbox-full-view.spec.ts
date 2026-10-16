@@ -1,25 +1,29 @@
 /**
- * Full view for files (approval "inbox-full-view", A · Pill), proved in a real
- * browser against the compiled binary. Nothing is mocked: `plannotator inbox
- * --background` runs under a temp PLANNOTATOR_DATA_DIR and HOME with a
- * tailscale trap first on PATH; one agent sends an HTML page, a markdown
- * plan and a screenshot in one message through `plannotator inbox mcp`;
- * Chromium (and WebKit as an iPhone) drives the window.
+ * Full screen for files (approval "inbox-one-fullscreen", Drawer), proved in a
+ * real browser against the compiled binary. Nothing is mocked: `plannotator
+ * inbox --background` runs under a temp PLANNOTATOR_DATA_DIR and HOME with a
+ * tailscale trap first on PATH; one agent sends an HTML page, a markdown plan
+ * and a screenshot in one message through `plannotator inbox mcp`; Chromium
+ * (and WebKit as an iPhone) drives the window.
  *
- * Proves: an HTML file opens full screen straight into full view (the shared
- * hidden-tools choice, hidden by default): no header, no panel, no bottom
- * bar, the page fills the window and one floating bar is left; a pin and a
- * comment work as before and the count goes up; the count opens the Comments
- * sheet with its foot; Escape walks Plannotator's ladder and never leaves
- * full view; ⌘⇧X from the window and from inside the page toggles it; `]`
- * steps keep full view with the chip, and "Last file in this thread" at the
- * end; N/M opens the peek; the eye's choice is the cookie plan review reads,
- * remembered across a reload; on an iPhone the bar sits bottom right with 44
- * px targets.
+ * Proves: one full-screen mode. An HTML file opens full screen with its
+ * toolbar showing (pen, count, N/M, ⋯, Exit full screen, » Hide tools), the
+ * page filling the window, and plan review's shared hide-tools cookie neither
+ * read nor written; a pin and a comment work and the count goes up without
+ * opening the drawer; Hide tucks the toolbar into its corner handle, the
+ * corner and the keyboard bring it back, the pin keeps it out; the count
+ * opens the comments drawer and the page narrows beside it (remembered across
+ * a reload); ⋯ holds Open in and Download; Exit puts the file beside the
+ * thread and Full screen brings the toolbar back showing; Escape never leaves;
+ * ⌘⇧X from the window and the page tucks and shows; `]` keeps full screen
+ * with the chip; N/M opens the peek; a changed file keeps its chip and dots
+ * the handle; on an iPhone the toolbar sits bottom right with 44 px targets.
  *
  * Build the binary first (see inbox.spec.ts), then
  * `bunx playwright test -c tests/e2e/playwright.config.ts inbox-full-view.spec.ts`.
- * PNGs land in PLANNOTATOR_E2E_SHOTS_DIR (default .local/proof/full-view).
+ * PNGs land in PLANNOTATOR_E2E_SHOTS_DIR (default .local/proof/full-view):
+ * html-, markdown- and image-{showing,tucked,revealed,pinned,drawer}-{light,dark}
+ * and phone-{showing,tucked,revealed,comments}-{light,dark}, among others.
  */
 
 import { devices, expect, test, webkit, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -138,6 +142,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   for (const a of model.attachments) world.ids[a.name] = a.id;
 });
 
+
 test.afterAll(async () => {
   try {
     if (!world) return;
@@ -148,7 +153,54 @@ test.afterAll(async () => {
   }
 });
 
-test('an HTML file opens full screen straight into full view: the page fills the window, one bar is left', async () => {
+const dock = (page = world.page) => page.locator('[data-full-view-dock]');
+const handle = (page = world.page) => page.locator('[data-full-view-handle]');
+const hide = (page = world.page) => page.locator('[data-full-view-hide]');
+const count = (page = world.page) => bar(page).locator('[data-full-view-comments]');
+
+/** Put the pointer where it reaches nothing of the toolbar. */
+async function pointerAway(page = world.page) {
+  await page.mouse.move(400, 500);
+}
+
+/**
+ * The approved states, in light and dark: the toolbar showing, tucked into its
+ * handle, revealed by the corner, pinned, and the comments drawer open. Starts
+ * and ends with the toolbar showing and the drawer closed.
+ */
+async function stateShots(name: string) {
+  const page = world.page;
+  // No focus ring or tooltip left on a toolbar button from the steps before (focus leaving to nothing tucks nothing).
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await pointerAway();
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
+  await shot(page, `${name}-showing`);
+  await hide().click();
+  await expect(dock()).toHaveAttribute('data-bar', 'tucked');
+  await pointerAway();
+  await page.waitForTimeout(600);
+  await expect(dock()).toHaveAttribute('data-bar', 'tucked');
+  await shot(page, `${name}-tucked`);
+  // The corner: the toolbar comes out with the pin as its last button.
+  await page.mouse.move(1270, 20);
+  await expect(dock()).toHaveAttribute('data-bar', 'revealed');
+  await expect(hide()).toHaveAttribute('data-full-view-hide', 'pin');
+  await shot(page, `${name}-revealed`);
+  await hide().click();
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
+  await pointerAway();
+  await page.waitForTimeout(600);
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
+  await shot(page, `${name}-pinned`);
+  await count().click();
+  await expect(pane()).toHaveClass(/ib-drawer/);
+  await pointerAway();
+  await shot(page, `${name}-drawer`);
+  await count().click();
+  await expect(pane()).not.toHaveClass(/ib-drawer/);
+}
+
+test('an HTML file opens full screen: the page fills the window, one toolbar is left, showing', async () => {
   const page = world.page;
   await page.goto(`${world.url}#thread=${world.threadId}`);
   await page.getByRole('button', { name: 'Open turnkey.html' }).click();
@@ -156,54 +208,130 @@ test('an HTML file opens full screen straight into full view: the page fills the
   await expect(pane()).toHaveAttribute('data-full-view', '');
   await expect(pane().locator('.ib-vhead')).toHaveCount(0);
   await expect(pane().locator('[data-view-foot]')).toHaveCount(0);
+  await expect(page.locator('[data-html-tools-toggle]')).toHaveCount(0);
   await expect(frame().locator('#headline')).toHaveText('Send us your logs. Get back the record.');
   // The page fills the window.
   const box = await pane().locator('iframe').first().boundingBox();
   expect(box).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
-  // The bar: top right, pen (armed), the count, the position, the eye.
+  // The toolbar: top right, showing; pen (armed), the count, the position, ⋯, Exit full screen, » Hide tools.
   await expect(bar()).toHaveAttribute('role', 'toolbar');
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
   const barBox = (await bar().boundingBox())!;
   expect(barBox.x + barBox.width).toBeGreaterThan(1250);
   expect(barBox.y).toBeLessThan(20);
   await expect(bar().locator('[data-full-view-pen]')).toHaveAttribute('aria-pressed', 'true');
-  await expect(bar().locator('[data-full-view-comments]')).toHaveAccessibleName('Comments, 0');
+  await expect(count()).toHaveAccessibleName('Comments, 0');
   await expect(bar().locator('[data-full-view-position]')).toHaveText('1/3');
-  // The first full view of the session: the eye says what it does, and the live region says how the tools come back.
-  await expect(bar().locator('[data-full-view-eye-label]')).toHaveText('Show tools');
-  await expect(page.locator('[data-step-live]')).toHaveText(/^Tools hidden\. Press the eye or .+X to show them\.$/);
+  await expect(bar().getByRole('button', { name: 'Exit full screen' })).toBeVisible();
+  await expect(hide()).toHaveAccessibleName('Hide tools');
   await expect(pane().locator('[data-full-view-changed]')).toHaveCount(0);
-  await shot(page, 'html-full-view');
+  // The shared plan-review choice is neither read nor written.
+  expect((await world.context.cookies(world.url)).find((c) => c.name === 'plannotator-html-chrome')).toBeUndefined();
 });
 
-test('annotating works as before: a pin opens the composer, Save adds a marker and the count goes up', async () => {
+test('annotating works as before: a pin opens the composer, Save adds a marker; the drawer does not open, the count goes up', async () => {
   const page = world.page;
   await frame().locator('#flagged').click();
   await composer().fill('"Repeats" reads like duplicate charges to a claims team. Say "repeated tool calls".');
-  await shot(page, 'html-full-view-annotating', ['dark']);
+  await shot(page, 'html-annotating', ['dark']);
   await page.getByRole('button', { name: 'Save' }).click();
-  await expect(bar().locator('[data-full-view-comments]')).toHaveAccessibleName('Comments, 1');
+  await expect(count()).toHaveAccessibleName('Comments, 1');
+  await expect(pane()).not.toHaveClass(/ib-drawer/);
   await expect(pane()).toHaveAttribute('data-full-view', '');
 });
 
-test('the count opens the Comments sheet over the file, its foot with Write the reply; Escape closes it, full view stays', async () => {
+test('Hide tucks the toolbar into its corner handle; the corner brings it back; the pin keeps it out; the keyboard reaches it all', async () => {
   const page = world.page;
-  await bar().locator('[data-full-view-comments]').click();
-  await expect(pane()).toHaveClass(/ib-panel-open/);
+  await hide().focus();
+  await page.keyboard.press('Enter');
+  await expect(dock()).toHaveAttribute('data-bar', 'tucked');
+  // Tucked: the toolbar is inert and off to the right; the handle is a button with the count, focused.
+  await expect(bar()).toHaveJSProperty('inert', true);
+  await expect(handle()).toBeFocused();
+  await expect(handle()).toHaveAccessibleName('Show tools, 1 comment');
+  await expect(page.locator('[data-step-live]')).toHaveText('Tools hidden. They are in the top right corner.');
+  const handleBox = (await handle().boundingBox())!;
+  expect(handleBox.x + handleBox.width).toBeGreaterThanOrEqual(1279);
+  // Enter on the handle: out, focus on the first button; Escape tucks it again, focus back on the handle.
+  await page.keyboard.press('Enter');
+  await expect(dock()).toHaveAttribute('data-bar', 'revealed');
+  await expect(bar().locator('[data-full-view-pen]')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dock()).toHaveAttribute('data-bar', 'tucked');
+  await expect(handle()).toBeFocused();
+  // The pointer in the corner reveals it; leaving tucks it again (a mouse user: nothing in the corner holds focus).
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await pointerAway();
+  await page.mouse.move(1265, 30);
+  await expect(dock()).toHaveAttribute('data-bar', 'revealed');
+  await pointerAway();
+  await expect(dock()).toHaveAttribute('data-bar', 'tucked', { timeout: 3000 });
+  // Out again, and the pin keeps it out.
+  await page.mouse.move(1265, 30);
+  await expect(hide()).toHaveAccessibleName('Keep tools out');
+  await hide().click();
+  await pointerAway();
+  await page.waitForTimeout(700);
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
+});
+
+test('the count opens the comments drawer: the page narrows beside it, its foot rides the next Send; Escape closes it; it is remembered', async () => {
+  const page = world.page;
+  await count().click();
+  await expect(pane()).toHaveClass(/ib-drawer/);
+  // Not covered: the page narrows by the drawer's width.
+  const frameBox = (await pane().locator('iframe').first().boundingBox())!;
+  const drawer = (await pane().locator('.ib-apanel').boundingBox())!;
+  expect(frameBox.width).toBe(1280 - 320);
+  expect(drawer.x).toBe(960);
+  // The toolbar sits left of it.
+  const barBox = (await bar().boundingBox())!;
+  expect(barBox.x + barBox.width).toBeLessThanOrEqual(drawer.x);
   const foot = pane().locator('[data-full-view-foot]');
   await expect(foot).toContainText('1 annotation rides your next Send to Claude.');
   await expect(foot.getByRole('button', { name: 'Write the reply' })).toBeVisible();
-  // The bar steps left of the sheet.
-  const sheet = (await pane().locator('.ib-apanel').boundingBox())!;
-  const barBox = (await bar().boundingBox())!;
-  expect(barBox.x + barBox.width).toBeLessThanOrEqual(sheet.x);
-  await shot(page, 'comments-sheet', ['dark', 'light']);
+  // Remembered across a reload.
+  await page.goto(`${world.url}#thread=${world.threadId}`);
+  await page.reload();
+  await page.getByRole('button', { name: 'Open turnkey.html' }).click();
+  await expect(pane()).toHaveClass(/ib-drawer/);
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
+  await count().focus();
   await page.keyboard.press('Escape');
-  await expect(pane()).not.toHaveClass(/ib-panel-open/);
-  await expect(bar().locator('[data-full-view-comments]')).toBeFocused();
+  await expect(pane()).not.toHaveClass(/ib-drawer/);
+  await expect(count()).toBeFocused();
   await expect(pane()).toHaveAttribute('data-full-view', '');
 });
 
-test('Escape walks the ladder (draft, then Interact) and never leaves full view; ⌘⇧X from the window and from the page toggles it', async () => {
+test('⋯ holds Open in and Download; Exit full screen puts the file beside the thread, and Full screen brings the toolbar back showing', async () => {
+  const page = world.page;
+  await bar().locator('[data-full-view-more]').click();
+  const menu = page.locator(`[data-full-view-menu="${world.ids['turnkey.html']}"]`);
+  await expect(menu).toBeVisible();
+  await expect(menu.locator('[data-attachment-download]')).toBeVisible();
+  await expect(menu.getByText('Open in')).toBeVisible();
+  await shot(page, 'html-menu', ['dark']);
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+
+  await hide().click();
+  await handle().click();
+  await bar().getByRole('button', { name: 'Exit full screen' }).click();
+  await expect(pane()).not.toHaveClass(/ib-full/);
+  await expect(pane().locator('.ib-vhead [data-full-screen-toggle]')).toBeFocused();
+  await expect(page.locator('[data-html-tools-toggle]')).toHaveCount(0);
+  await shot(page, 'html-beside', ['dark']);
+  await page.keyboard.press('Enter');
+  await expect(pane()).toHaveClass(/ib-full/);
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
+  await expect(bar().locator('[data-full-view-pen]')).toBeFocused();
+});
+
+test('the approved states of an HTML page, in light and dark', async () => {
+  await stateShots('html');
+});
+
+test('Escape walks the ladder (draft, then Interact) and never leaves full screen; ⌘⇧X from the window and from the page tucks and shows the toolbar', async () => {
   const page = world.page;
   await frame().locator('#headline').click();
   await expect(composer()).toBeVisible();
@@ -214,27 +342,25 @@ test('Escape walks the ladder (draft, then Interact) and never leaves full view;
   await expect(composer()).toHaveCount(0);
   await expect(bar().locator('[data-full-view-pen]')).toHaveAttribute('aria-pressed', 'false');
   await expect(pane()).toHaveAttribute('data-full-view', '');
-  // From the window: the tools come back, focus on the header's eye.
-  await bar().locator('[data-full-view-eye]').focus();
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
+  // From the window: tucked, focus on the handle (it was in the toolbar).
+  await bar().locator('[data-full-view-pen]').focus();
   await page.keyboard.press('ControlOrMeta+Shift+X');
-  await expect(pane()).not.toHaveAttribute('data-full-view', '');
-  await expect(pane().locator('.ib-vhead [data-html-tools-toggle]')).toBeFocused();
-  await expect(pane().getByRole('button', { name: 'Exit full screen' })).toBeVisible();
-  await expect(page.locator('[data-step-live]')).toHaveText('Tools shown.');
-  // From inside the page (Interact: the page has the keyboard).
+  await expect(dock()).toHaveAttribute('data-bar', 'tucked');
+  await expect(handle()).toBeFocused();
+  // From inside the page (Interact: the page has the keyboard): shown.
   await frame().locator('#q').click();
   await frame().locator('#q').press('ControlOrMeta+Shift+X');
-  await expect(pane()).toHaveAttribute('data-full-view', '');
-  await expect(bar().locator('[data-full-view-eye]')).toBeFocused();
-  await expect(page.locator('[data-step-live]')).toHaveText(/^Tools hidden\. Press .+X or the eye to bring them back\.$/);
-  // Re-arm with the bar's pen for the rest.
+  await expect(dock()).toHaveAttribute('data-bar', 'pinned');
+  await expect(page.locator('[data-step-live]')).toHaveText('Tools shown.');
+  // Re-arm with the pen for the rest.
   await bar().locator('[data-full-view-pen]').click();
   await expect(bar().locator('[data-full-view-pen]')).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('] steps keep full view: the chip names the new file, markdown and the image fill the window, "Last file" at the end', async () => {
+test('] steps keep full screen and the toolbar as it was: the chip names the new file; markdown and the image fill the window; "Last file" at the end', async () => {
   const page = world.page;
-  await bar().locator('[data-full-view-eye]').focus();
+  await bar().locator('[data-full-view-pen]').focus();
   await page.keyboard.press(']');
   await expect(pane()).toHaveAttribute('data-attachment-pane', world.ids['rollout.md']!);
   await expect(pane()).toHaveAttribute('data-full-view', '');
@@ -248,17 +374,18 @@ test('] steps keep full view: the chip names the new file, markdown and the imag
   await expect(pane().locator('.ib-docscroll')).toContainText('Ship the step log behind a flag');
   // Markdown has no pen.
   await expect(bar().locator('[data-full-view-pen]')).toHaveCount(0);
-  await shot(page, 'markdown-full-view');
+  await stateShots('markdown');
   await page.keyboard.press(']');
   await expect(pane()).toHaveAttribute('data-attachment-pane', world.ids['landing.png']!);
   await expect(pane()).toHaveAttribute('data-full-view', '');
   await expect(chip).toHaveAttribute('data-full-view-chip', 'hidden', { timeout: 4000 });
-  await shot(page, 'image-full-view');
+  await stateShots('image');
+  await bar().locator('[data-full-view-position]').focus();
   await page.keyboard.press(']');
   await expect(chip).toContainText('Last file in this thread');
 });
 
-test('N/M opens the file peek under the bar; a pick goes there and full view stays', async () => {
+test('N/M opens the file peek under the toolbar; a pick goes there and full screen stays', async () => {
   const page = world.page;
   await bar().locator('[data-full-view-position]').click();
   const grid = bar().locator('[data-step-list] [role="grid"]');
@@ -268,76 +395,86 @@ test('N/M opens the file peek under the bar; a pick goes there and full view sta
   await expect(pane()).toHaveAttribute('data-attachment-pane', world.ids['turnkey.html']!);
   await expect(pane()).toHaveAttribute('data-full-view', '');
   await expect(bar().locator('[data-full-view-position]')).toBeFocused();
-});
-
-test('the eye is the choice plan review shares: shown is remembered across a reload, and hidden again', async () => {
-  const page = world.page;
-  await bar().locator('[data-full-view-eye]').click();
-  await expect(pane()).not.toHaveAttribute('data-full-view', '');
-  const cookie = (await world.context.cookies(world.url)).find((c) => c.name === 'plannotator-html-chrome');
-  expect(JSON.parse(decodeURIComponent(cookie!.value)).toolsHidden).toBe(false);
-  await page.goto(`${world.url}#thread=${world.threadId}`);
-  await page.reload();
-  await page.getByRole('button', { name: 'Open turnkey.html' }).click();
-  await expect(pane()).toHaveClass(/ib-full/);
-  await expect(pane().locator('.ib-vhead [data-html-tools-toggle]')).toBeVisible();
-  await expect(pane()).not.toHaveAttribute('data-full-view', '');
-  await pane().locator('.ib-vhead [data-html-tools-toggle]').click();
-  await expect(pane()).toHaveAttribute('data-full-view', '');
-  const again = (await world.context.cookies(world.url)).find((c) => c.name === 'plannotator-html-chrome');
-  expect(JSON.parse(decodeURIComponent(again!.value)).toolsHidden).toBe(true);
   expect(world.errors).toEqual([]);
 });
 
-test('a file that changed since it was sent says so in full view: the chip at the top left opens the version it sent', async () => {
+test('a file that changed since it was sent: the chip at the top left stays when the toolbar tucks, the handle carries an amber dot, ⋯ opens the version it sent', async () => {
   const page = world.page;
   writeFileSync(join(world.project, 'docs', 'rollout.md'), PLAN.replace('Ship the step log', 'Hold the step log'));
   await page.goto(`${world.url}#thread=${world.threadId}`);
   await page.reload();
   await page.getByRole('button', { name: 'Open turnkey.html' }).click();
   await expect(pane()).toHaveAttribute('data-full-view', '');
-  await bar().locator('[data-full-view-eye]').focus();
+  await bar().locator('[data-full-view-pen]').focus();
   await page.keyboard.press(']');
   await expect(pane()).toHaveAttribute('data-attachment-pane', world.ids['rollout.md']!);
   const changed = pane().locator('[data-full-view-changed]');
   await expect(changed.locator('.ib-fvver-t')).toHaveText('Changed since sent');
   await expect(pane().locator('.ib-docscroll')).toContainText('Hold the step log');
   await page.waitForTimeout(1800);
-  await shot(page, 'markdown-changed-full-view', ['dark']);
-  await changed.getByRole('button', { name: 'Open the version it sent' }).click();
+  await hide().click();
+  await pointerAway();
+  await expect(changed).toBeVisible();
+  await expect(handle().locator('.ib-fvhandle-dot')).toBeVisible();
+  await expect(handle()).toHaveAccessibleName('Show tools, file changed since sent');
+  await shot(page, 'markdown-changed-tucked', ['dark']);
+  await handle().click();
+  await bar().locator('[data-full-view-more]').click();
+  await page.locator('[data-full-view-version]').click();
   await expect(changed.locator('.ib-fvver-t')).toHaveText('Showing the sent version');
   await expect(pane().locator('.ib-docscroll')).toContainText('Ship the step log');
   await expect(pane()).toHaveAttribute('data-full-view', '');
 });
 
-test('on an iPhone (WebKit): full view with the bar bottom right, 44 px targets; the count opens the sheet with the position', async () => {
+test('on an iPhone (WebKit): the same mode, the toolbar bottom right with 44 px targets; Hide leaves a 44 px tab; the count opens the sheet with the position; ‹ goes back', async () => {
   const { defaultBrowserType: _ignored, ...device } = devices['iPhone 15'];
   const browser = await webkit.launch({ args: [] });
   try {
-    const context = await browser.newContext({ ...device, colorScheme: 'dark' });
-    const page = await context.newPage();
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto(`${world.url}#thread=${world.threadId}`);
-    await page.getByRole('button', { name: 'Open turnkey.html' }).click();
-    await expect(pane(page)).toHaveAttribute('data-full-view', '');
-    await expect(frame(page).locator('#headline')).toBeVisible();
-    const viewport = page.viewportSize()!;
-    const barBox = (await bar(page).boundingBox())!;
-    expect(barBox.x + barBox.width).toBeGreaterThan(viewport.width - 40);
-    expect(barBox.y + barBox.height).toBeGreaterThan(viewport.height - 80);
-    for (const control of ['[data-full-view-pen]', '[data-full-view-comments]', '[data-full-view-eye]']) {
-      const b = (await bar(page).locator(control).boundingBox())!;
-      expect(b.width).toBeGreaterThanOrEqual(44);
-      expect(b.height).toBeGreaterThanOrEqual(44);
+    for (const scheme of ['dark', 'light'] as const) {
+      const context = await browser.newContext({ ...device, colorScheme: scheme });
+      const page = await context.newPage();
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.goto(`${world.url}#thread=${world.threadId}`);
+      await page.getByRole('button', { name: 'Open turnkey.html' }).click();
+      await expect(pane(page)).toHaveAttribute('data-full-view', '');
+      await expect(frame(page).locator('#headline')).toBeVisible();
+      await expect(dock(page)).toHaveAttribute('data-bar', 'pinned');
+      const viewport = page.viewportSize()!;
+      const barBox = (await bar(page).boundingBox())!;
+      expect(barBox.x + barBox.width).toBeGreaterThan(viewport.width - 40);
+      expect(barBox.y + barBox.height).toBeGreaterThan(viewport.height - 80);
+      for (const control of ['[data-full-view-exit="back"]', '[data-full-view-pen]', '[data-full-view-comments]', '[data-full-view-more]', '[data-full-view-hide]']) {
+        const b = (await bar(page).locator(control).boundingBox())!;
+        expect(b.width).toBeGreaterThanOrEqual(44);
+        expect(b.height).toBeGreaterThanOrEqual(44);
+      }
+      await expect(bar(page).locator('[data-full-view-position]')).toHaveCount(0);
+      await expect(bar(page).getByRole('button', { name: 'Exit full screen' })).toHaveCount(0);
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(shotsDir, `phone-showing-${scheme}.png`) });
+      await hide(page).click();
+      await expect(dock(page)).toHaveAttribute('data-bar', 'tucked');
+      const tab = (await handle(page).boundingBox())!;
+      expect(tab.width).toBeGreaterThanOrEqual(44);
+      expect(tab.height).toBeGreaterThanOrEqual(44);
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(shotsDir, `phone-tucked-${scheme}.png`) });
+      await handle(page).click();
+      await expect(dock(page)).toHaveAttribute('data-bar', 'revealed');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(shotsDir, `phone-revealed-${scheme}.png`) });
+      await hide(page).click();
+      await expect(dock(page)).toHaveAttribute('data-bar', 'pinned');
+      await count(page).click();
+      await expect(pane(page)).toHaveClass(/ib-panel-open/);
+      await expect(pane(page).locator('[data-full-view-foot] [data-full-view-position]')).toContainText('1 of 3');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(shotsDir, `phone-comments-${scheme}.png`) });
+      await pane(page).locator('.ib-apanel').getByRole('button', { name: 'Close the comments' }).click();
+      await bar(page).locator('[data-full-view-exit="back"]').click();
+      await expect(pane(page)).toHaveCount(0);
+      await context.close();
     }
-    await expect(bar(page).locator('[data-full-view-position]')).toHaveCount(0);
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: join(shotsDir, 'phone-full-view-dark.png') });
-    await bar(page).locator('[data-full-view-comments]').click();
-    await expect(pane(page).locator('[data-full-view-foot] [data-full-view-position]')).toContainText('1 of 3');
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: join(shotsDir, 'phone-comments-dark.png') });
-    await context.close();
   } finally {
     await browser.close();
   }
