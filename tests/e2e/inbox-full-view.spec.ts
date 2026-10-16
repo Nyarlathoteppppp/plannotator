@@ -535,7 +535,8 @@ test('on an iPhone (WebKit): the same mode, the toolbar bottom right with 44 px 
       await bar(page).locator('[data-full-view-more]').click();
       const rows = page.locator('[data-full-view-menu] [role="menuitem"]');
       await expect(rows.first()).toBeVisible();
-      for (const row of await rows.all()) expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      // Measured once the menu's opening scale has settled (0.95 → 1).
+      for (const row of await rows.all()) await expect.poll(async () => (await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
       if (scheme === 'dark') await page.screenshot({ path: join(shotsDir, 'phone-menu-dark.png') });
       await page.keyboard.press('Escape');
       await expect(rows).toHaveCount(0);

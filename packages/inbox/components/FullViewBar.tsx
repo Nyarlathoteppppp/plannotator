@@ -97,6 +97,8 @@ function Keys({ binding }: { binding: string }) {
 }
 
 function Tip({ text, note, binding, phone, children }: { text: string; note?: string; binding?: string | null; phone: boolean; children: React.ReactElement }) {
+  // A phone has no hover: a tooltip there only opens on focus, unseen, and takes the next Escape for itself. The buttons carry their names.
+  if (phone) return children;
   return (
     <Tooltip
       side={phone ? 'top' : 'bottom'}
