@@ -11,8 +11,8 @@
  * and focus both ways; tuck, reveal and pin, with focus never lost; the
  * corner's timing; the drawer and its remembered state; a new comment only
  * bumping the count; the toolbar always starting out; ⌘⇧X on HTML only; the
- * ⋯ menu; the peek and a step keeping full screen with its chip; Escape never
- * leaving; the changed chip and dot; a phone and a stacked window. The
+ * ⋯ menu; the peek and a step keeping full screen with its chip; Escape's
+ * ladder (one thing per press, full screen last; typed words never lost); the changed chip and dot; a phone and a stacked window. The
  * thread's wiring is fullScreenThread.test.tsx; the browser proof is
  * tests/e2e/inbox-full-view.spec.ts.
  *
@@ -579,20 +579,204 @@ test.skipIf(!hasDom)('a step keeps full screen and the toolbar as it was: the ch
   expect(chip().getAttribute('data-full-view-chip')).toBe('hidden');
 });
 
-test.skipIf(!hasDom)('Escape never leaves full screen: an open peek closes first, then nothing', async () => {
+/** Type into a React-controlled field the way the browser does (the value setter, then an input event). */
+async function typeInto(area: HTMLTextAreaElement, text: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(area, text);
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+/** A stand-in comment popover (Plannotator's draws in a portal on the page), counting the Escapes that reach it. */
+function strayComposer(text: string) {
+  const box = document.createElement('div');
+  box.setAttribute('data-comment-popover', 'true');
+  box.setAttribute('data-test-stray', '');
+  const area = document.createElement('textarea');
+  area.value = text;
+  box.appendChild(area);
+  document.body.appendChild(box);
+  const reached = { escapes: 0 };
+  area.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') reached.escapes++;
+  });
+  return { box, area, reached };
+}
+const guardRow = () => host!.querySelector<HTMLElement>('[data-step-guard]');
+const guardLabels = () => [...guardRow()!.querySelectorAll('button')].map((b) => b.textContent);
+const escapeOn = async (target: EventTarget) => {
+  const event = await key(target, { key: 'Escape' });
+  await settle();
+  return event;
+};
+
+test.skipIf(!hasDom)('Escape closes one thing per press, innermost first, then leaves full screen (markdown): the file list, the drawer, then the file goes back beside the thread', async () => {
   stubViews();
   const harness = harnessOf();
   await render(<Pane start={notes} harness={harness} />);
+  // The file list: Escape inside it closes it and focus goes back to N/M (its own key); full screen stays.
   const pos = host!.querySelector<HTMLButtonElement>('[data-full-view-position]')!;
   await click(pos);
-  const peek = bar()!.querySelector<HTMLElement>('[data-step-list] [role="grid"]')!;
-  await key(document.activeElement ?? peek, { key: 'Escape' });
-  await settle();
+  await escapeOn(document.activeElement ?? pos);
   expect(pos.getAttribute('aria-expanded')).toBe('false');
-  for (let i = 0; i < 3; i++) await key(pane(), { key: 'Escape' });
-  expect(bar()).not.toBeNull();
-  expect(barState()).toBe('pinned');
   expect(harness.toggles).toBe(0);
+  // Open again, focus elsewhere: the ladder closes it first.
+  await click(pos);
+  pane().focus();
+  await escapeOn(pane());
+  expect(pos.getAttribute('aria-expanded')).toBe('false');
+  expect(harness.toggles).toBe(0);
+  // The drawer: closes, focus on the count, said.
+  await click(host!.querySelector('[data-full-view-comments]'));
+  expect(pane().classList.contains('ib-drawer')).toBe(true);
+  pane().focus();
+  await escapeOn(pane());
+  expect(pane().classList.contains('ib-drawer')).toBe(false);
+  expect(document.activeElement).toBe(host!.querySelector('[data-full-view-comments]'));
+  expect(live()).toBe('Comments closed.');
+  expect(harness.toggles).toBe(0);
+  // Nothing left: full screen ends, the file is beside the thread, focus on its Full screen.
+  await escapeOn(document.activeElement!);
+  // The count's tooltip, opened by that focus, takes a press of its own first (it is the innermost thing open).
+  if (harness.toggles === 0) await escapeOn(document.activeElement!);
+  expect(harness.toggles).toBe(1);
+  expect(bar()).toBeNull();
+  expect(document.activeElement).toBe(host!.querySelector('.ib-vhead [data-full-screen-toggle]'));
+  expect(live()).toBe('The file is beside the thread.');
+  // Beside the thread there is no ladder.
+  await escapeOn(pane());
+  expect(harness.toggles).toBe(1);
+});
+
+test.skipIf(!hasDom)('HTML: Escape takes the drawer, then Annotate to Interact, then leaves; from inside the page too (annotate-exit, then an Escape the page did not use)', async () => {
+  stubViews();
+  const harness = harnessOf();
+  await render(<Pane start={page} harness={harness} />);
+  const pen = () => host!.querySelector<HTMLButtonElement>('[data-full-view-pen]')!;
+  expect(pen().getAttribute('aria-pressed')).toBe('true');
+  // From the window.
+  await click(host!.querySelector('[data-full-view-comments]'));
+  pane().focus();
+  await escapeOn(pane());
+  expect(pane().classList.contains('ib-drawer')).toBe(false);
+  expect(pen().getAttribute('aria-pressed')).toBe('true');
+  pane().focus();
+  const toInteract = await escapeOn(pane());
+  // Used: the HTML viewer's own Annotate rung (a window listener) does not take a second step.
+  expect(toInteract.defaultPrevented).toBe(true);
+  expect(pen().getAttribute('aria-pressed')).toBe('false');
+  expect(live()).toBe('Interact: clicks reach the page.');
+  expect(harness.toggles).toBe(0);
+  await click(pen());
+
+  // From inside the page: the bridge's messages.
+  const iframe = host!.querySelector<HTMLIFrameElement>('iframe')!;
+  const post = async (type: string) => {
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', { source: iframe.contentWindow, data: { type } }));
+    });
+    await settle();
+  };
+  await click(host!.querySelector('[data-full-view-comments]'));
+  await post('plannotator-bridge-annotate-exit');
+  expect(pane().classList.contains('ib-drawer')).toBe(false);
+  expect(pen().getAttribute('aria-pressed')).toBe('true');
+  await post('plannotator-bridge-annotate-exit');
+  expect(pen().getAttribute('aria-pressed')).toBe('false');
+  expect(harness.toggles).toBe(0);
+  await act(async () => iframe.focus());
+  await post('plannotator-bridge-page-escape');
+  expect(harness.toggles).toBe(1);
+});
+
+test.skipIf(!hasDom)('a comment with typed words is never lost by Escape: the question asks (Save it, Discard it, Keep writing); an empty one just closes; neither leaves full screen', async () => {
+  stubViews();
+  const harness = harnessOf();
+  await render(<Pane start={notes} harness={harness} />);
+  const { box, area, reached } = strayComposer('Say why the flag stays.');
+  area.focus();
+  const asked = await escapeOn(area);
+  // The composer never saw the key (it would have closed and dropped the words).
+  expect(reached.escapes).toBe(0);
+  expect(asked.defaultPrevented).toBe(true);
+  expect(guardLabels()).toEqual(['Save it', 'Discard it', 'Keep writing']);
+  expect(document.activeElement).toBe(guardRow()!.querySelector('[data-guard-save]'));
+  // Keep writing: back in the words.
+  await click(guardRow()!.querySelector('[data-guard-keep]'));
+  expect(guardRow()).toBeNull();
+  expect(document.activeElement).toBe(area);
+  // Asked again, then Discard: the composer gets its own Escape (once), and full screen stays.
+  await escapeOn(area);
+  await click(guardRow()!.querySelector('[data-guard-discard]'));
+  expect(reached.escapes).toBe(1);
+  expect(live()).toBe('Comment discarded.');
+  expect(harness.toggles).toBe(0);
+  expect(bar()).not.toBeNull();
+  // Empty, with focus elsewhere: the ladder closes it (one Escape sent to it), nothing more.
+  await typeInto(area, '');
+  pane().focus();
+  await escapeOn(pane());
+  expect(reached.escapes).toBe(2);
+  expect(live()).toBe('Comment closed.');
+  expect(harness.toggles).toBe(0);
+  box.remove();
+  await escapeOn(pane());
+  expect(harness.toggles).toBe(1);
+});
+
+test.skipIf(!hasDom)('an image: Escape leaves its comment row with the words kept, then leaves full screen; where the file can only be full screen, leaving asks about the words first', async () => {
+  stubViews();
+  const harness = harnessOf();
+  await render(<Pane start={shot} harness={harness} />);
+  const row = () => host!.querySelector<HTMLTextAreaElement>('[data-image-composer] textarea')!;
+  await typeInto(row(), 'Crop the header.');
+  row().focus();
+  await escapeOn(row());
+  expect(document.activeElement).toBe(pane());
+  expect(row().value).toBe('Crop the header.');
+  expect(live()).toBe('Left the comment box.');
+  expect(harness.toggles).toBe(0);
+  await escapeOn(pane());
+  expect(harness.toggles).toBe(1);
+  expect(row().value).toBe('Crop the header.');
+
+  // A stacked window: the last rung goes back to the thread, through the unsaved-comment question.
+  const locked = harnessOf();
+  await rerender(<Pane start={shot} harness={locked} locked />);
+  await typeInto(row(), 'Crop the header.');
+  row().focus();
+  await escapeOn(row());
+  await escapeOn(pane());
+  expect(locked.closed).toBe(0);
+  expect(guardLabels()).toEqual(['Save it and close', 'Discard and close the file', 'Keep writing']);
+  await click(guardRow()!.querySelector('[data-guard-discard]'));
+  expect(locked.closed).toBe(1);
+});
+
+test.skipIf(!hasDom)('Escape is not the ladder’s under a dialog, while a selection toolbar closes itself, or in a text field', async () => {
+  stubViews();
+  const harness = harnessOf();
+  await render(<Pane start={notes} harness={harness} />);
+  const dialog = document.createElement('dialog');
+  dialog.setAttribute('open', '');
+  dialog.setAttribute('data-test-stray', '');
+  document.body.appendChild(dialog);
+  await escapeOn(pane());
+  expect(harness.toggles).toBe(0);
+  dialog.remove();
+  const toolbar = document.createElement('div');
+  toolbar.setAttribute('data-pn-annotation-toolbar-row', 'true');
+  toolbar.setAttribute('data-test-stray', '');
+  document.body.appendChild(toolbar);
+  await escapeOn(pane());
+  expect(harness.toggles).toBe(0);
+  toolbar.remove();
+  const field = document.createElement('input');
+  field.setAttribute('data-test-stray', '');
+  document.body.appendChild(field);
+  await escapeOn(field);
+  expect(harness.toggles).toBe(0);
+  await escapeOn(pane());
+  expect(harness.toggles).toBe(1);
 });
 
 test.skipIf(!hasDom)('a press outside closes the peek from the toolbar without pulling focus back to N/M', async () => {

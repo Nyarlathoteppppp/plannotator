@@ -44,7 +44,7 @@ import { ImageAttachmentView } from './ImageAttachmentView';
 import { VideoAttachmentView, type VideoAttachmentViewHandle } from './VideoAttachmentView';
 import { OpenInControl, type OpenInSurface } from './OpenIn';
 import { AttachmentStepper, type StepSource } from './AttachmentStepper';
-import { FIRST_NOTE, LAST_NOTE, isEditableTarget, stepAnnouncement, stepKeyIntent, type AttachmentStep } from '../stepping';
+import { FIRST_NOTE, LAST_NOTE, stepAnnouncement, stepKeyIntent, type AttachmentStep } from '../stepping';
 import { Icon } from '../icons';
 import { FileName } from './FileName';
 import { useNarrowerThan } from '../narrower';
@@ -52,7 +52,10 @@ import { FullViewBar, type FullViewBarHandle, type ToolbarState } from './FullVi
 import { FilePeek, peekSheetHost } from './AttachmentStepper';
 import { FullScreenMore } from './OpenIn';
 import { createPortal } from 'react-dom';
-import { htmlAnnotateShortcuts, useHtmlAnnotateShortcuts } from '@plannotator/ui/shortcuts';
+import { useShortcutScope } from '@plannotator/ui/shortcuts';
+import { inboxFileViewerShortcuts } from '../shortcuts/fileViewer.shortcuts';
+import { inOverlay, isComposingKey, isEditableTarget, keyTarget, modalOpen } from '../shortcuts/guards';
+import { escapeRung, type EscapeRung } from '../escapeLadder';
 import { storage } from '@plannotator/ui/utils/storage';
 
 /**
@@ -70,8 +73,28 @@ export const FULL_VIEW_CHIP_MS = 1600;
 /** What sits at a file's foot in full screen (an image's or a film's comment row, a phone's "Comment at"): the toolbar, the chips and the toast keep above it. */
 export const FILE_FOOT_ROW = '[data-image-composer], [data-file-foot]';
 
-/** Hide / Show tools: the html-annotate scope's existing chord (⌘⇧X), HTML files only. */
-const TOOLS_CHORD = htmlAnnotateShortcuts.shortcuts.toggleTools.bindings[0]!;
+/** Hide / Show tools: the html-annotate scope's existing chord (⌘⇧X), HTML files only, through the file viewer's scope. */
+const TOOLS_CHORD = inboxFileViewerShortcuts.shortcuts.toggleTools.bindings[0]!;
+
+/**
+ * Composers that close on Escape and would drop what was typed: a comment
+ * popover (text, HTML pinpoint, a code line's new comment), a diagram's
+ * composer, and an existing comment being edited (the panel's card, a code
+ * line's inline comment).
+ */
+const CLOSING_COMPOSERS = '[data-comment-popover], [data-diagram-composer], [data-annotation-id], [data-code-annotation-id]';
+
+/** Drafts that close themselves on this same Escape (their own window listener): the selection toolbar, the quick-label picker. */
+const SELF_CLOSING_DRAFTS = '[data-pn-annotation-toolbar-row], [data-quick-label-picker]';
+
+/** Escapes the pane sends to a composer itself (to close it): never asked about, never a rung of their own. */
+const paneEscapes = new WeakSet<Event>();
+
+/** The element a node lives under in the page: its shadow host when it is inside a shadow root (Pierre's code view). */
+function hostOf(node: Node): Node {
+  const root = node.getRootNode();
+  return root instanceof ShadowRoot ? root.host : node;
+}
 
 /**
  * Whether full screen's comments drawer was left open (approval
@@ -329,7 +352,7 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
     [],
   );
   /** The question row: a typed comment would be lost by what the person just did. */
-  const [guard, setGuard] = useState<{ to: string | null; go: () => void } | null>(null);
+  const [guard, setGuard] = useState<{ to: string | null; go: () => void; escape?: HTMLTextAreaElement } | null>(null);
   /** "Save it and go on" is waiting for the save to answer. */
   const [guardSaving, setGuardSaving] = useState(false);
   /** Every save the pane makes, counted, with the last one's answer: the question row waits on it. */
@@ -507,20 +530,13 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
   const blocked = guard !== null || menuOpen || moreOpen;
   const blockedRef = useRef(blocked);
   blockedRef.current = blocked;
-  useEffect(() => {
-    if (!multi) return;
-    const onKey = (event: KeyboardEvent) => {
-      const pane = sectionRef.current;
-      // An image at its own size that overflows scrolls with the arrows.
-      if (event.key.startsWith('Arrow') && pane?.querySelector('[data-claims-arrows="true"]')) return;
-      const dir = stepKeyIntent(event, { full, pane, blocked });
-      if (dir === null) return;
-      event.preventDefault();
-      stepRef.current(dir, 'key');
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [multi, full, blocked]);
+  const stepWhen = (dir: 1 | -1) => (event: KeyboardEvent) => {
+    if (!multi) return false;
+    const pane = sectionRef.current;
+    // An image at its own size that overflows scrolls with the arrows.
+    if (event.key.startsWith('Arrow') && pane?.querySelector('[data-claims-arrows="true"]')) return false;
+    return stepKeyIntent(event, { full, pane, blocked }) === dir;
+  };
 
   // The question row takes focus on its first choice.
   useEffect(() => {
@@ -536,6 +552,26 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
   const keepWriting = () => {
     setGuard(null);
     focusComposer();
+  };
+  /**
+   * Close a composer the way its own Escape does (the pane sends the key to
+   * it): a comment popover hands focus back to what opened it; anything that
+   * leaves focus nowhere puts it on the pane.
+   */
+  const dismissComposer = (area: HTMLTextAreaElement) => {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true, composed: true });
+    paneEscapes.add(event);
+    area.dispatchEvent(event);
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body || !active.isConnected) sectionRef.current?.focus({ preventScroll: true });
+    });
+  };
+  /** Escape on a composer holding typed words: never lost, the question row asks first (Save it, Discard it, Keep writing). */
+  const askBeforeEscape = (area: HTMLTextAreaElement) => {
+    setMenuOpen(false);
+    setMoreOpen(false);
+    setGuard({ to: null, go: () => {}, escape: area });
   };
   /**
    * Save the typed comment, then go on only once the save answered. Every
@@ -556,6 +592,17 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
     const started = saves.current.count > before ? saves.current.last : null;
     const ok = started ? await started : false;
     setGuardSaving(false);
+    if (pending.escape) {
+      // Escape asked: the composer saved (and closed) or refused; nothing else to go to.
+      if (!started && unsavedComposer(sectionRef.current, savedTextRef.current)) {
+        focusComposer();
+        return;
+      }
+      setGuard(null);
+      if (started && !ok) focusComposer();
+      else announce('Comment saved.');
+      return;
+    }
     if (!started) {
       // Still typed and not saved: never lost. The row stays open over the words.
       if (unsavedComposer(sectionRef.current, savedTextRef.current)) {
@@ -579,6 +626,11 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
     const pending = guard;
     if (guardSaving) return;
     setGuard(null);
+    if (pending?.escape) {
+      dismissComposer(pending.escape);
+      announce('Comment discarded.');
+      return;
+    }
     if (pending) {
       rememberPlace();
       pending.go();
@@ -607,16 +659,163 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
 
   const annotationVersion = view?.version ?? (effectiveVersion === 'sent' ? attachment.sent_sha256 : 'current');
   const isHtml = kind === 'html';
-  // ⌘⇧X: the html-annotate scope's Hide / Show tools, on an HTML file in full screen only: it tucks or shows the toolbar (the page forwards it from inside the frame through onToolsToggle).
-  useHtmlAnnotateShortcuts({
+  // The open file's keys (shortcuts/fileViewer.shortcuts.ts). `]` `[` `→` `←` step (stepping.ts has the rules for
+  // when they stand down); ⌘⇧X tucks or shows the full-screen toolbar on an HTML file (the page forwards it from
+  // inside the frame through onToolsToggle).
+  useShortcutScope({
+    scope: inboxFileViewerShortcuts,
     handlers: {
+      next: { when: stepWhen(1), handle: () => stepRef.current(1, 'key') },
+      previous: { when: stepWhen(-1), handle: () => stepRef.current(-1, 'key') },
       toggleTools: {
         // Never while typing (a comment), nor under a modal dialog.
-        when: (event) => isHtml && full && !document.querySelector('dialog[open]') && !isEditableTarget(event.composedPath()[0] ?? event.target),
+        when: (event) => isHtml && full && !modalOpen() && !isEditableTarget(keyTarget(event)),
         handle: () => barRef.current?.toggle(),
       },
     },
   });
+  // Escape on a composer holding typed words, before the composer's own Escape drops them (capture): the question row asks.
+  const escapeAsk = useRef<HTMLTextAreaElement | null>(null);
+  useShortcutScope({
+    scope: inboxFileViewerShortcuts,
+    capture: true,
+    handlers: {
+      escape: {
+        when: (event) => {
+          escapeAsk.current = props.readOnly || paneEscapes.has(event) || isComposingKey(event) ? null : composerAskedAbout(keyTarget(event));
+          return escapeAsk.current !== null;
+        },
+        handle: (event) => {
+          event.stopPropagation();
+          if (escapeAsk.current) askBeforeEscape(escapeAsk.current);
+        },
+      },
+    },
+  });
+  // The ladder (escapeLadder.ts): after the focused control had its turn (bubble, on the document: before the
+  // window's listeners, the HTML viewer's own Annotate rung among them, which then sees the key used).
+  const escapeNext = useRef<EscapeRung | null>(null);
+  useShortcutScope({
+    scope: inboxFileViewerShortcuts,
+    target: 'document',
+    handlers: {
+      escape: {
+        when: (event) => {
+          escapeNext.current = event.defaultPrevented || paneEscapes.has(event) || isComposingKey(event) ? null : ladderRung(keyTarget(event));
+          return escapeNext.current !== null;
+        },
+        handle: () => {
+          if (escapeNext.current) climb(escapeNext.current);
+        },
+      },
+    },
+  });
+
+  /** The textarea of a composer this pane owns that holds unsaved words, when the key came from inside that composer. */
+  function composerAskedAbout(target: Element | null): HTMLTextAreaElement | null {
+    const container = target?.closest(CLOSING_COMPOSERS);
+    if (!container) return null;
+    const area = target instanceof HTMLTextAreaElement && container.contains(target) ? target : container.querySelector('textarea');
+    // A skill or mention menu open in the composer takes this Escape first.
+    if (!area || area.getAttribute('aria-expanded') === 'true') return null;
+    // A comment popover draws on the page (a portal); everything else is in the pane (Pierre's code view in its shadow root).
+    if (!container.matches('[data-comment-popover]') && !sectionRef.current?.contains(hostOf(container))) return null;
+    if (container.matches('[data-comment-popover], [data-diagram-composer]')) return area.value.trim() !== '' ? area : null;
+    const id = container.getAttribute('data-annotation-id') ?? container.getAttribute('data-code-annotation-id') ?? '';
+    return area.value.trim() !== (savedTextRef.current(id) ?? '').trim() ? area : null;
+  }
+
+  /** An open comment composer of this file (a comment popover, a diagram's composer): its textarea. */
+  function openComposer(): HTMLTextAreaElement | null {
+    return document.querySelector<HTMLTextAreaElement>('[data-comment-popover] textarea') ?? sectionRef.current?.querySelector<HTMLTextAreaElement>('[data-diagram-composer] textarea') ?? null;
+  }
+
+  /**
+   * What this Escape does in full screen (escapeLadder.ts), or null when it is
+   * not the pane's: not full screen, a dialog or the image annotator over the
+   * window, a draft that closes itself on this same key (the selection
+   * toolbar), or a text field that keeps its own Escape. `target` is where the
+   * key came from (null: from inside the HTML page).
+   */
+  function ladderRung(target: Element | null): EscapeRung | null {
+    if (!full || modalOpen()) return null;
+    if (document.querySelector(SELF_CLOSING_DRAFTS)) return null;
+    const inField = !!target && isEditableTarget(target) && !!target.closest('[data-image-composer]') && !!sectionRef.current?.contains(target);
+    if (target && !inField && (isEditableTarget(target) || inOverlay(target))) return null;
+    return escapeRung({
+      full: true,
+      popoverOpen: menuOpen || moreOpen,
+      composerOpen: !props.readOnly && openComposer() !== null,
+      inField,
+      panelOpen: panelOpen,
+      annotating: isHtml && armed && !props.readOnly,
+      questionOpen: guard !== null,
+    });
+  }
+
+  /**
+   * Take one rung, saying what happened and leaving focus somewhere sensible.
+   * From inside the page, focus stays in the page (the person is reading it).
+   */
+  function climb(rung: EscapeRung, fromPage = false) {
+    switch (rung) {
+      case 'popover': {
+        setMenuOpen(false);
+        setMoreOpen(false);
+        // The peek hands focus back to N/M itself; a menu whose item held focus leaves it on ⋯.
+        requestAnimationFrame(() => {
+          const active = document.activeElement;
+          if (!active || active === document.body || !active.isConnected) sectionRef.current?.querySelector<HTMLElement>('[data-full-view-more], [data-full-view-position]')?.focus({ preventScroll: true });
+        });
+        return;
+      }
+      case 'composer': {
+        const area = openComposer();
+        if (!area) return;
+        if (area.value.trim() !== '') {
+          askBeforeEscape(area);
+          return;
+        }
+        dismissComposer(area);
+        announce('Comment closed.');
+        return;
+      }
+      case 'field':
+        sectionRef.current?.focus({ preventScroll: true });
+        announce('Left the comment box.');
+        return;
+      case 'drawer':
+        if (fromPage) {
+          if (drawerMode) setDrawer(false);
+          else setSheet(false);
+        } else closeSheet();
+        announce('Comments closed.');
+        return;
+      case 'annotate':
+        setArmed(false);
+        announce('Interact: clicks reach the page.');
+        return;
+      case 'question':
+        keepWriting();
+        return;
+      case 'leave':
+        if (props.fullLocked) close();
+        else toggleFull();
+        return;
+    }
+  }
+
+  /**
+   * An Escape from inside the HTML page: Annotate's last rung (the bridge's
+   * annotate-exit), or, in Interact, one the page did not use. In full screen
+   * it climbs the same ladder; returns whether it did.
+   */
+  function escapeFromPage(): boolean {
+    const rung = ladderRung(null);
+    if (!rung) return false;
+    climb(rung, true);
+    return true;
+  }
   const isText = kind === 'markdown' || kind === 'text';
   const isCode = kind === 'code';
   const isImage = kind === 'image';
@@ -1007,7 +1206,13 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
               mode="selection"
               inputMethod="pinpoint"
               annotateModeActive={armed}
-              onAnnotateModeExit={() => setArmed(false)}
+              // Annotate's Escape (from the page, or the viewer's own rung with focus out here): in full screen it is a
+              // rung of the ladder (the drawer closes first); beside the thread it goes to Interact, as before.
+              onAnnotateModeExit={() => {
+                if (!escapeFromPage()) setArmed(false);
+              }}
+              // In Interact, an Escape the page did not use climbs the ladder (full screen only).
+              onPageEscape={full ? () => void escapeFromPage() : undefined}
               onAnnotateModeToggle={() => setArmed((v) => !v)}
               // ⌘⇧X pressed inside the page: the bridge forwards it (Hide / Show the full-screen toolbar).
               onToolsToggle={full ? () => barRef.current?.toggle() : undefined}
@@ -1300,10 +1505,10 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
             Your comment on <b>{attachment.name}</b> is not saved yet.
           </span>
           <button type="button" className="ib-btn ib-sm ib-pri" onClick={() => void saveAndGo()} disabled={guardSaving} aria-busy={guardSaving || undefined} data-guard-save="">
-            {guard.to === null ? 'Save it and close' : 'Save it and go on'}
+            {guard.escape ? 'Save it' : guard.to === null ? 'Save it and close' : 'Save it and go on'}
           </button>
           <button type="button" className="ib-btn ib-sm" onClick={discardAndGo} disabled={guardSaving} data-guard-discard="">
-            {guard.to === null ? 'Discard and close the file' : <span className="ib-gto">Discard and go to <FileName name={guard.to} /></span>}
+            {guard.escape ? 'Discard it' : guard.to === null ? 'Discard and close the file' : <span className="ib-gto">Discard and go to <FileName name={guard.to} /></span>}
           </button>
           <button type="button" className="ib-btn ib-sm ib-ghost" onClick={keepWriting} data-guard-keep="">
             Keep writing

@@ -14,7 +14,9 @@
  * corner and the keyboard bring it back, the pin keeps it out; the count
  * opens the comments drawer and the page narrows beside it (remembered across
  * a reload); ⋯ holds Open in and Download; Exit puts the file beside the
- * thread and Full screen brings the toolbar back showing; Escape never leaves;
+ * thread and Full screen brings the toolbar back showing; Escape climbs one
+ * rung per press (a draft, typed words asked about, the drawer, Annotate, the
+ * page's own Escape left to the page) and only then leaves full screen;
  * ⌘⇧X from the window and the page tucks and shows; `]` keeps full screen
  * with the chip; N/M opens the peek; a changed file keeps its chip and dots
  * the handle; on an iPhone the toolbar sits bottom right with 44 px targets.
@@ -51,7 +53,8 @@ p{font:22px/1.6 system-ui;color:#d6d0c7;max-width:820px}
 <h1 id="headline">Send us your logs. Get back the record.</h1>
 <p><b>No changes to how the agent works.</b> The customer switches on the activity logs their agent framework already produces, and stores sessions with us.</p>
 <div class="grid"><div class="card">Activity logs</div><div class="card">We store everything, hashed</div><div class="card" id="flagged">Actions flagged; repeats and gaps caught</div></div>
-<p><label>Search <input id="q" placeholder="type here"></label></p></main>`;
+<p><label>Search <input id="q" placeholder="type here"></label> <button id="menu" type="button" onclick="document.body.dataset.menu='open'">Menu</button></p></main>
+<script>document.addEventListener('keydown',function(e){if(e.key==='Escape'&&document.body.dataset.menu==='open'){e.preventDefault();delete document.body.dataset.menu;}});</script>`;
 
 const PLAN = ['# Rollout plan', '', 'Ship the step log behind a flag, then to every customer.', '', '## Steps', '', '1. Turn on activity logs.', '2. Store sessions.', '3. Flag repeats and gaps.', ''].join('\n');
 
@@ -99,7 +102,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   // Nothing here may reach the real tailscale CLI.
   writeFileSync(join(trap, 'tailscale'), '#!/bin/sh\necho "inbox-full-view: tailscale must not run" >&2\nexit 97\n');
   chmodSync(join(trap, 'tailscale'), 0o755);
-  const env = { PATH: `${trap}:${process.env.PATH ?? ''}`, HOME: home, PLANNOTATOR_DATA_DIR: dataDir, PLANNOTATOR_RELAY_URL: 'http://127.0.0.1:9', PLANNOTATOR_BROWSER: NO_BROWSER, PLANNOTATOR_INBOX_CONNECT: '0' };
+  const env = { PATH: `${trap}:${process.env.PATH ?? ''}`, HOME: home, PLANNOTATOR_DATA_DIR: dataDir, PLANNOTATOR_RELAY_URL: 'http://127.0.0.1:9', PLANNOTATOR_BROWSER: NO_BROWSER, NO_BROWSER, PLANNOTATOR_INBOX_CONNECT: '0', PLANNOTATOR_INBOX_TAILSCALE: '0', PLANNOTATOR_INBOX_PHONES: '0', PLANNOTATOR_UPDATE_CHECK: '0', PLANNOTATOR_INBOX_NOTES: '0' };
   const started = spawnSync(builtBinary, ['inbox', '--background'], { env, encoding: 'utf8', timeout: 60_000 });
   expect(started.status, started.stderr).toBe(0);
   const url = started.stdout.trim();
@@ -331,16 +334,78 @@ test('the approved states of an HTML page, in light and dark', async () => {
   await stateShots('html');
 });
 
-test('Escape walks the ladder (draft, then Interact) and never leaves full screen; ⌘⇧X from the window and from the page tucks and shows the toolbar', async () => {
+/**
+ * Escape, one rung per press, on an HTML file opened full screen and armed
+ * (the toolbar showing, the drawer closed), until full screen ends: an empty
+ * draft closes by its own key; typed words are asked about (Discard it);
+ * the drawer closes before Annotate (from inside the page); Annotate goes to
+ * Interact; in Interact the page's own Escape (its menu, its text field) stays
+ * the page's; one it does not use leaves full screen.
+ */
+async function climbTheLadder(page: Page) {
+  const pen = bar(page).locator('[data-full-view-pen]');
+  const guard = pane(page).locator('[data-step-guard]');
+  // An empty draft: its own Escape closes it; nothing else moves.
+  await frame(page).locator('#headline').click();
+  await expect(composer(page)).toBeVisible();
+  await composer(page).press('Escape');
+  await expect(composer(page)).toHaveCount(0);
+  await expect(pen).toHaveAttribute('aria-pressed', 'true');
+  await expect(pane(page)).toHaveAttribute('data-full-view', '');
+  // Typed words are never lost: the question asks; Discard it closes the draft, full screen stays.
+  await frame(page).locator('#headline').click();
+  await expect(composer(page)).toBeVisible();
+  await page.waitForTimeout(200);
+  await composer(page).fill('Shorter headline?');
+  await expect(composer(page)).toHaveValue('Shorter headline?');
+  await composer(page).press('Escape');
+  await expect(guard).toBeVisible();
+  await expect(guard.locator('[data-guard-save]')).toHaveText('Save it');
+  await expect(guard.locator('[data-guard-save]')).toBeFocused();
+  await expect(composer(page)).toHaveValue('Shorter headline?');
+  await guard.locator('[data-guard-discard]').click();
+  await expect(composer(page)).toHaveCount(0);
+  await expect(guard).toHaveCount(0);
+  await expect(pane(page)).toHaveAttribute('data-full-view', '');
+  // The drawer, from inside the page: Escape there closes the drawer first, Annotate stays.
+  await count(page).click();
+  await expect(pane(page)).toHaveClass(/ib-drawer/);
+  // The keyboard in the page (a click there would pin): focus on the frame itself.
+  await page.locator('[data-attachment-pane] iframe').first().focus();
+  await page.keyboard.press('Escape');
+  await expect(pane(page)).not.toHaveClass(/ib-drawer/);
+  await expect(pen).toHaveAttribute('aria-pressed', 'true');
+  // Annotate goes to Interact (focus stayed in the page).
+  await page.keyboard.press('Escape');
+  await expect(pen).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('[data-step-live]')).toHaveText('Interact: clicks reach the page.');
+  await expect(pane(page)).toHaveAttribute('data-full-view', '');
+  // In Interact the page's own Escape is the page's: its menu closes, full screen stays.
+  await frame(page).locator('#menu').click();
+  await expect(frame(page).locator('body')).toHaveAttribute('data-menu', 'open');
+  await frame(page).locator('#menu').press('Escape');
+  await expect(frame(page).locator('body')).not.toHaveAttribute('data-menu', 'open');
+  await page.waitForTimeout(200);
+  await expect(pane(page)).toHaveAttribute('data-full-view', '');
+  // An Escape in the page's text field stays there too.
+  await frame(page).locator('#q').press('Escape');
+  await page.waitForTimeout(200);
+  await expect(pane(page)).toHaveAttribute('data-full-view', '');
+  // One the page does not use: full screen ends, the file is beside the thread, focus on its Full screen.
+  // (A click on the headline moves the page's focus out of its field; in Interact it pins nothing.)
+  await frame(page).locator('#headline').click();
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape');
+  await expect(pane(page)).not.toHaveAttribute('data-full-view', '');
+  await expect(pane(page).locator('.ib-vhead [data-full-screen-toggle]')).toBeFocused();
+  await expect(page.locator('[data-step-live]')).toHaveText('The file is beside the thread.');
+}
+
+test('Escape climbs one rung per press (a draft, typed words asked about, the drawer, Annotate, then the page’s own Escape is respected) and then leaves full screen; ⌘⇧X from the window and from the page tucks and shows the toolbar', async () => {
   const page = world.page;
-  await frame().locator('#headline').click();
-  await expect(composer()).toBeVisible();
-  for (let i = 0; i < 4; i++) {
-    await frame().locator('body').press('Escape');
-    await page.waitForTimeout(120);
-  }
-  await expect(composer()).toHaveCount(0);
-  await expect(bar().locator('[data-full-view-pen]')).toHaveAttribute('aria-pressed', 'false');
+  await climbTheLadder(page);
+  // Back in full screen (the toolbar showing) for the chord.
+  await page.keyboard.press('Enter');
   await expect(pane()).toHaveAttribute('data-full-view', '');
   await expect(dock()).toHaveAttribute('data-bar', 'pinned');
   // From the window: tucked, focus on the handle (it was in the toolbar).
@@ -356,6 +421,22 @@ test('Escape walks the ladder (draft, then Interact) and never leaves full scree
   // Re-arm with the pen for the rest.
   await bar().locator('[data-full-view-pen]').click();
   await expect(bar().locator('[data-full-view-pen]')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('the same Escape ladder in WebKit (Safari), on a desktop window', async () => {
+  const browser = await webkit.launch({ args: [] });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
+    const page = await context.newPage();
+    await page.goto(`${world.url}#thread=${world.threadId}`);
+    await page.getByRole('button', { name: 'Open turnkey.html' }).click();
+    await expect(pane(page)).toHaveAttribute('data-full-view', '');
+    await expect(frame(page).locator('#headline')).toBeVisible();
+    await climbTheLadder(page);
+    await context.close();
+  } finally {
+    await browser.close();
+  }
 });
 
 test('] steps keep full screen and the toolbar as it was: the chip names the new file; markdown and the image fill the window; "Last file" at the end', async () => {
@@ -478,8 +559,18 @@ test('on an iPhone (WebKit): the same mode, the toolbar bottom right with 44 px 
       await expect(pane(page).locator('[data-full-view-foot] [data-full-view-position]')).toContainText('1 of 3');
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(shotsDir, `phone-comments-${scheme}.png`) });
-      await pane(page).locator('.ib-apanel').getByRole('button', { name: 'Close the comments' }).click();
-      await bar(page).locator('[data-full-view-exit="back"]').click();
+      if (scheme === 'light') {
+        await pane(page).locator('.ib-apanel').getByRole('button', { name: 'Close the comments' }).click();
+        await bar(page).locator('[data-full-view-exit="back"]').click();
+      } else {
+        // A hardware keyboard: Escape closes the sheet, then takes Annotate to Interact, then goes back to the thread.
+        await page.keyboard.press('Escape');
+        await expect(pane(page)).not.toHaveClass(/ib-panel-open/);
+        await expect(bar(page).locator('[data-full-view-pen]')).toHaveAttribute('aria-pressed', 'true');
+        await page.keyboard.press('Escape');
+        await expect(bar(page).locator('[data-full-view-pen]')).toHaveAttribute('aria-pressed', 'false');
+        await page.keyboard.press('Escape');
+      }
       await expect(pane(page)).toHaveCount(0);
       await context.close();
     }
