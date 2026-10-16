@@ -6,7 +6,22 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { InboxComposeProject } from '@plannotator/core/inbox-types';
-import { actionLabel, composeActions, composeGroups, composeTargets, draftChip, filterGroups, isDirty, namesActionWord, pickerRows, preselect, statusLine } from './compose/model';
+import { derivePersonThreadSubject } from '@plannotator/core/inbox-questions';
+import {
+  actionLabel,
+  composeActions,
+  composeGroups,
+  composeTargets,
+  composeThreadName,
+  draftChip,
+  filterGroups,
+  isDirty,
+  namesActionWord,
+  pickerRows,
+  preselect,
+  statusLine,
+  subjectPreview,
+} from './compose/model';
 
 const session = (id: string, host: string, extra: Partial<InboxComposeProject['sessions'][number]> = {}) => ({
   session: id,
@@ -111,5 +126,28 @@ describe('the palette\'s Actions', () => {
     expect(namesActionWord('send it')).toBe(true);
     expect(namesActionWord('mes')).toBe(false);
     expect(namesActionWord('newsletter')).toBe(false);
+  });
+});
+
+describe('the subject preview and the thread name', () => {
+  test("the preview is the store's rule for a thread the person starts, so what compose shows is what is stored", () => {
+    const dictated = 'I want to explore what adding a board would look like. Kanban specifically. And the kanban needs to be well thought out.';
+    expect(subjectPreview(dictated)).toBe(derivePersonThreadSubject(dictated));
+    expect(subjectPreview(dictated)).toBe('I want to explore what adding a board would look like');
+    expect(subjectPreview('   ')).toBeNull();
+  });
+
+  test('a thread name: empty is none, a valid one is trimmed, an invalid one says why', () => {
+    expect(composeThreadName('  ')).toEqual({ name: '' });
+    expect(composeThreadName('  Kanban board ')).toEqual({ name: 'Kanban board' });
+    expect(composeThreadName('a\nb')).toEqual({ error: 'Thread name must not contain control characters or line breaks.' });
+    expect('error' in composeThreadName('x'.repeat(121))).toBe(true);
+  });
+
+  test('a changed thread name alone makes a saved draft dirty; a name alone makes a new message dirty', () => {
+    const saved = { body: 'hi', session: null, files: [], threadName: 'Board' };
+    expect(isDirty({ ...saved }, saved, true)).toBe(false);
+    expect(isDirty({ ...saved, threadName: 'Kanban' }, saved, true)).toBe(true);
+    expect(isDirty({ body: '', session: null, files: [], threadName: 'Board' }, { body: '', session: null, files: [] }, false)).toBe(true);
   });
 });

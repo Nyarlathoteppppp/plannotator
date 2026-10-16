@@ -16,12 +16,12 @@ import { isAbsolute } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import { QUESTION_AUTHORING_GUIDE } from "@plannotator/core/question-block";
-import { INBOX_SECTIONS, INBOX_THREAD_NAME_MAX, type InboxGuideRef, type InboxSectionId, type InboxLine, type InboxMessage, type InboxProject } from "@plannotator/core/inbox-types";
+import { INBOX_NAME_THIS_THREAD_HINT, INBOX_SECTIONS, PERSON_THREAD_NAMING_FIELD, INBOX_THREAD_NAME_MAX, type InboxGuideRef, type InboxSectionId, type InboxLine, type InboxMessage, type InboxProject } from "@plannotator/core/inbox-types";
 import { INBOX_WAKES_META_KEY } from "@plannotator/shared/inbox/connection";
 import { inboxBodyForAgent } from "@plannotator/shared/inbox/uploads";
 import { bodyShowsLocalImages, captureInboxInlineImages } from "@plannotator/shared/inbox/inline-images";
 import { InboxError } from "@plannotator/shared/inbox/schema";
-import type { InboxStore } from "@plannotator/shared/inbox/store";
+import type { InboxSendResult, InboxStore } from "@plannotator/shared/inbox/store";
 import { recordAgentDecision } from "./inbox-decisions";
 import type { InboxAttachment } from "@plannotator/core/inbox-types";
 import { registerInboxGuideTools } from "./inbox-guides";
@@ -120,7 +120,7 @@ export const SEND_ROUTING_FIELDS = {
     .string()
     .optional()
     .describe(
-      `A short thread name (1-${INBOX_THREAD_NAME_MAX} characters, one line). Without it, your messages join your session's open thread in this project (a new one the first time, or once the person resolved it; a thread keeps its first subject). With it, the same name in this project is the same open thread, across sessions (compared without case, spacing or invisible characters). Use it to split separate work, or to join another session's thread. Ignored with reply_to.`,
+      `A short thread name (1-${INBOX_THREAD_NAME_MAX} characters, one line). Without it, your messages join your session's open thread in this project (a new one the first time, or once the person resolved it; a thread keeps its first subject). With it, the same name in this project is the same open thread, across sessions (compared without case, spacing or invisible characters). Use it to split separate work, or to join another session's thread. Ignored with reply_to, with one exception: in a thread the person started (read_thread or wait_for_reply says name_this_thread: true, or the Inbox's message asks you to name it), your reply's \`thread\` names that thread, once: a few words saying what it is about.`,
     ),
   reply_to: z.string().optional().describe("A message id: post this as a reply in that message's thread."),
   supersedes: z
@@ -240,7 +240,17 @@ function lastAgentCursor(store: InboxStore, threadId: string, session: string | 
   return mine || any;
 }
 
-function replyResult(store: InboxStore, reply: InboxMessage, base: string): ToolResult {
+/**
+ * What a result adds while a thread the person started still has the name
+ * the Inbox derived and the caller may name it (approval
+ * "inbox-agent-names-own-thread"): `name_this_thread: true` and the hint, for
+ * agents no wake reaches (MCP-only clients, OpenCode 1).
+ */
+function namingHint(store: InboxStore, threadId: string, session: string | null): { line: string; structured: { name_this_thread: true } } | null {
+  return store.canNameThread(threadId, session) ? { line: `\n\n${INBOX_NAME_THIS_THREAD_HINT}`, structured: { name_this_thread: true } } : null;
+}
+
+function replyResult(store: InboxStore, reply: InboxMessage, base: string, caller: string | null = null): ToolResult {
   const cursor = store.messageCursor(reply.id) ?? store.cursor();
   // A New message reached the session it was addressed to (only that session's
   // wait returns it): delivered, so its connection does not wake it again.
@@ -251,11 +261,12 @@ function replyResult(store: InboxStore, reply: InboxMessage, base: string): Tool
   const subject = store.threadSubject(reply.thread_id);
   // The files the person attached are named with their paths, as the wake names them.
   const body = inboxBodyForAgent(reply);
+  const naming = namingHint(store, reply.thread_id, caller);
   return {
     content: [
       {
         type: "text",
-        text: `The person replied in thread ${reply.thread_id}${subject ? ` (${subject})` : ""}:\n\n${body}`,
+        text: `The person replied in thread ${reply.thread_id}${subject ? ` (${subject})` : ""}:\n\n${body}${naming?.line ?? ""}`,
       },
     ],
     structuredContent: {
@@ -265,6 +276,7 @@ function replyResult(store: InboxStore, reply: InboxMessage, base: string): Tool
       questions,
       cursor,
       url: threadUrl(base, reply.thread_id),
+      ...(naming?.structured ?? {}),
     },
   };
 }
@@ -374,7 +386,7 @@ export async function sendAgentMessage(
   input: AgentSendInput,
   guide?: InboxGuideRef,
   wakes = false,
-): Promise<{ structured: Record<string, unknown>; replayed: boolean; questions: number; attachments: number; superseded: number }> {
+): Promise<{ structured: Record<string, unknown>; replayed: boolean; questions: number; attachments: number; superseded: number; naming: InboxSendResult["naming"] | null }> {
   const { store } = context;
   let attachments: InboxAttachment[] | undefined;
   if (input.attachments && input.attachments.length > 0) {
@@ -432,6 +444,7 @@ export async function sendAgentMessage(
   return {
     superseded: superseded.length,
     replayed: result.replayed,
+    naming: result.naming ?? null,
     questions: questions.length,
     attachments: message.attachments?.length ?? 0,
     structured: {
@@ -448,8 +461,19 @@ export async function sendAgentMessage(
       replayed: result.replayed,
       cursor: store.messageCursor(message.id) ?? store.cursor(),
       url: threadUrl(context.baseUrl(), message.thread_id),
+      // A reply into a thread the person started that this agent may name (approval "inbox-agent-names-own-thread").
+      ...(result.naming?.status === "named" ? { named_thread: result.naming.name } : {}),
+      ...(result.naming && result.naming.status !== "named" ? { name_this_thread: true } : {}),
     },
   };
+}
+
+/** send_message's (and submit_guide's) one line about naming a thread the person started, or "". */
+export function namingLine(naming: InboxSendResult["naming"] | null | undefined): string {
+  if (!naming) return "";
+  if (naming.status === "named") return ` Named this thread: ${naming.name}.`;
+  if (naming.status === "refused") return ` The thread was not named: ${naming.reason} Pass a valid \`${PERSON_THREAD_NAMING_FIELD}\` (a few words) on a later reply to name it.`;
+  return ` This thread the person started has no name yet: pass \`${PERSON_THREAD_NAMING_FIELD}\` (a few words saying what it is about) on a later reply to name it, once.`;
 }
 
 export function createInboxMcpServer(context: InboxMcpContext): McpServer {
@@ -487,7 +511,7 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
           (sent.attachments > 0 ? ` with ${sent.attachments} attachment${sent.attachments === 1 ? "" : "s"}` : "") +
           (sent.superseded > 0 ? `, superseding ${sent.superseded} earlier question${sent.superseded === 1 ? "" : "s"}` : "");
         return ok(
-          `${sent.replayed ? "Already sent" : "Sent"} to the Plannotator Inbox${asked} (thread ${sent.structured.thread_id}, ${sent.structured.url}). ${callerWakes(ctx) ? INBOX_REPLY_ARRIVES_TEXT : "Call wait_for_reply with this thread_id for the answer, or go on and read_thread later."}`,
+          `${sent.replayed ? "Already sent" : "Sent"} to the Plannotator Inbox${asked} (thread ${sent.structured.thread_id}, ${sent.structured.url}).${namingLine(sent.naming)} ${callerWakes(ctx) ? INBOX_REPLY_ARRIVES_TEXT : "Call wait_for_reply with this thread_id for the answer, or go on and read_thread later."}`,
           sent.structured,
         );
       }),
@@ -521,9 +545,10 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
           store.markAcksSeen(threadId);
           const thread = store.agentThread(threadId)!;
           const replies = thread.messages.filter((m) => m.author.kind === "person").length;
+          const naming = namingHint(store, threadId, input.agent_session?.trim() || null);
           return ok(
-            `Thread ${threadId}${thread.subject ? ` (${thread.subject})` : ""}: ${thread.messages.length} message${thread.messages.length === 1 ? "" : "s"}, ${replies} from the person${thread.resolved_at ? ", resolved" : ""}.`,
-            { thread, url: threadUrl(context.baseUrl(), threadId) },
+            `Thread ${threadId}${thread.subject ? ` (${thread.subject})` : ""}: ${thread.messages.length} message${thread.messages.length === 1 ? "" : "s"}, ${replies} from the person${thread.resolved_at ? ", resolved" : ""}.${naming?.line ?? ""}`,
+            { thread, url: threadUrl(context.baseUrl(), threadId), ...(naming?.structured ?? {}) },
           );
         }
         if (!input.project_path) throw new InboxError("validation_error", "project_path: required to list threads (or pass thread_id).");
@@ -646,7 +671,7 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
           };
 
           const existing = findExisting();
-          if (existing) return replyResult(store, existing, context.baseUrl());
+          if (existing) return replyResult(store, existing, context.baseUrl(), caller);
           const acked = findAck();
           if (acked) return ackResult(store, acked, context.baseUrl());
           // A resolved thread takes no reply: say so now instead of holding the call.
@@ -688,7 +713,7 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
               signal?.addEventListener("abort", onAbort);
             },
           );
-          if (outcome.kind === "reply") return replyResult(store, outcome.message, context.baseUrl());
+          if (outcome.kind === "reply") return replyResult(store, outcome.message, context.baseUrl(), caller);
           if (outcome.kind === "ack") return ackResult(store, outcome.message, context.baseUrl());
           const cursor = store.cursor();
           if (outcome.kind === "resolved") {

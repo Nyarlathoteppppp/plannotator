@@ -34,6 +34,7 @@ import {
   composeInboxSetAsideBody,
   inboxSkipAnswer,
   deriveInboxSubject,
+  derivePersonThreadSubject,
   inboxQuestionState,
   isInboxQuestionSupersedable,
   parseInboxQuestionBlocks,
@@ -64,6 +65,7 @@ import {
   type InboxThread,
   type InboxThreadSummary,
   checkInboxThreadName,
+  PERSON_THREAD_NAMING_TARGET,
   inboxThreadNameKey,
   isInboxNote,
 } from "@plannotator/core/inbox-types";
@@ -151,6 +153,13 @@ export interface InboxSendInput {
 export interface InboxSendResult {
   message: InboxMessageWire;
   replayed: boolean;
+  /**
+   * A reply into a thread the person started that this agent may still name
+   * (`canNameThread`): `named` when its `thread` (or `subject`) named the
+   * thread, `refused` (with why) when that was not a valid thread name,
+   * `unnamed` when it gave none. Absent everywhere else, and on a replay.
+   */
+  naming?: { status: "named"; name: string } | { status: "refused"; reason: string } | { status: "unnamed" };
 }
 
 export interface InboxAnswerEntry {
@@ -280,6 +289,12 @@ export class InboxStore {
    * finds the same value; nothing is written for it.
    */
   private readonly resolvedSeq = new Map<string, number>();
+  /**
+   * The roots of threads the person started whose address moved ("Send to
+   * another session": a later root line names another `to.session`). Derived
+   * from the log in seq order, like `resolvedSeq`; read by `threadNamers`.
+   */
+  private readonly readdressed = new Set<string>();
   private readonly questions = new Map<string, InboxQuestionRecord>();
   /** Each message's question ids (a question's message never changes, so the index only grows). */
   private readonly messageQuestions = new Map<string, Set<string>>();
@@ -397,6 +412,14 @@ export class InboxStore {
         const before = previous?.kind === "message" ? previous.record.resolved_at : null;
         if (line.record.resolved_at == null) this.resolvedSeq.delete(line.record.id);
         else if (before !== line.record.resolved_at || !this.resolvedSeq.has(line.record.id)) this.resolvedSeq.set(line.record.id, line.seq);
+        if (previous?.kind === "message" && line.record.started_by_person && previous.record.to && line.record.to && previous.record.to.session !== line.record.to.session) {
+          this.readdressed.add(line.record.id);
+        }
+        // A thread the person started gains a name when an agent names it (sendMessage): indexed at
+        // that line, in seq order, so later sends with the name join it and a replay routes the same.
+        if (previous?.kind === "message" && line.record.started_by_person && !previous.record.thread_name && line.record.thread_name) {
+          this.indexName(line.record.project_id, line.record.thread_name, line.record.id);
+        }
         this.messages.set(line.record.id, line.record);
         if (!this.messageSeq.has(line.record.id)) {
           this.messageSeq.set(line.record.id, line.seq);
@@ -425,16 +448,26 @@ export class InboxStore {
 
   /** Note a root's routing keys, from its first line only. */
   private indexRoot(message: InboxMessage): void {
-    if (message.thread_id !== message.id || message.author.kind !== "agent") return;
+    if (message.thread_id !== message.id) return;
+    // A thread the person started is no session's default thread; it is indexed only by a name it has (compose).
+    if (message.author.kind !== "agent") {
+      if (message.started_by_person && message.thread_name) this.indexName(message.project_id, message.thread_name, message.id);
+      return;
+    }
     const name = message.thread_name ?? null;
     if (name !== null) {
-      const key = `${message.project_id}\0${inboxThreadNameKey(name)}`;
-      const roots = this.namedThreads.get(key);
-      if (roots) roots.push(message.id);
-      else this.namedThreads.set(key, [message.id]);
+      this.indexName(message.project_id, name, message.id);
     } else if (message.author.session) {
       this.sessionThreads.set(`${message.project_id}\0${message.author.session}`, message.id);
     }
+  }
+
+  /** Add a root under a thread name; the last one added is the newest of that name. */
+  private indexName(projectId: string, name: string, rootId: string): void {
+    const key = `${projectId}\0${inboxThreadNameKey(name)}`;
+    const roots = this.namedThreads.get(key);
+    if (roots) roots.push(rootId);
+    else this.namedThreads.set(key, [rootId]);
   }
 
   /**
@@ -641,6 +674,34 @@ export class InboxStore {
     }
     if (seen.size === 0 || !record) return root.subject;
     return deriveInboxSubject("", [record]) ?? root.subject;
+  }
+
+  /**
+   * The agent sessions that may still name a thread the person started
+   * (approval "inbox-agent-names-own-thread"): the session it is addressed to
+   * and, once the address moved, also the first agent that replied in it.
+   * Empty when the thread is not one the person started, already carries a
+   * name an agent gave (`named_by`), or is unknown. A subject the person set
+   * would be marked the same way and so never change.
+   */
+  threadNamers(threadId: string): string[] {
+    const root = this.messages.get(threadId);
+    if (!root || root.thread_id !== threadId || !root.started_by_person || root.named_by || !root.to) return [];
+    const sessions = [root.to.session];
+    if (this.readdressed.has(threadId)) {
+      for (const member of this.threadMembers.get(threadId) ?? []) {
+        const message = this.messages.get(member);
+        if (message?.author.kind !== "agent" || !message.author.session) continue;
+        if (!sessions.includes(message.author.session)) sessions.push(message.author.session);
+        break;
+      }
+    }
+    return sessions;
+  }
+
+  /** May this agent session name the thread now? See `threadNamers`. */
+  canNameThread(threadId: string, session: string | null | undefined): boolean {
+    return !!session && this.threadNamers(threadId).includes(session);
   }
 
   thread(threadId: string): InboxThread | null {
@@ -1536,8 +1597,41 @@ export class InboxStore {
       const record = this.questions.get(questionId)!;
       this.appendQuestion({ ...record, superseded_by: by, ...(record.decision_draft ? { decision_draft: null } : {}) }, at);
     }
+    // A reply into a thread the person started may name it, once (approval
+    // "inbox-agent-names-own-thread"). Decided after the reply is written, so
+    // "the first agent to reply" (a moved address) can be this sender. The
+    // name is the reply's `thread` (else its `subject`), checked by the
+    // thread-name rules; `PERSON_THREAD_NAMING_TARGET` says which field of the
+    // root it sets. The root is written again with it and `named_by`:
+    // append-only, and a replay reads the same last root line (`apply`
+    // indexes a name it gains, in seq order, so routing replays the same).
+    let naming: InboxSendResult["naming"];
+    if (replyTo && threadId && this.canNameThread(threadId, input.author.session)) {
+      const given = [input.thread, input.subject].find((value) => typeof value === "string" && value.trim() !== "");
+      if (given === undefined) {
+        naming = { status: "unnamed" };
+      } else {
+        const checked = checkInboxThreadName(given);
+        if (!checked.ok) {
+          naming = { status: "refused", reason: `the name ${checked.message}` };
+        } else {
+          const root = this.messages.get(threadId)!;
+          const target = PERSON_THREAD_NAMING_TARGET;
+          this.appendMessage(
+            {
+              ...root,
+              ...(target === "subject" || target === "both" ? { subject: checked.name } : {}),
+              ...(target === "thread_name" || target === "both" ? { thread_name: checked.name } : {}),
+              named_by: { kind: "agent", host: input.author.host, session: input.author.session!, message_id: id, at },
+            },
+            at,
+          );
+          naming = { status: "named", name: checked.name };
+        }
+      }
+    }
     // A reply from the agent reopens nothing: a resolved thread stays resolved.
-    return { message: this.wire(message), replayed: false };
+    return { message: this.wire(message), replayed: false, ...(naming ? { naming } : {}) };
   }
 
   /** send_message's `supersedes` as the store keeps it: trimmed, each once, in order. */
@@ -2381,6 +2475,7 @@ export class InboxStore {
     this.messages.clear();
     this.messageSeq.clear();
     this.resolvedSeq.clear();
+    this.readdressed.clear();
     this.questions.clear();
     this.messageQuestions.clear();
     this.sessionThreads.clear();
@@ -2554,13 +2649,21 @@ export class InboxStore {
     to: InboxAddressee | null;
     idempotency_key: unknown;
     attachments?: InboxAttachment[];
+    /** The thread's name (its chip), when the person gave one: checked by the thread-name rules; an agent never replaces it. */
+    thread_name?: unknown;
   }): { message: InboxMessage; replayed: boolean } {
     const key = typeof input.idempotency_key === "string" ? input.idempotency_key.trim() : "";
     if (!key) throw new InboxError("validation_error", "idempotency_key: required on a Send.", { field: "idempotency_key" });
     const body = typeof input.body === "string" ? input.body.trim() : "";
+    let threadName: string | null = null;
+    if (input.thread_name !== undefined && input.thread_name !== null && !(typeof input.thread_name === "string" && input.thread_name.trim() === "")) {
+      const checked = checkInboxThreadName(input.thread_name);
+      if (!checked.ok) throw new InboxError("validation_error", `thread_name: ${checked.message}`, { field: "thread_name" });
+      threadName = checked.name;
+    }
     for (const message of this.messages.values()) {
       if (!message.started_by_person || message.idempotency_key !== key) continue;
-      if (message.body !== body) {
+      if (message.body !== body || (message.named_by?.kind === "person" ? message.thread_name : null) !== threadName) {
         throw new InboxError("idempotency_key_reused", "This idempotency_key was already used for a different message.", { message_id: message.id });
       }
       return { message, replayed: true };
@@ -2578,7 +2681,7 @@ export class InboxStore {
       thread_id: id,
       reply_to: null,
       author: { kind: "person" },
-      subject: deriveInboxSubject(body, []),
+      subject: derivePersonThreadSubject(body, { files: (input.attachments ?? []).map((attachment) => attachment.name) }),
       subject_question: null,
       body,
       created_at: at,
@@ -2586,6 +2689,7 @@ export class InboxStore {
       idempotency_key: key,
       to: { host: input.to.host, session: input.to.session },
       started_by_person: true,
+      ...(threadName ? { thread_name: threadName, named_by: { kind: "person" as const, at } } : {}),
       ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments.map((attachment) => ({ ...attachment, sent_at: at })) } : {}),
     };
     this.appendMessage(message, at);

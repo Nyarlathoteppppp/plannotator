@@ -2288,6 +2288,17 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .pn-inbox .ib-cp-fx:hover { background: var(--muted); color: var(--foreground); }
 .ib-cp-subj { margin-top: 10px; font-size: 12.5px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ib-cp-subj b { color: var(--foreground); font-weight: 600; }
+/* The subject preview and the thread name (ThreadNameField): one line; the name sits at its end, the preview gives way first. */
+.ib-cp-subjrow { display: flex; align-items: center; gap: 8px; margin-top: 10px; min-height: 24px; }
+.ib-cp-subjrow .ib-cp-subj { margin-top: 0; flex: 0 1 auto; min-width: 0; }
+.pn-inbox .ib-cp-tname-add { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border: 1px dashed var(--border); border-radius: 5px; background: transparent; color: var(--muted-foreground); font-size: 11.5px; cursor: pointer; }
+.pn-inbox .ib-cp-tname-add:hover { color: var(--foreground); border-color: var(--muted-foreground); }
+.ib-key.ib-cp-tname { margin-left: auto; flex: none; align-items: center; gap: 2px; padding: 0 2px 0 6px; height: 22px; color: var(--foreground); max-width: 60%; }
+.ib-key.ib-cp-tname:focus-within { border-color: var(--ring); }
+.pn-inbox .ib-cp-tname-in { min-width: 0; width: auto; border: 0; outline: none; background: transparent; color: inherit; font: inherit; padding: 0; }
+.pn-inbox .ib-cp-tname-in::placeholder { color: var(--muted-foreground); }
+.pn-inbox .ib-cp-tname-x { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.pn-inbox .ib-cp-tname-x:hover { background: var(--muted); color: var(--foreground); }
 .ib-cp-error { padding: 0 16px 8px; font-size: 12.5px; color: var(--destructive); flex: none; }
 .ib-cp-conflict { display: inline-flex; gap: 12px; margin-left: 10px; }
 .pn-inbox .ib-cp-conflict .ib-lnk { margin-top: 0; }
@@ -2355,6 +2366,13 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   .pn-inbox .ib-cp-field .ib-rtext, .pn-inbox .ib-cp-field .ib-rmirror { font-size: 16px; min-height: 200px; max-height: none; }
   .ib-cp-files { grid-template-columns: 1fr; }
   .ib-cp-subj { white-space: nowrap; }
+  /* 44 px to touch, drawn as before; 16 px so iOS does not zoom into the name. */
+  .ib-cp-subjrow { flex-wrap: wrap; row-gap: 10px; }
+  .ib-key.ib-cp-tname { max-width: 100%; }
+  .pn-inbox .ib-cp-tname-add, .ib-key.ib-cp-tname { position: relative; height: 28px; }
+  .pn-inbox .ib-cp-tname-add::after { content: ''; position: absolute; inset: -8px -4px; }
+  .pn-inbox .ib-cp-tname-in { font-size: 16px; }
+  .pn-inbox .ib-cp-tname-x { width: 28px; height: 28px; }
   .ib-cp-foot { min-height: 52px; }
   .pn-inbox .ib-cp-clip { width: 44px; height: 44px; }
   .ib-cp-ask { flex-wrap: wrap; border-radius: 0; }

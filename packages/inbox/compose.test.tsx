@@ -223,7 +223,7 @@ test.skipIf(!hasDom)('Keep draft: the sidebar\'s Drafts row and the Drafts page 
   await until(() => el.querySelectorAll('[data-draft-id]').length === 1, 'the draft row');
   const row = el.querySelector('[data-draft-id]')!;
   expect(row.querySelector('[data-draft-chip]')?.textContent).toBe('No agent chosen');
-  expect(row.textContent).toContain('Idea: group the list by session.');
+  expect(row.textContent).toContain('Idea: group the list by session');
 
   // From the keyboard: the delete button has focus; with no other draft it goes to the Drafts heading, never the page.
   const del = row.querySelector('[data-draft-delete]') as HTMLButtonElement;
@@ -256,7 +256,7 @@ test.skipIf(!hasDom)('a live session: To is prefilled, Send starts the thread ad
   expect(await drafts()).toEqual([]);
   await until(() => el.querySelector('[data-drafts-nav]') === null, 'no Drafts row');
   const sections = (JSON.parse((await loopback('/api/inbox/threads')).text) as { sections: InboxListSection[] }).sections;
-  const row = sections.flatMap((s) => s.threads).find((t) => t.subject === 'Idea: group the list by session.')!;
+  const row = sections.flatMap((s) => s.threads).find((t) => t.subject === 'Idea: group the list by session')!;
   expect(row).toMatchObject({ section: 'sent', addressee: { host: 'claude-code', session: 'ses_live_dom' } });
 });
 
@@ -310,4 +310,63 @@ test.skipIf(!hasDom)('the To picker: one line per session, a start time only whe
   expect(to.querySelector('.ib-cp-tod')!.textContent).toBe('· other-project');
   key('Escape');
   await until(() => dialog() === null, 'compose closed');
+});
+
+test.skipIf(!hasDom)('a thread name: out of the way until pressed, kept by a draft, checked at Send, sent as thread_name; the row has it as its chip', async () => {
+  await poll('ses_named', 'claude-code', projects[0]!);
+  const el = await renderApp();
+  await openCompose(el);
+  await until(() => dialog()!.querySelector('[data-compose-to^="ses_"]') !== null, 'To prefilled');
+  // Empty: only the small "+ Thread name" button; no field.
+  expect(dialog()!.querySelector('[data-compose-thread-name]')).toBeNull();
+  act(() => (dialog()!.querySelector('[data-compose-thread-name-add]') as HTMLButtonElement).click());
+  const input = () => dialog()!.querySelector('[data-compose-thread-name] input') as HTMLInputElement;
+  await until(() => document.activeElement === input(), 'the field focused');
+  // Escape on the empty field closes the field only, never the dialog.
+  act(() => {
+    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  });
+  expect(dialog()).not.toBeNull();
+  await until(() => dialog()!.querySelector('[data-compose-thread-name]') === null, 'the field closed');
+
+  const fill = (value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(input(), value);
+      input().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+  act(() => (dialog()!.querySelector('[data-compose-thread-name-add]') as HTMLButtonElement).click());
+  await until(() => !!input(), 'the field');
+  type('I want to explore what adding a board would look like. Kanban specifically.');
+  fill('Kanban‮board');
+  // Not a valid name: Send sends nothing and says why, in the thread-name rules' words.
+  posted = [];
+  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
+  await until(() => dialog()!.querySelector('[data-compose-error]') !== null, 'the error');
+  expect(dialog()!.querySelector('[data-compose-error]')!.textContent).toContain('Thread name must not contain bidirectional control characters.');
+  expect(posted.some((p) => p.path === '/api/inbox/messages')).toBe(false);
+
+  // A draft keeps it.
+  fill('Kanban board');
+  key('Escape');
+  act(() => (dialog()!.querySelector('[data-compose-keep]') as HTMLButtonElement).click());
+  await until(() => dialog() === null, 'compose closed');
+  const saved = (JSON.parse((await loopback('/api/inbox/drafts')).text) as { drafts: { id: string; thread_name?: string }[] }).drafts;
+  expect(saved.map((d) => d.thread_name)).toEqual(['Kanban board']);
+
+  // Reopened, the name is there; Send carries it, and the thread's row has it as its chip.
+  act(() => (el.querySelector('[data-drafts-nav]') as HTMLButtonElement).click());
+  await until(() => el.querySelectorAll('[data-draft-id]').length === 1, 'the draft row');
+  act(() => (el.querySelector('.ib-draft-open') as HTMLButtonElement).click());
+  await until(() => dialog()?.querySelector('[data-compose-to="ses_named"]') != null && !!input(), 'reopened with the name');
+  expect(input().value).toBe('Kanban board');
+  expect(dialog()!.querySelector('[data-compose-subject]')!.textContent).toBe('New thread: I want to explore what adding a board would look like');
+  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
+  await until(() => dialog() === null, 'sent');
+  const send = posted.find((p) => p.path === '/api/inbox/messages')!;
+  expect(send.body).toMatchObject({ thread_name: 'Kanban board' });
+  const sections = (JSON.parse((await loopback('/api/inbox/threads')).text) as { sections: InboxListSection[] }).sections;
+  const row = sections.flatMap((s) => s.threads).find((t) => t.subject === 'I want to explore what adding a board would look like')!;
+  expect(row.thread_name).toBe('Kanban board');
 });

@@ -453,7 +453,8 @@ describe("InboxStore invariants", () => {
       | { op: "resolve"; target: number; resolved: boolean }
       | { op: "seen"; target: number }
       | { op: "personReply"; target: number; key: string }
-      | { op: "personStart"; project: number; key: string; session: string };
+      | { op: "personStart"; project: number; key: string; session: string; name: string | null }
+      | { op: "name"; target: number; session: string; thread: string };
     const routeOpArb: fc.Arbitrary<RouteOp> = fc.oneof(
       {
         arbitrary: fc.record({
@@ -471,7 +472,16 @@ describe("InboxStore invariants", () => {
       fc.record({ op: fc.constant("seen" as const), target: fc.nat() }),
       fc.record({ op: fc.constant("personReply" as const), target: fc.nat(), key: fc.constantFrom("p1", "p2", "p3") }),
       // A thread the person starts (compose): it must never become a session's default thread.
-      fc.record({ op: fc.constant("personStart" as const), project: fc.nat(1), key: fc.constantFrom("c1", "c2", "c3"), session: fc.constantFrom("ses_a", "ses_b") }),
+      // It may carry a name the person gave (compose), which routes named sends to it.
+      fc.record({
+        op: fc.constant("personStart" as const),
+        project: fc.nat(1),
+        key: fc.constantFrom("c1", "c2", "c3"),
+        session: fc.constantFrom("ses_a", "ses_b"),
+        name: fc.constantFrom(null, null, "alpha", "BETA"),
+      }),
+      // An agent's reply that names a thread the person started (approval "inbox-agent-names-own-thread").
+      fc.record({ op: fc.constant("name" as const), target: fc.nat(), session: fc.constantFrom("ses_a", "ses_b"), thread: fc.constantFrom("alpha", "Beta", "gamma") }),
     );
 
     fc.assert(
@@ -511,8 +521,19 @@ describe("InboxStore invariants", () => {
               if (target) store.markSeen(store.message(target)!.thread_id);
             } else if (op.op === "personStart") {
               const project = store.ensureProject({ name: `repo${op.project}`, root: `/work/repo${op.project}` });
-              const r = store.startPersonThread({ project_id: project.id, body: "an idea", to: { host: "test", session: op.session }, idempotency_key: op.key });
+              const r = store.startPersonThread({ project_id: project.id, body: "an idea", to: { host: "test", session: op.session }, idempotency_key: op.key, thread_name: op.name });
               if (!r.replayed) ids.push(r.message.id);
+            } else if (op.op === "name") {
+              const target = pick(op.target);
+              if (!target) continue;
+              const r = store.sendMessage({
+                project_id: store.message(target)!.project_id,
+                author: { kind: "agent", host: "test", session: op.session, name: null },
+                body: "named",
+                reply_to: target,
+                thread: op.thread,
+              });
+              ids.push(r.message.id);
             } else {
               const target = pick(op.target);
               if (target) store.sendReply(target, { words: "ok", idempotency_key: op.key });
@@ -530,12 +551,19 @@ describe("InboxStore invariants", () => {
         const bySession = new Map<string, string>();
         // Every root of a name, oldest first: a name joins its newest OPEN one.
         const byName = new Map<string, string[]>();
+        const named = new Set<string>();
         const nameKey = inboxThreadNameKey;
         for (const line of lines) {
           if (line.kind !== "message") continue;
           const m = line.record;
           if (threadOf.has(m.id)) {
             if (m.id === m.thread_id) resolved.set(m.id, m.resolved_at !== null);
+            // A thread the person started gains a name when an agent names it: from that line on, the name routes to it.
+            if (m.id === m.thread_id && m.started_by_person && m.thread_name != null && !named.has(m.id)) {
+              named.add(m.id);
+              const key = `${m.project_id}\0${nameKey(m.thread_name)}`;
+              byName.set(key, [...(byName.get(key) ?? []), m.id]);
+            }
             continue;
           }
           let expected: string;
@@ -560,6 +588,7 @@ describe("InboxStore invariants", () => {
           if (m.id === m.thread_id) {
             resolved.set(m.id, m.resolved_at !== null);
             if (m.thread_name != null) {
+              named.add(m.id);
               const key = `${m.project_id}\0${nameKey(m.thread_name)}`;
               byName.set(key, [...(byName.get(key) ?? []), m.id]);
             }

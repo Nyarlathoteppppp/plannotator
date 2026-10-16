@@ -208,7 +208,7 @@ test('no agent is running: compose says so, Send sends nothing, a file attaches,
   const text = dialog.getByRole('textbox', { name: 'Message' });
   await expect(text).toBeFocused();
   await text.fill('Idea: let the Inbox list show which agent session wrote each thread.\n\nA small chip on each row would do.');
-  await expect(dialog.locator('[data-compose-subject]')).toHaveText('New thread: Idea: let the Inbox list show which agent session wrote each thread.');
+  await expect(dialog.locator('[data-compose-subject]')).toHaveText('New thread: Idea: let the Inbox list show which agent session wrote…');
   await dialog.locator('[data-compose-attach]').setInputFiles(join(world.root, 'notes.md'));
   await expect(dialog.locator('[data-compose-file="done"]')).toHaveCount(1);
   await expect(dialog.locator('[data-compose-file="done"]')).toContainText('Markdown');
@@ -240,7 +240,7 @@ test('no agent is running: compose says so, Send sends nothing, a file attaches,
   const row = page.locator('[data-draft-id]');
   await expect(row).toHaveCount(1);
   await expect(row.locator('[data-draft-chip]')).toHaveText('No agent chosen');
-  await expect(row).toContainText('Idea: let the Inbox list show which agent session wrote each thread.');
+  await expect(row).toContainText('Idea: let the Inbox list show which agent session wrote…');
   await shot(page, '04-drafts-list');
 
   // A phone with no agent running: the sheet's top bar offers Save draft in Send's place.
@@ -296,7 +296,7 @@ test('an agent connects: the draft reopens with To prefilled; Send starts a thre
   await toast.locator('[data-toast-action]').click();
 
   const command = await waitFor('the new-thread command', () => claude.commands[0]);
-  expect(command).toMatchObject({ type: 'message', reply_to: null, new_thread: true, subject: 'Idea: let the Inbox list show which agent session wrote each thread.' });
+  expect(command).toMatchObject({ type: 'message', reply_to: null, new_thread: true, subject: 'Idea: let the Inbox list show which agent session wrote…' });
   expect(inboxWakeText(command).split('\n')[1]).toBe(INBOX_NEW_THREAD_INSTRUCTION);
   expect(command.body).toMatch(/\n\nAttached: notes\.md \(\/.+\/inbox\/uploads\/att_[0-9A-Z]+\/notes\.md\)$/);
   expect(readFileSync(command.body.match(/\((\/.+notes\.md)\)$/)![1]!, 'utf8')).toContain('The screenshot and the export');

@@ -328,6 +328,16 @@ export interface InboxMessage {
    */
   started_by_person?: true;
   /**
+   * On the root of a thread the person started: who gave it its name, the
+   * thread chip (approval "inbox-agent-names-own-thread"). The person may name
+   * it in compose; otherwise the first reply from a session that may name it
+   * (`InboxStore.canNameThread`) carrying a valid `thread` names it, once, and
+   * the root is written again with the name and this field. Absent while the
+   * thread has no name, and on every other message. A name set here is never
+   * replaced.
+   */
+  named_by?: InboxThreadNamedBy;
+  /**
    * On an agent's message: the person's 👍 Looks good (design record
    * "inbox-acknowledge", approved 2026-10-15). Silent: nothing is sent, no
    * session is woken; the thread is marked read. Null after Undo. Absent on
@@ -335,6 +345,45 @@ export interface InboxMessage {
    */
   ack?: InboxAck | null;
 }
+
+/**
+ * Who named a thread the person started (`InboxMessage.named_by`): the person
+ * in compose (`thread_name` on the Send), or the agent whose reply named it.
+ */
+export type InboxThreadNamedBy =
+  | { kind: "person"; at: string }
+  | {
+      kind: "agent";
+      host: string | null;
+      session: string;
+      /** The reply that carried the name. */
+      message_id: string;
+      at: string;
+    };
+
+/**
+ * Which field of a thread the person started the agent's name sets (approval
+ * "inbox-agent-names-own-thread"; the field is the owner's open question):
+ * `thread_name`, the chip, which also routes later sends with that name to
+ * the thread (the bold subject stays the short name the Inbox derived);
+ * `subject`, the bold subject only; or `both`. The store accepts the name in
+ * the reply's `thread` or `subject` field either way; the instructions name
+ * `PERSON_THREAD_NAMING_FIELD`. Switching the target changes the wording of
+ * the hint below, and of INBOX_NEW_THREAD_INSTRUCTION (shared/inbox/
+ * connection.ts and its copy in the mod), which spell the field out.
+ */
+export type PersonThreadNamingTarget = "thread_name" | "subject" | "both";
+export const PERSON_THREAD_NAMING_TARGET = "thread_name" as PersonThreadNamingTarget;
+/** The send_message field the naming instructions tell an agent to pass. */
+export const PERSON_THREAD_NAMING_FIELD: "thread" | "subject" = PERSON_THREAD_NAMING_TARGET === "subject" ? "subject" : "thread";
+
+/**
+ * The one line an agent is handed while a thread the person started still
+ * has no name an agent gave and that agent may name it: in `wait_for_reply`
+ * and `read_thread` beside `name_this_thread: true`. The wake of the thread
+ * (INBOX_NEW_THREAD_INSTRUCTION) carries the same ask.
+ */
+export const INBOX_NAME_THIS_THREAD_HINT = `Name this thread: pass \`${PERSON_THREAD_NAMING_FIELD}\` (a few words saying what it is about) with your reply. The first name you give sets it, once.`;
 
 /** The one acknowledgment the window offers (plan review's 👍 says the same words). */
 export const INBOX_ACK_LABEL = "Looks good";
@@ -1078,6 +1127,8 @@ export interface InboxDraft {
   /** The project it was written in (the chosen session's, or the one open in the list). */
   project: { id: string | null; root: string; name: string } | null;
   files: InboxUpload[];
+  /** The thread's name the person gave in compose (the chip), as typed. Absent when none. */
+  thread_name?: string;
 }
 
 /** A draft's chip: its chosen session is live, has ended, or none was chosen. */

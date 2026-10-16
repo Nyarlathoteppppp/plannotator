@@ -21,6 +21,7 @@ import { whenTime } from '../format';
 import { HostMark, Icon } from '../icons';
 import { ComposeFileTiles, useComposeFiles } from './ComposeFiles';
 import { ToPicker } from './ToPicker';
+import { ThreadNameField } from './ThreadNameField';
 import { useComposeSessions } from './useComposeSessions';
 import { InboxComposerField } from '../components/ComposerField';
 import { INBOX_MESSAGE_SKILL_AUDIENCE, inboxSkillsBlock, withSkillsBlock } from '../skills';
@@ -28,6 +29,7 @@ import {
   NOTHING_SENT_NO_AGENT,
   composeGroups,
   composeTargets,
+  composeThreadName,
   draftSnapshot,
   draftTo,
   findTarget,
@@ -81,6 +83,8 @@ export function ComposeDialog(props: ComposeDialogProps) {
 
   const [draft, setDraft] = useState<DraftView | null>(request.draft ?? null);
   const [body, setBody] = useState(request.draft?.body ?? '');
+  // The thread's name (its chip), when the person gives one: optional, out of the way when empty.
+  const [threadName, setThreadName] = useState(request.draft?.thread_name ?? '');
   const [chosen, setChosen] = useState<string | null>(request.draft ? (request.draft.to?.session ?? null) : (request.session ?? null));
   const files = useComposeFiles(request.draft?.files ?? []);
   const { model, load } = useComposeSessions(true);
@@ -124,11 +128,11 @@ export function ComposeDialog(props: ComposeDialogProps) {
   const uploadIds = files.uploaded.map((u) => u.upload_id);
   useEffect(() => {
     sendKey.current = crypto.randomUUID();
-  }, [body, chosen, uploadIds.join(',')]);
+  }, [body, chosen, threadName, uploadIds.join(',')]);
   const draftId = useRef(request.draft?.id ?? inboxId('drf'));
 
   const saved = draftSnapshot(draft);
-  const dirty = isDirty({ body, session: chosen, files: uploadIds }, saved, draft !== null) || files.uploading;
+  const dirty = isDirty({ body, session: chosen, files: uploadIds, threadName }, saved, draft !== null) || files.uploading;
   const subject = subjectPreview(body);
   const projectName = current?.name ?? null;
 
@@ -186,6 +190,11 @@ export function ComposeDialog(props: ComposeDialogProps) {
       setError('Wait for the files to finish uploading.');
       return;
     }
+    const named = composeThreadName(threadName);
+    if ('error' in named) {
+      setError(named.error);
+      return;
+    }
     setBusy('send');
     try {
       // The skills the words reference go with the message as one block at its end, as New message's do (skills.ts).
@@ -195,6 +204,7 @@ export function ComposeDialog(props: ComposeDialogProps) {
         body: withSkillsBlock(body, skills),
         idempotency_key: sendKey.current,
         uploads: uploadIds,
+        ...(named.name ? { thread_name: named.name } : {}),
         ...(draft ? { draft_id: draft.id } : {}),
       });
       props.onSent({ threadId: result.thread_id, session: target.session, host: target.host, projectName: result.project?.name ?? target.project.name, draftId: draft?.id ?? null });
@@ -224,7 +234,7 @@ export function ComposeDialog(props: ComposeDialogProps) {
       const project = target
         ? { id: target.project.id, root: target.project.root, name: target.project.name }
         : (draft?.project ?? (current?.root ? { id: current.id, root: current.root, name: current.name ?? current.root } : null));
-      const result = await inboxApi.saveDraft(draftId.current, { body, to, project, files: uploadIds, base });
+      const result = await inboxApi.saveDraft(draftId.current, { body, to, project, files: uploadIds, base, thread_name: threadName });
       setDraft(result.draft);
       setConflict(null);
       return result.draft;
@@ -476,11 +486,21 @@ export function ComposeDialog(props: ComposeDialogProps) {
             textRef.current?.focus();
           }}
         />
-        {subject && (
-          <div className="ib-cp-subj" data-compose-subject="">
-            New thread: <b dir="auto">{subject}</b>
-          </div>
-        )}
+        <div className="ib-cp-subjrow">
+          {subject && (
+            <div className="ib-cp-subj" data-compose-subject="">
+              New thread: <b dir="auto">{subject}</b>
+            </div>
+          )}
+          <ThreadNameField
+            value={threadName}
+            onChange={(value) => {
+              setThreadName(value);
+              if (error) setError(null);
+            }}
+            onDone={() => textRef.current?.focus()}
+          />
+        </div>
       </div>
       {error && (
         <div className="ib-cp-error" role="alert" data-compose-error="">
@@ -496,6 +516,7 @@ export function ComposeDialog(props: ComposeDialogProps) {
                 onClick={() => {
                   setDraft(conflict);
                   setBody(conflict.body);
+                  setThreadName(conflict.thread_name ?? '');
                   setChosen(conflict.to?.session ?? null);
                   setConflict(null);
                   setError(null);
