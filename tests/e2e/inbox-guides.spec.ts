@@ -475,8 +475,15 @@ test('a long thread name plus the Guided review mark never pushes a row out of s
         const measured = await row.evaluate((el) => {
           const body = el.closest('.ib-lbody')!;
           const wideRow = el.querySelector('.ib-subj') !== null;
-          const line = (el.querySelector('.ib-subj') ?? el.querySelector('.ib-l2') ?? el.querySelector('.ib-m3'))!.getBoundingClientRect();
+          const lineEl = (el.querySelector('.ib-subj') ?? el.querySelector('.ib-l2') ?? el.querySelector('.ib-m3'))!;
           const box = (sel: string) => el.querySelector(sel)!.getBoundingClientRect();
+          // The Soft rows lend their cells to the row's grid (display: contents), so the line has no box of its
+          // own: it runs from the row's start to what follows the chip and the mark (the wide row's count, else
+          // its project or time) or to the row's content edge (the two-line row's second line).
+          const flat = getComputedStyle(lineEl).display === 'contents';
+          const rowBox = el.getBoundingClientRect();
+          const after = wideRow ? (el.querySelector(':scope > .ib-c:not(:empty)') ?? el.querySelector(':scope > .ib-p') ?? el.querySelector(':scope > .ib-t'))! : null;
+          const line = flat ? { left: rowBox.left, right: after ? after.getBoundingClientRect().left : rowBox.right - parseFloat(getComputedStyle(el).paddingRight) } : lineEl.getBoundingClientRect();
           // A mail row's subject is its own line (.ib-m2); the others share the line with the chip.
           const subject = box(el.querySelector('.ib-s') ? '.ib-s' : '.ib-m2');
           const nameEl = el.querySelector<HTMLElement>('.ib-keyt') ?? el.querySelector<HTMLElement>('.ib-key')!;
@@ -485,7 +492,7 @@ test('a long thread name plus the Guided review mark never pushes a row out of s
             rowOverflow: el.scrollWidth - el.clientWidth,
             lineRight: line.right,
             // What the line must end before: the count column, or the row's own edge.
-            limit: wideRow ? box('.ib-c').left : el.getBoundingClientRect().right,
+            limit: flat ? line.right : wideRow ? box('.ib-c').left : el.getBoundingClientRect().right,
             keyRight: box('.ib-key').right,
             keyWidth: box('.ib-key').width,
             // Cut on one line with "…", or (a phone's row, which wraps the name) clamped at two lines.

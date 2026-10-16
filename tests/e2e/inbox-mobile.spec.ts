@@ -1056,7 +1056,8 @@ test.describe('a desktop window', () => {
   });
 
   test('a window just wide enough keeps the list beside the thread, which keeps 480 px', async ({ page }) => {
-    await page.setViewportSize({ width: 1100, height: 800 });
+    // 232 + 380 + 480, plus the Soft layout's 24 px of gutters (1100 before them).
+    await page.setViewportSize({ width: 1124, height: 800 });
     await page.goto(`${world.url}#thread=${world.threads.stopped}`);
     const pane = page.locator('section.ib-pane');
     await expect(pane.getByRole('heading', { name: /Stripe 409/ })).toBeVisible();
