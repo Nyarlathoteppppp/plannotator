@@ -14,7 +14,9 @@
  * opened and closed, the reply box still. And the other side: a paste aimed at
  * a field stays in it, a page where no field was used keeps it nowhere, a file
  * shown full screen over the thread keeps it out of the reply box hidden under
- * it, and words selected in a file to comment on keep their toolbar.
+ * it, and words selected in a file to comment on keep their toolbar. With
+ * image paste (#1953, `compose/paste.ts`): an image pasted after a pick
+ * attaches once to the reply box, and text is still inserted once.
  *
  * Build the binary first (see inbox.spec.ts), then `bun run test:e2e:inbox`.
  */
@@ -298,6 +300,40 @@ test('text selected in a file to comment on: the paste is not taken to the reply
     await expect(box).not.toBeFocused();
     // The toolbar is still there: the person can still comment on the words they chose.
     await expect(toolbar).toBeVisible();
+  } finally {
+    await p.close();
+  }
+});
+
+/** A 1 by 1 PNG, as a screenshot would put it on the clipboard. */
+const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+test('with image paste (#1953): an image pasted after a pick attaches once to the reply box, its words untouched', async () => {
+  const p = await context.newPage();
+  try {
+    await p.goto(`${url}#thread=${threadId}`);
+    await p.locator('.ib-pfoot').getByRole('button', { name: 'Reply' }).click();
+    const rbox = p.locator('section.ib-pane .ib-rbox');
+    const box = rbox.locator('textarea');
+    await box.fill('With a screenshot.');
+    await p.getByText('Fail the job').click();
+    await expect(box).not.toBeFocused();
+    // The real clipboard holds an image only, and the browser's own paste runs (no event made by hand).
+    await p.evaluate(async (b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]);
+    }, PNG_B64);
+    await p.keyboard.press('ControlOrMeta+v');
+    await expect(box).toBeFocused();
+    await expect(rbox.locator('[data-compose-file="done"]')).toHaveCount(1);
+    await p.waitForTimeout(300);
+    await expect(rbox.locator('[data-compose-file]')).toHaveCount(1);
+    await expect(box).toHaveValue('With a screenshot.');
+    // Then text after another pick: inserted once, and the image stays the one attached.
+    await p.getByText('Retry with the same idempotency key').click();
+    await dictate(p, ' And words.');
+    await expect(box).toHaveValue('With a screenshot. And words.');
+    await expect(rbox.locator('[data-compose-file]')).toHaveCount(1);
   } finally {
     await p.close();
   }
