@@ -94,7 +94,7 @@ describe("an agent names a thread the person started", () => {
 
     // A reply with no name: the result says the thread can still be named.
     const first = await call(client, "send_message", { body: "On it.", reply_to: sent.message.id, project_path: project, agent_session: "ses-live", agent_host: "claude-code" });
-    expect(first.content[0]!.text).toContain("has no name yet: pass `thread`");
+    expect(first.content[0]!.text).toContain("still needs a name from you: pass `thread`");
     expect(first.structuredContent).toMatchObject({ name_this_thread: true, named_thread: null });
     expect(first.structuredContent.naming_refused).toBeUndefined();
 
@@ -172,7 +172,7 @@ describe("an agent names a thread the person started", () => {
     expect(inboxWakeText(command!)).not.toContain(INBOX_NAME_THREAD_LINE);
 
     const answered = await call(client, "send_message", { body: "ok", reply_to: sent.message.id, thread: "Kanban", project_path: project, agent_session: "ses-live", agent_host: "claude-code" });
-    expect(answered.content[0]!.text).not.toMatch(/Named this thread|has no name yet/);
+    expect(answered.content[0]!.text).not.toMatch(/Named this thread|still needs a name from you/);
     expect((await thread(server, sent.message.id)).thread_name).toBe("Board");
 
     // Later named sends join it.

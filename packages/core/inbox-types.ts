@@ -334,7 +334,8 @@ export interface InboxMessage {
    * (`InboxStore.canNameThread`) carrying a valid `thread` names it, once, and
    * the root is written again with the name and this field. Absent while the
    * thread has no name, and on every other message. A name set here is never
-   * replaced.
+   * replaced, except compose's suggestion (`kind: "auto"`), which the first
+   * agent that may name the thread replaces.
    */
   named_by?: InboxThreadNamedBy;
   /**
@@ -360,10 +361,18 @@ export interface InboxMessage {
 
 /**
  * Who named a thread the person started (`InboxMessage.named_by`): the person
- * in compose (`thread_name` on the Send), or the agent whose reply named it.
+ * in compose (`thread_name` on the Send), compose's own suggestion the person
+ * left as it was (`thread_name_auto: true`), or the agent whose reply named it.
  */
 export type InboxThreadNamedBy =
   | { kind: "person"; at: string }
+  /**
+   * The name compose suggested from the message (`suggestPersonThreadName`)
+   * and the person sent without editing it: shown like any name, but the
+   * first agent that may name the thread (`InboxStore.canNameThread`) still
+   * replaces it, once.
+   */
+  | { kind: "auto"; at: string }
   | {
       kind: "agent";
       host: string | null;
@@ -1137,7 +1146,11 @@ export interface InboxDraft {
   /** The project it was written in (the chosen session's, or the one open in the list). */
   project: { id: string | null; root: string; name: string } | null;
   files: InboxUpload[];
-  /** The thread's name the person gave in compose (the chip), as typed. Absent when none. */
+  /**
+   * The thread's name the person typed in compose (the chip), as typed.
+   * Absent while the chip follows the message (compose's suggestion, worked
+   * out again from the body when the draft opens).
+   */
   thread_name?: string;
 }
 

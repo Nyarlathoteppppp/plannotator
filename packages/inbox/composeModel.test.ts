@@ -14,6 +14,12 @@ import {
   composeTargets,
   composeThreadName,
   draftChip,
+  draftThreadName,
+  sendThreadName,
+  shownThreadName,
+  suggestThreadName,
+  threadNameStateOf,
+  typeThreadName,
   filterGroups,
   isDirty,
   namesActionWord,
@@ -149,5 +155,38 @@ describe('the subject preview and the thread name', () => {
     expect(isDirty({ ...saved }, saved, true)).toBe(false);
     expect(isDirty({ ...saved, threadName: 'Kanban' }, saved, true)).toBe(true);
     expect(isDirty({ body: '', session: null, files: [], threadName: 'Board' }, { body: '', session: null, files: [] }, false)).toBe(true);
+  });
+
+  test('the chip follows the message until typed in; emptied, it follows again', () => {
+    const fresh = threadNameStateOf(null);
+    expect(fresh).toEqual({ typed: '', edited: false });
+    expect(shownThreadName(fresh, 'Paste bug')).toBe('Paste bug');
+    const typed = typeThreadName('Board ideas');
+    expect(typed).toEqual({ typed: 'Board ideas', edited: true });
+    // The suggestion moves on; the typed name does not.
+    expect(shownThreadName(typed, 'Kanban board')).toBe('Board ideas');
+    expect(typeThreadName('   ')).toEqual({ typed: '', edited: false });
+    expect(typeThreadName('')).toEqual({ typed: '', edited: false });
+  });
+
+  test('a draft keeps the typed name only, and opens in the state it was saved in', () => {
+    expect(draftThreadName(typeThreadName('Kanban board'))).toBe('Kanban board');
+    expect(draftThreadName(threadNameStateOf(null))).toBe('');
+    expect(threadNameStateOf({ thread_name: 'Kanban board' })).toEqual({ typed: 'Kanban board', edited: true });
+    expect(threadNameStateOf({ thread_name: '  ' })).toEqual({ typed: '', edited: false });
+    expect(threadNameStateOf({})).toEqual({ typed: '', edited: false });
+  });
+
+  test('a Send carries the typed name as is, the suggestion marked auto, or nothing', () => {
+    expect(sendThreadName(typeThreadName('  Kanban board '), 'Paste bug')).toEqual({ thread_name: 'Kanban board' });
+    expect(sendThreadName(threadNameStateOf(null), 'Paste bug')).toEqual({ thread_name: 'Paste bug', thread_name_auto: true });
+    expect(sendThreadName(threadNameStateOf(null), '')).toEqual({});
+    expect(sendThreadName(typeThreadName('a\u202eb'), 'Paste bug')).toEqual({ error: 'Thread name must not contain bidirectional control characters.' });
+  });
+
+  test("the suggestion is the core namer's, short, from the words or else the files", () => {
+    expect(suggestThreadName('can you fix the paste bug in the reply box')).toBe('Paste bug');
+    expect(suggestThreadName('', ['relay-retry-budget.md'])).toBe('Relay retry budget');
+    expect(suggestThreadName('What do you think?')).toBe('');
   });
 });

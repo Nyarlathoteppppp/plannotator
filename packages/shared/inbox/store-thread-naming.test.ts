@@ -215,3 +215,70 @@ describe("naming a thread the person started", () => {
     expect(store.message(first.message.id)!).toMatchObject({ subject: "Relay retries", thread_name: null });
   });
 });
+
+describe("compose's suggested name (thread_name_auto)", () => {
+  test("shown as the chip at once, but the addressed agent's first name replaces it, once; routing follows the new name after a replay", () => {
+    const { dir, store, project } = world();
+    const { message: root } = store.startPersonThread({
+      project_id: project.id,
+      body: IDEA,
+      to: claude,
+      idempotency_key: "k",
+      thread_name: "Kanban board",
+      thread_name_auto: true,
+    });
+    expect(root.thread_name).toBe("Kanban board");
+    expect(root.named_by).toMatchObject({ kind: "auto" });
+    expect(store.listRow(root.id)!.thread_name).toBe("Kanban board");
+    // A suggestion is not the person's name: the agent may still name it.
+    expect(store.canNameThread(root.id, "ses_live")).toBe(true);
+
+    // The suggestion routes like any name until it is replaced.
+    const joined = store.sendMessage({ project_id: project.id, author: agent("ses_other"), body: "joining", thread: "kanban BOARD" });
+    expect(joined.message.thread_id).toBe(root.id);
+
+    const named = store.sendMessage({ project_id: project.id, author: agent("ses_live"), body: "Sketch.", reply_to: root.id, thread: "Board columns" });
+    expect(named.naming).toEqual({ status: "named", name: "Board columns" });
+    expect(store.message(root.id)!.thread_name).toBe("Board columns");
+    expect(store.message(root.id)!.named_by).toMatchObject({ kind: "agent", session: "ses_live" });
+    expect(store.canNameThread(root.id, "ses_live")).toBe(false);
+
+    // The old name no longer reaches the thread; the new one does. A replay of the log agrees.
+    for (const s of [store, InboxStore.open(dir)]) {
+      const viaOld = s.sendMessage({ project_id: project.id, author: agent("ses_x"), body: `old ${s === store ? 1 : 2}`, thread: "Kanban board" });
+      expect(viaOld.message.thread_id).not.toBe(root.id);
+      const viaNew = s.sendMessage({ project_id: project.id, author: agent("ses_y"), body: `new ${s === store ? 1 : 2}`, thread: "board columns" });
+      expect(viaNew.message.thread_id).toBe(root.id);
+    }
+  });
+
+  test("an agent may give the suggestion itself as the name", () => {
+    const { store, project } = world();
+    const { message: root } = store.startPersonThread({ project_id: project.id, body: IDEA, to: claude, idempotency_key: "k", thread_name: "Kanban board", thread_name_auto: true });
+    const named = store.sendMessage({ project_id: project.id, author: agent("ses_live"), body: "ok", reply_to: root.id, thread: "Kanban board" });
+    expect(named.naming).toEqual({ status: "named", name: "Kanban board" });
+    expect(store.message(root.id)!.named_by).toMatchObject({ kind: "agent" });
+  });
+
+  test("best effort: a suggestion another open thread has, or that is not a valid name, is dropped without refusing the Send", () => {
+    const { store, project } = world();
+    store.startPersonThread({ project_id: project.id, body: "first", to: claude, idempotency_key: "k1", thread_name: "Relay budget" });
+    const taken = store.startPersonThread({ project_id: project.id, body: "second", to: claude, idempotency_key: "k2", thread_name: "relay BUDGET", thread_name_auto: true });
+    expect(taken.message.thread_name ?? null).toBeNull();
+    expect(taken.message.named_by).toBeUndefined();
+    const invalid = store.startPersonThread({ project_id: project.id, body: "third", to: claude, idempotency_key: "k3", thread_name: "a\u202eb", thread_name_auto: true });
+    expect(invalid.message.thread_name ?? null).toBeNull();
+    // The same name typed by the person is still refused.
+    expect(code(() => store.startPersonThread({ project_id: project.id, body: "fourth", to: claude, idempotency_key: "k4", thread_name: "relay BUDGET" }))).toBe("thread_name_taken");
+  });
+
+  test("a retried Send with a suggestion answers the first thread, even once the suggestion was dropped", () => {
+    const { store, project } = world();
+    store.startPersonThread({ project_id: project.id, body: "first", to: claude, idempotency_key: "k1", thread_name: "Relay budget" });
+    const once = store.startPersonThread({ project_id: project.id, body: "second", to: claude, idempotency_key: "k2", thread_name: "Relay budget", thread_name_auto: true });
+    const again = store.startPersonThread({ project_id: project.id, body: "second", to: claude, idempotency_key: "k2", thread_name: "Relay budget", thread_name_auto: true });
+    expect(again.replayed).toBe(true);
+    expect(again.message.id).toBe(once.message.id);
+  });
+});
+

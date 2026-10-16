@@ -423,9 +423,16 @@ export class InboxStore {
         if (previous?.kind === "message" && line.record.started_by_person && previous.record.to && line.record.to && previous.record.to.session !== line.record.to.session) {
           this.readdressed.add(line.record.id);
         }
-        // A thread the person started gains a name when an agent names it (sendMessage): indexed at
-        // that line, in seq order, so later sends with the name join it and a replay routes the same.
-        if (previous?.kind === "message" && line.record.started_by_person && !previous.record.thread_name && line.record.thread_name) {
+        // A thread the person started gains a name when an agent names it (sendMessage), or a new one
+        // over compose's suggestion: indexed at that line, in seq order, so later sends with the name
+        // join it and a replay routes the same. The old name's entry stays; lookups check the root's
+        // current name (`rootsNamed`).
+        if (
+          previous?.kind === "message" &&
+          line.record.started_by_person &&
+          line.record.thread_name &&
+          inboxThreadNameKey(previous.record.thread_name ?? "") !== inboxThreadNameKey(line.record.thread_name)
+        ) {
           this.indexName(line.record.project_id, line.record.thread_name, line.record.id);
         }
         this.messages.set(line.record.id, line.record);
@@ -470,6 +477,18 @@ export class InboxStore {
     }
   }
 
+  /**
+   * The roots indexed under a name that still have it (an agent's name can
+   * replace compose's suggestion, which stays indexed), oldest first.
+   */
+  private rootsNamed(projectId: string, name: string): string[] {
+    const key = inboxThreadNameKey(name);
+    return (this.namedThreads.get(`${projectId}\0${key}`) ?? []).filter((rootId) => {
+      const root = this.messages.get(rootId);
+      return !!root && inboxThreadNameKey(root.thread_name ?? "") === key;
+    });
+  }
+
   /** Add a root under a thread name; the last one added is the newest of that name. */
   private indexName(projectId: string, name: string, rootId: string): void {
     const key = `${projectId}\0${inboxThreadNameKey(name)}`;
@@ -487,7 +506,7 @@ export class InboxStore {
    */
   private routeThread(projectId: string, session: string | null, name: string | null): string | null {
     if (name !== null) {
-      const roots = this.namedThreads.get(`${projectId}\0${inboxThreadNameKey(name)}`) ?? [];
+      const roots = this.rootsNamed(projectId, name);
       for (let i = roots.length - 1; i >= 0; i--) if (!this.isResolved(roots[i]!)) return roots[i]!;
       return null;
     }
@@ -694,7 +713,8 @@ export class InboxStore {
    */
   threadNamers(threadId: string): string[] {
     const root = this.messages.get(threadId);
-    if (!root || root.thread_id !== threadId || !root.started_by_person || root.named_by || !root.to) return [];
+    // Compose's own suggestion (`named_by.kind === "auto"`) does not count: the agent still names it.
+    if (!root || root.thread_id !== threadId || !root.started_by_person || (root.named_by && root.named_by.kind !== "auto") || !root.to) return [];
     const sessions = [root.to.session];
     if (this.readdressed.has(threadId)) {
       for (const member of this.threadMembers.get(threadId) ?? []) {
@@ -731,8 +751,7 @@ export class InboxStore {
    * this one, which is addressed to someone else.
    */
   private threadNameTaken(projectId: string, name: string, exceptRoot: string | null): boolean {
-    const roots = this.namedThreads.get(`${projectId}\0${inboxThreadNameKey(name)}`) ?? [];
-    return roots.some((rootId) => rootId !== exceptRoot && !this.isResolved(rootId));
+    return this.rootsNamed(projectId, name).some((rootId) => rootId !== exceptRoot && !this.isResolved(rootId));
   }
 
   thread(threadId: string): InboxThread | null {
@@ -2703,19 +2722,28 @@ export class InboxStore {
     attachments?: InboxAttachment[];
     /** The thread's name (its chip), when the person gave one: checked by the thread-name rules; an agent never replaces it. */
     thread_name?: unknown;
+    /**
+     * `true` when `thread_name` is compose's suggestion the person left as it
+     * was: best effort, so a name that is not valid or another open thread
+     * already has is dropped (no refusal), and the first agent that may name
+     * the thread replaces it.
+     */
+    thread_name_auto?: unknown;
   }): { message: InboxMessage; replayed: boolean } {
     const key = typeof input.idempotency_key === "string" ? input.idempotency_key.trim() : "";
     if (!key) throw new InboxError("validation_error", "idempotency_key: required on a Send.", { field: "idempotency_key" });
     const body = typeof input.body === "string" ? input.body.trim() : "";
+    const auto = input.thread_name_auto === true;
     let threadName: string | null = null;
     if (input.thread_name !== undefined && input.thread_name !== null && !(typeof input.thread_name === "string" && input.thread_name.trim() === "")) {
       const checked = checkInboxThreadName(input.thread_name);
-      if (!checked.ok) throw new InboxError("validation_error", `thread_name: ${checked.message}`, { field: "thread_name" });
-      threadName = checked.name;
+      if (checked.ok) threadName = checked.name;
+      else if (!auto) throw new InboxError("validation_error", `thread_name: ${checked.message}`, { field: "thread_name" });
     }
     for (const message of this.messages.values()) {
       if (!message.started_by_person || message.idempotency_key !== key) continue;
-      if (message.body !== body || (message.named_by?.kind === "person" ? message.thread_name : null) !== threadName) {
+      // A retry is the same Send: the same body and the same name the person typed (compose's suggestion is the body's own).
+      if (message.body !== body || (message.named_by?.kind === "person" ? message.thread_name : null) !== (auto ? null : threadName)) {
         throw new InboxError("idempotency_key_reused", "This idempotency_key was already used for a different message.", { message_id: message.id });
       }
       return { message, replayed: true };
@@ -2725,6 +2753,7 @@ export class InboxStore {
     }
     if (!body) throw new InboxError("validation_error", "body: write a message.", { field: "body" });
     if (!this.projectsById.has(input.project_id)) throw new InboxError("project_not_found", `No project ${input.project_id}.`);
+    if (threadName && auto && this.threadNameTaken(input.project_id, threadName, null)) threadName = null;
     if (threadName && this.threadNameTaken(input.project_id, threadName, null)) {
       throw new InboxError(
         "thread_name_taken",
@@ -2748,7 +2777,7 @@ export class InboxStore {
       idempotency_key: key,
       to: { host: input.to.host, session: input.to.session },
       started_by_person: true,
-      ...(threadName ? { thread_name: threadName, named_by: { kind: "person" as const, at } } : {}),
+      ...(threadName ? { thread_name: threadName, named_by: { kind: auto ? ("auto" as const) : ("person" as const), at } } : {}),
       ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments.map((attachment) => ({ ...attachment, sent_at: at })) } : {}),
     };
     this.appendMessage(message, at);

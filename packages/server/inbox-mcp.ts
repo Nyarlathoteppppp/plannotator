@@ -546,7 +546,7 @@ export function namingLine(naming: InboxSendResult["naming"] | null | undefined)
     return ` The thread was not named: ${naming.reason} Pick another name and reply again with it in \`thread\`.`;
   }
   if (naming.status === "refused") return ` The thread was not named: ${naming.reason} Pass a valid \`thread\` (a few words) on a later reply to name it.`;
-  return " This thread the person started has no name yet: pass `thread` (a few words saying what it is about) on a later reply to name it, once.";
+  return " This thread the person started still needs a name from you: pass `thread` (a few words saying what it is about) on a later reply to name it, once.";
 }
 
 export function createInboxMcpServer(context: InboxMcpContext): McpServer {

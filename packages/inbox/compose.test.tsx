@@ -191,7 +191,7 @@ test.skipIf(!hasDom)('no live agent: Send sends nothing and says so; Escape asks
   await openCompose(el);
   await until(() => dialog()!.querySelector('[data-compose-to="none"]') !== null, 'the no-agent state');
   type('Rename the Quiet section to Done?');
-  expect(dialog()!.querySelector('[data-compose-subject]')?.textContent).toBe('New thread: Rename the Quiet section to Done?');
+  await until(() => chipInput().value === 'Quiet section', 'the chip named from the message');
   expect(dialog()!.querySelector('[data-compose-send]')?.getAttribute('aria-disabled')).toBe('true');
   key('Enter', { metaKey: true });
   await until(() => dialog()!.querySelector('[data-compose-error]') !== null, 'the error');
@@ -312,66 +312,125 @@ test.skipIf(!hasDom)('the To picker: one line per session, a start time only whe
   await until(() => dialog() === null, 'compose closed');
 });
 
-test.skipIf(!hasDom)('a thread name: out of the way until pressed, kept by a draft, checked at Send, sent as thread_name; the row has it as its chip', async () => {
+const chip = () => dialog()!.querySelector('[data-compose-thread-name]') as HTMLElement;
+const chipInput = () => dialog()!.querySelector('[data-compose-thread-name] input') as HTMLInputElement;
+const chipError = () => dialog()!.querySelector('[data-compose-thread-name-error]');
+/** Type into the chip as a person does: focus, the value, the input event. */
+function fillChip(value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  act(() => {
+    chipInput().focus();
+    setter.call(chipInput(), value);
+    chipInput().dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+const blurChip = () => act(() => chipInput().blur());
+
+test.skipIf(!hasDom)('the thread chip follows the message until typed in; typed, it stays; emptied, it follows again once focus leaves; a draft keeps only a typed name', async () => {
   await poll('ses_named', 'claude-code', projects[0]!);
   const el = await renderApp();
   await openCompose(el);
   await until(() => dialog()!.querySelector('[data-compose-to^="ses_"]') !== null, 'To prefilled');
-  // Empty: only the small "+ Thread name" button; no field.
-  expect(dialog()!.querySelector('[data-compose-thread-name]')).toBeNull();
-  act(() => (dialog()!.querySelector('[data-compose-thread-name-add]') as HTMLButtonElement).click());
-  const input = () => dialog()!.querySelector('[data-compose-thread-name] input') as HTMLInputElement;
-  await until(() => document.activeElement === input(), 'the field focused');
-  // Escape on the empty field closes the field only, never the dialog.
-  act(() => {
-    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  });
-  expect(dialog()).not.toBeNull();
-  await until(() => dialog()!.querySelector('[data-compose-thread-name]') === null, 'the field closed');
+  // Nothing written yet: an empty chip with its placeholder, right under To, before the message.
+  expect(chip().getAttribute('data-compose-thread-name')).toBe('auto');
+  expect(chip().hasAttribute('data-empty')).toBe(true);
+  expect(chipInput().value).toBe('');
+  expect(chipInput().placeholder).toBe('Name this thread');
+  expect(dialog()!.querySelector('[data-compose-thread-row] .ib-cp-tol')!.textContent).toBe('Thread');
+  expect(dialog()!.querySelector('[data-compose-subject]')).toBeNull();
 
-  const fill = (value: string) => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(input(), value);
-      input().dispatchEvent(new Event('input', { bubbles: true }));
-    });
-  };
-  act(() => (dialog()!.querySelector('[data-compose-thread-name-add]') as HTMLButtonElement).click());
-  await until(() => !!input(), 'the field');
+  // It follows the message, a short name, live.
+  type('can you fix the paste bug in the reply box');
+  await until(() => chipInput().value === 'Paste bug', 'the chip named from the message');
   type('I want to explore what adding a board would look like. Kanban specifically.');
-  fill('Kanban‮board');
-  // Not a valid name: Send sends nothing and says why, in the thread-name rules' words.
-  posted = [];
-  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
-  await until(() => dialog()!.querySelector('[data-compose-error]') !== null, 'the error');
-  expect(dialog()!.querySelector('[data-compose-error]')!.textContent).toContain('Thread name must not contain bidirectional control characters.');
-  expect(posted.some((p) => p.path === '/api/inbox/messages')).toBe(false);
+  await until(() => chipInput().value === 'Kanban board', 'the chip follows the message');
+  // A bare question has nothing to name: the placeholder again, nothing invented.
+  type('What do you think?');
+  await until(() => chipInput().value === '', 'nothing to name');
 
-  // A draft keeps it.
-  fill('Kanban board');
+  // Typed in, it is the person's: the message no longer moves it.
+  type('I want to explore what adding a board would look like. Kanban specifically.');
+  await until(() => chipInput().value === 'Kanban board', 'named again');
+  fillChip('Board ideas');
+  expect(chip().getAttribute('data-compose-thread-name')).toBe('edited');
+  type('can you fix the paste bug in the reply box');
+  await new Promise((r) => setTimeout(r, 400));
+  expect(chipInput().value).toBe('Board ideas');
+
+  // Emptied: empty while the caret is in it, then it follows the message again.
+  fillChip('');
+  await new Promise((r) => setTimeout(r, 300));
+  expect(chipInput().value).toBe('');
+  blurChip();
+  await until(() => chipInput().value === 'Paste bug', 'following the message again');
+  expect(chip().getAttribute('data-compose-thread-name')).toBe('auto');
+
+  // A draft of a chip that follows the message keeps no name; reopened, it is worked out again.
   key('Escape');
   act(() => (dialog()!.querySelector('[data-compose-keep]') as HTMLButtonElement).click());
   await until(() => dialog() === null, 'compose closed');
-  const saved = (JSON.parse((await loopback('/api/inbox/drafts')).text) as { drafts: { id: string; thread_name?: string }[] }).drafts;
-  expect(saved.map((d) => d.thread_name)).toEqual(['Kanban board']);
-
-  // Reopened, the name is there; Send carries it, and the thread's row has it as its chip.
+  let saved = (JSON.parse((await loopback('/api/inbox/drafts')).text) as { drafts: { id: string; thread_name?: string }[] }).drafts;
+  expect(saved.map((d) => d.thread_name)).toEqual([undefined]);
   act(() => (el.querySelector('[data-drafts-nav]') as HTMLButtonElement).click());
   await until(() => el.querySelectorAll('[data-draft-id]').length === 1, 'the draft row');
   act(() => (el.querySelector('.ib-draft-open') as HTMLButtonElement).click());
-  await until(() => dialog()?.querySelector('[data-compose-to="ses_named"]') != null && !!input(), 'reopened with the name');
-  expect(input().value).toBe('Kanban board');
-  expect(dialog()!.querySelector('[data-compose-subject]')!.textContent).toBe('New thread: I want to explore what adding a board would look like');
-  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
-  await until(() => dialog() === null, 'sent');
-  const send = posted.find((p) => p.path === '/api/inbox/messages')!;
-  expect(send.body).toMatchObject({ thread_name: 'Kanban board' });
-  const sections = (JSON.parse((await loopback('/api/inbox/threads')).text) as { sections: InboxListSection[] }).sections;
-  const row = sections.flatMap((s) => s.threads).find((t) => t.subject === 'I want to explore what adding a board would look like')!;
-  expect(row.thread_name).toBe('Kanban board');
+  await until(() => dialog()?.querySelector('[data-compose-to="ses_named"]') != null && chipInput()?.value === 'Paste bug', 'reopened, named from the message');
+
+  // A typed name is kept by the draft, as typed.
+  fillChip('Kanban board');
+  key('Escape');
+  act(() => (dialog()!.querySelector('[data-compose-keep]') as HTMLButtonElement).click());
+  await until(() => dialog() === null, 'compose closed');
+  saved = (JSON.parse((await loopback('/api/inbox/drafts')).text) as { drafts: { id: string; thread_name?: string }[] }).drafts;
+  expect(saved.map((d) => d.thread_name)).toEqual(['Kanban board']);
 });
 
-test.skipIf(!hasDom)('a thread name another open thread has: Send is refused (409) and says so beside the marked field; the limit counts characters, not UTF-16 units', async () => {
+test.skipIf(!hasDom)('Send: a typed name goes as thread_name (checked first), the chip that follows the message as thread_name_auto; the row has either as its chip', async () => {
+  await poll('ses_named', 'claude-code', projects[0]!);
+  const el = await renderApp();
+  await openCompose(el);
+  await until(() => dialog()!.querySelector('[data-compose-to^="ses_"]') !== null, 'To prefilled');
+  type('I want to explore what adding a board would look like. Kanban specifically.');
+  await until(() => chipInput().value === 'Kanban board', 'named from the message');
+  // Not a valid name: Send sends nothing and says why on the chip.
+  fillChip('Kanban\u202eboard');
+  posted = [];
+  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
+  await until(() => chipError() !== null, 'the error on the chip');
+  expect(chipError()!.textContent).toBe('Thread name must not contain bidirectional control characters.');
+  expect(chip().hasAttribute('data-invalid')).toBe(true);
+  expect(chipInput().getAttribute('aria-invalid')).toBe('true');
+  expect(dialog()!.querySelector('[data-compose-error]')).toBeNull();
+  expect(posted.some((p) => p.path === '/api/inbox/messages')).toBe(false);
+  // Typing again clears it; ⌘↵ in the chip sends.
+  fillChip('Kanban board');
+  expect(chipError()).toBeNull();
+  act(() => {
+    chipInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }));
+  });
+  await until(() => dialog() === null, 'sent');
+  let send = posted.find((p) => p.path === '/api/inbox/messages')!;
+  expect(send.body.thread_name).toBe('Kanban board');
+  expect(send.body.thread_name_auto).toBeUndefined();
+
+  // The chip left as it was goes as compose's suggestion.
+  await openCompose(el);
+  await until(() => dialog()!.querySelector('[data-compose-to^="ses_"]') !== null, 'To prefilled');
+  type('can you fix the paste bug in the reply box');
+  await until(() => chipInput().value === 'Paste bug', 'named from the message');
+  posted = [];
+  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
+  await until(() => dialog() === null, 'sent');
+  send = posted.find((p) => p.path === '/api/inbox/messages')!;
+  expect(send.body).toMatchObject({ thread_name: 'Paste bug', thread_name_auto: true });
+
+  const sections = (JSON.parse((await loopback('/api/inbox/threads')).text) as { sections: InboxListSection[] }).sections;
+  const rows = sections.flatMap((s) => s.threads);
+  expect(rows.find((t) => t.subject === 'I want to explore what adding a board would look like')!.thread_name).toBe('Kanban board');
+  expect(rows.find((t) => t.subject === 'can you fix the paste bug in the reply box')!.thread_name).toBe('Paste bug');
+});
+
+test.skipIf(!hasDom)('a typed name another open thread has: refused (409) and said on the chip; a suggestion another thread has is simply not used; the limit counts characters, not UTF-16 units', async () => {
   await poll('ses_taken', 'claude-code', projects[0]!);
   // An open thread of the project already has the name.
   const { serverSession } = JSON.parse((await loopback('/api/inbox/settings')).text) as { serverSession: string };
@@ -385,31 +444,31 @@ test.skipIf(!hasDom)('a thread name another open thread has: Send is refused (40
   const el = await renderApp();
   await openCompose(el);
   await until(() => dialog()!.querySelector('[data-compose-to^="ses_"]') !== null, 'To prefilled');
-  act(() => (dialog()!.querySelector('[data-compose-thread-name-add]') as HTMLButtonElement).click());
-  const input = () => dialog()!.querySelector('[data-compose-thread-name] input') as HTMLInputElement;
-  await until(() => !!input(), 'the field');
-  const fill = (value: string) => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(input(), value);
-      input().dispatchEvent(new Event('input', { bubbles: true }));
-    });
-  };
   // 130 emoji (260 UTF-16 units): kept to 120 characters, as the server counts them.
-  fill('🎉'.repeat(130));
-  expect([...input().value].length).toBe(120);
+  fillChip('🎉'.repeat(130));
+  expect([...chipInput().value].length).toBe(120);
 
   type('Another idea about the relay.');
-  fill('relay  BUDGET');
+  fillChip('relay  BUDGET');
   act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
-  await until(() => dialog()!.querySelector('[data-compose-error]') !== null, 'the refusal');
-  expect(dialog()!.querySelector('[data-compose-error]')!.textContent).toContain('already named "relay  BUDGET"');
-  expect(dialog()!.querySelector('[data-compose-thread-name]')!.hasAttribute('data-invalid')).toBe(true);
-  expect(input().getAttribute('aria-invalid')).toBe('true');
-  // Editing the name clears the mark and the message.
-  fill('Relay budget v2');
-  expect(dialog()!.querySelector('[data-compose-thread-name]')!.hasAttribute('data-invalid')).toBe(false);
+  await until(() => chipError() !== null, 'the refusal on the chip');
+  expect(chipError()!.textContent).toContain('Another open thread in this project has this name.');
+  expect(chip().hasAttribute('data-invalid')).toBe(true);
   expect(dialog()!.querySelector('[data-compose-error]')).toBeNull();
+  // Editing the name clears the mark and the message.
+  fillChip('Relay budget v2');
+  expect(chip().hasAttribute('data-invalid')).toBe(false);
+  expect(chipError()).toBeNull();
   act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
   await until(() => dialog() === null, 'sent');
+
+  // A suggestion that is taken: the Send goes, the thread just has no name yet (its agent names it).
+  await openCompose(el);
+  await until(() => dialog()!.querySelector('[data-compose-to^="ses_"]') !== null, 'To prefilled');
+  type('Thinking about the relay budget again.');
+  await until(() => chipInput().value === 'Relay budget', 'a taken suggestion');
+  act(() => (dialog()!.querySelector('[data-compose-send]') as HTMLButtonElement).click());
+  await until(() => dialog() === null, 'sent anyway');
+  const rows = (JSON.parse((await loopback('/api/inbox/threads')).text) as { sections: InboxListSection[] }).sections.flatMap((s) => s.threads);
+  expect(rows.find((t) => t.subject === 'Thinking about the relay budget again')!.thread_name ?? null).toBeNull();
 });

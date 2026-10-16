@@ -2277,7 +2277,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-cp-dsaved { margin-left: auto; flex: none; font-size: 12.5px; color: var(--muted-foreground); white-space: nowrap; }
 
 /* The To picker: anchored under the To line, over the message. */
-.ib-cp-picker { position: absolute; top: 46px; left: 52px; z-index: 40; width: min(560px, calc(100% - 64px)); display: flex; flex-direction: column; max-height: min(480px, 62vh); background: var(--popover); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28); overflow: hidden; }
+.ib-cp-picker { position: absolute; top: 46px; left: 72px; z-index: 40; width: min(560px, calc(100% - 64px)); display: flex; flex-direction: column; max-height: min(480px, 62vh); background: var(--popover); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28); overflow: hidden; }
 .ib-cp-filter { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--ib-line); color: var(--muted-foreground); flex: none; }
 .pn-inbox .ib-cp-filter input { flex: 1; min-width: 0; height: 40px; border: 0; outline: none; background: transparent; color: var(--foreground); font: inherit; font-size: 14px; }
 /* One line per live session; the rows share the list's columns (subgrid), so agent, project and folder line up. */
@@ -2323,20 +2323,19 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-cp-prog i { display: block; height: 100%; background: var(--primary); transition: width 120ms linear; }
 .pn-inbox .ib-cp-fx { flex: none; width: 26px; height: 26px; border-radius: 6px; border: 0; background: transparent; color: var(--muted-foreground); display: inline-flex; align-items: center; justify-content: center; }
 .pn-inbox .ib-cp-fx:hover { background: var(--muted); color: var(--foreground); }
-.ib-cp-subj { margin-top: 10px; font-size: 12.5px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ib-cp-subj b { color: var(--foreground); font-weight: 600; }
-/* The subject preview and the thread name (ThreadNameField): one line; the name sits at its end, the preview gives way first. */
-.ib-cp-subjrow { display: flex; align-items: center; gap: 8px; margin-top: 10px; min-height: 24px; }
-.ib-cp-subjrow .ib-cp-subj { margin-top: 0; flex: 0 1 auto; min-width: 0; }
-.pn-inbox .ib-cp-tname-add { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border: 1px dashed var(--border); border-radius: 5px; background: transparent; color: var(--muted-foreground); font-size: 11.5px; cursor: pointer; }
-.pn-inbox .ib-cp-tname-add:hover { color: var(--foreground); border-color: var(--muted-foreground); }
-.ib-key.ib-cp-tname { margin-left: auto; flex: none; align-items: center; gap: 2px; padding: 0 2px 0 6px; height: 22px; color: var(--foreground); max-width: 60%; }
-.ib-key.ib-cp-tname:focus-within { border-color: var(--ring); }
-.ib-key.ib-cp-tname[data-invalid] { border-color: var(--destructive); }
-.pn-inbox .ib-cp-tname-in { min-width: 0; width: auto; border: 0; outline: none; background: transparent; color: inherit; font: inherit; padding: 0; }
-.pn-inbox .ib-cp-tname-in::placeholder { color: var(--muted-foreground); }
-.pn-inbox .ib-cp-tname-x { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
-.pn-inbox .ib-cp-tname-x:hover { background: var(--muted); color: var(--foreground); }
+/* The thread row (ThreadNameChip): under To, its chip the list's grey chip and a text field; aligned with To's agent. */
+.ib-cp-thread { display: flex; align-items: flex-start; gap: 10px; min-height: 42px; padding: 8px 14px 8px 16px; border-bottom: 1px solid var(--ib-line); flex: none; }
+.ib-cp-to .ib-cp-tol, .ib-cp-thread .ib-cp-tol { min-width: 46px; }
+.ib-cp-thread .ib-cp-tol { line-height: 26px; }
+.ib-cp-tnamew { display: inline-flex; align-items: flex-start; gap: 4px 10px; min-width: 0; flex: 1; margin-left: 8px; flex-wrap: wrap; }
+.ib-key.ib-cp-tname { flex: none; align-items: center; height: 26px; padding: 0 7px; max-width: 100%; cursor: text; }
+.ib-key.ib-cp-tname[data-compose-thread-name="edited"] { color: var(--foreground); }
+.ib-key.ib-cp-tname[data-empty] { border-style: dashed; }
+.ib-key.ib-cp-tname:focus-within { border-color: var(--ring); border-style: solid; box-shadow: 0 0 0 1px var(--ring); }
+.ib-key.ib-cp-tname[data-invalid] { border-color: var(--destructive); border-style: solid; }
+.pn-inbox .ib-cp-tname-in { min-width: 0; max-width: 100%; border: 0; outline: none; background: transparent; color: inherit; font: inherit; font-size: 12px; padding: 0; }
+.pn-inbox .ib-cp-tname-in::placeholder { color: var(--muted-foreground); opacity: 0.8; }
+.ib-cp-tname-err { font-size: 12.5px; line-height: 18px; padding-top: 4px; color: var(--destructive); min-width: 0; flex: 1 1 200px; }
 .ib-cp-error { padding: 0 16px 8px; font-size: 12.5px; color: var(--destructive); flex: none; }
 .ib-cp-conflict { display: inline-flex; gap: 12px; margin-left: 10px; }
 .pn-inbox .ib-cp-conflict .ib-lnk { margin-top: 0; }
@@ -2406,16 +2405,13 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   /* A file's × keeps its look and takes a 44 px hit area (compose's tiles and the reply box's). */
   .pn-inbox .ib-cp-fx { position: relative; }
   .pn-inbox .ib-cp-fx::after { content: ''; position: absolute; inset: -9px; }
-  .ib-cp-subj { white-space: nowrap; }
-  /* 44 px to touch, drawn as before; 16 px so iOS does not zoom into the name. */
-  .ib-cp-subjrow { flex-wrap: wrap; row-gap: 10px; }
-  .ib-key.ib-cp-tname { max-width: 100%; }
-  .pn-inbox .ib-cp-tname-add, .ib-key.ib-cp-tname { position: relative; height: 28px; }
-  .pn-inbox .ib-cp-tname-add::after { content: ''; position: absolute; inset: -8px -4px; }
-  .pn-inbox .ib-cp-tname-in { font-size: 16px; }
-  /* The × is drawn 28 px and takes a 44 px hit area. */
-  .pn-inbox .ib-cp-tname-x { width: 28px; height: 28px; position: relative; }
-  .pn-inbox .ib-cp-tname-x::after { content: ''; position: absolute; inset: -8px; }
+  /* The thread row: 44 px to touch, 16 px so iOS does not zoom into the name. */
+  .ib-cp-thread { min-height: 52px; padding-top: 9px; padding-bottom: 9px; }
+  .ib-cp-thread .ib-cp-tol { line-height: 34px; }
+  .ib-cp-tname-err { padding-top: 0; flex-basis: 100%; }
+  .ib-key.ib-cp-tname { position: relative; height: 34px; padding: 0 9px; }
+  .ib-key.ib-cp-tname::after { content: ''; position: absolute; inset: -5px -2px; }
+  .pn-inbox .ib-cp-tname-in { font-size: 16px; position: relative; z-index: 1; }
   .ib-cp-foot { min-height: 52px; }
   .pn-inbox .ib-cp-clip { width: 44px; height: 44px; }
   .ib-cp-ask { flex-wrap: wrap; border-radius: 0; }

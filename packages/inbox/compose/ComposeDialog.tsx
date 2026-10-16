@@ -21,7 +21,7 @@ import { whenTime } from '../format';
 import { HostMark, Icon } from '../icons';
 import { ComposeFileTiles, attachedAnnouncement, useComposeFiles } from './ComposeFiles';
 import { ToPicker } from './ToPicker';
-import { ThreadNameField } from './ThreadNameField';
+import { ThreadNameChip } from './ThreadNameChip';
 import { useComposeSessions } from './useComposeSessions';
 import { InboxComposerField } from '../components/ComposerField';
 import { INBOX_MESSAGE_SKILL_AUDIENCE, inboxSkillsBlock, withSkillsBlock } from '../skills';
@@ -29,15 +29,18 @@ import {
   NOTHING_SENT_NO_AGENT,
   composeGroups,
   composeTargets,
-  composeThreadName,
   draftSnapshot,
+  draftThreadName,
   draftTo,
   findTarget,
   hostLabel,
   isDirty,
   preselect,
   statusLine,
-  subjectPreview,
+  sendThreadName,
+  suggestThreadName,
+  threadNameStateOf,
+  type ThreadNameState,
   type ComposeTarget,
 } from './model';
 
@@ -83,8 +86,8 @@ export function ComposeDialog(props: ComposeDialogProps) {
 
   const [draft, setDraft] = useState<DraftView | null>(request.draft ?? null);
   const [body, setBody] = useState(request.draft?.body ?? '');
-  // The thread's name (its chip), when the person gives one: optional, out of the way when empty.
-  const [threadName, setThreadName] = useState(request.draft?.thread_name ?? '');
+  // The thread's name (its chip): follows the message until the person types in it (ThreadNameChip).
+  const [nameState, setNameState] = useState<ThreadNameState>(() => threadNameStateOf(request.draft));
   const [chosen, setChosen] = useState<string | null>(request.draft ? (request.draft.to?.session ?? null) : (request.session ?? null));
   // A paste is said in the dialog's own polite region (the window's is outside the modal dialog).
   const [pasteSaid, setPasteSaid] = useState('');
@@ -126,8 +129,8 @@ export function ComposeDialog(props: ComposeDialogProps) {
   const [picker, setPicker] = useState(false);
   const [question, setQuestion] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The server refused the thread name (409 `thread_name_taken`): the field is marked until the name changes.
-  const [nameTaken, setNameTaken] = useState(false);
+  // What is wrong with the name the person typed (409 `thread_name_taken`, or not a valid name): said on the chip until it changes.
+  const [nameError, setNameError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<DraftView | null>(null);
   const [busy, setBusy] = useState<null | 'send' | 'save' | 'delete'>(null);
   const [dropping, setDropping] = useState(false);
@@ -135,14 +138,21 @@ export function ComposeDialog(props: ComposeDialogProps) {
   // The idempotency key of one Send: new whenever what would be sent changes.
   const sendKey = useRef(crypto.randomUUID());
   const uploadIds = files.uploaded.map((u) => u.upload_id);
+  // The chip's suggestion, worked out a moment after typing stops; the same name again changes nothing on screen.
+  const fileNames = files.files.map((file) => file.name).join('\n');
+  const [suggested, setSuggested] = useState(() => suggestThreadName(body, fileNames ? fileNames.split('\n') : []));
+  useEffect(() => {
+    const timer = setTimeout(() => setSuggested(suggestThreadName(body, fileNames ? fileNames.split('\n') : [])), 250);
+    return () => clearTimeout(timer);
+  }, [body, fileNames]);
+  const threadName = draftThreadName(nameState);
   useEffect(() => {
     sendKey.current = crypto.randomUUID();
-  }, [body, chosen, threadName, uploadIds.join(',')]);
+  }, [body, chosen, threadName, nameState.edited ? '' : suggested, uploadIds.join(',')]);
   const draftId = useRef(request.draft?.id ?? inboxId('drf'));
 
   const saved = draftSnapshot(draft);
   const dirty = isDirty({ body, session: chosen, files: uploadIds, threadName }, saved, draft !== null) || files.uploading;
-  const subject = subjectPreview(body);
   const projectName = current?.name ?? null;
 
   // ── the dialog ──
@@ -199,9 +209,10 @@ export function ComposeDialog(props: ComposeDialogProps) {
       setError('Wait for the files to finish uploading.');
       return;
     }
-    const named = composeThreadName(threadName);
+    // The chip's suggestion as it would be once typing settles: never one a moment old.
+    const named = sendThreadName(nameState, nameState.edited ? '' : suggestThreadName(body, fileNames ? fileNames.split('\n') : []));
     if ('error' in named) {
-      setError(named.error);
+      setNameError(named.error);
       return;
     }
     setBusy('send');
@@ -213,7 +224,7 @@ export function ComposeDialog(props: ComposeDialogProps) {
         body: withSkillsBlock(body, skills),
         idempotency_key: sendKey.current,
         uploads: uploadIds,
-        ...(named.name ? { thread_name: named.name } : {}),
+        ...named,
         ...(draft ? { draft_id: draft.id } : {}),
       });
       props.onSent({ threadId: result.thread_id, session: target.session, host: target.host, projectName: result.project?.name ?? target.project.name, draftId: draft?.id ?? null });
@@ -222,8 +233,7 @@ export function ComposeDialog(props: ComposeDialogProps) {
         void load();
         setError('That session is not live any more: nothing was sent. Pick a live session, or save it as a draft.');
       } else if (cause instanceof InboxApiError && cause.code === 'thread_name_taken') {
-        setNameTaken(true);
-        setError(cause.message);
+        setNameError('Another open thread in this project has this name.');
       } else if (cause instanceof InboxApiError && cause.code === 'project_unresolved') {
         // git did not answer in time (#1919): the server's words are for an agent; the person presses Send again.
         setError('Could not tell which project that session works in: git did not answer in time. Nothing was sent; press Send again.');
@@ -452,6 +462,19 @@ export function ComposeDialog(props: ComposeDialogProps) {
           }}
         />
       )}
+      <div className="ib-cp-thread" data-compose-thread-row="">
+        <span className="ib-cp-tol">Thread</span>
+        <ThreadNameChip
+          state={nameState}
+          suggested={suggested}
+          error={nameError}
+          onChange={(next) => {
+            setNameState(next);
+            setNameError(null);
+          }}
+          onDone={() => textRef.current?.focus()}
+        />
+      </div>
       {model && !anyLive && !endedNote && (
         <div className="ib-cp-note" data-compose-note="none">
           <Icon name="info" size={16} />
@@ -502,23 +525,6 @@ export function ComposeDialog(props: ComposeDialogProps) {
             textRef.current?.focus();
           }}
         />
-        <div className="ib-cp-subjrow">
-          {subject && (
-            <div className="ib-cp-subj" data-compose-subject="">
-              New thread: <b dir="auto">{subject}</b>
-            </div>
-          )}
-          <ThreadNameField
-            value={threadName}
-            invalid={nameTaken}
-            onChange={(value) => {
-              setThreadName(value);
-              setNameTaken(false);
-              if (error) setError(null);
-            }}
-            onDone={() => textRef.current?.focus()}
-          />
-        </div>
       </div>
       {error && (
         <div className="ib-cp-error" role="alert" data-compose-error="">
@@ -534,7 +540,7 @@ export function ComposeDialog(props: ComposeDialogProps) {
                 onClick={() => {
                   setDraft(conflict);
                   setBody(conflict.body);
-                  setThreadName(conflict.thread_name ?? '');
+                  setNameState(threadNameStateOf(conflict));
                   setChosen(conflict.to?.session ?? null);
                   setConflict(null);
                   setError(null);

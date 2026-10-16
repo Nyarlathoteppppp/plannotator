@@ -413,8 +413,10 @@ export interface StartThreadInput {
   idempotency_key: string;
   uploads?: string[];
   draft_id?: string;
-  /** The thread's name (its chip) when the person gives one; an agent never replaces it. */
+  /** The thread's name (its chip): typed by the person (an agent never replaces it), or compose's suggestion with `thread_name_auto`. */
   thread_name?: string;
+  /** `thread_name` is compose's suggestion the person left as it was: dropped when it cannot be used, and the agent may rename it. */
+  thread_name_auto?: true;
 }
 
 /**

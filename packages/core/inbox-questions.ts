@@ -28,7 +28,13 @@ import { cutText } from "./text-cut";
 // The grapheme-safe cuts, re-exported here: core's export map is checked against the published package, and the Inbox is what uses them.
 export { cutText, sliceText } from "./text-cut";
 // The subject of a thread the person starts: beside deriveInboxSubject, so the store and compose's preview share it.
-export { derivePersonThreadSubject, PERSON_THREAD_SUBJECT_COLUMNS } from "./inbox-thread-subject";
+export {
+  derivePersonThreadSubject,
+  PERSON_THREAD_SUBJECT_COLUMNS,
+  suggestPersonThreadName,
+  PERSON_THREAD_NAME_COLUMNS,
+  PERSON_THREAD_NAME_WORDS,
+} from "./inbox-thread-subject";
 import {
   canonicalQuestionAnswer,
   findQuestionBlocks,

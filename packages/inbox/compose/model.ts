@@ -4,7 +4,7 @@
  * React and no requests here, so each rule is tested alone.
  */
 
-import { derivePersonThreadSubject } from '@plannotator/core/inbox-questions';
+import { derivePersonThreadSubject, suggestPersonThreadName } from '@plannotator/core/inbox-questions';
 import { checkInboxThreadName, INBOX_HOST_NAMES, type InboxComposeProject, type InboxComposeSession, type InboxDraft, type InboxDraftTo } from '@plannotator/core/inbox-types';
 import { whenTime } from '../format';
 
@@ -117,6 +117,57 @@ export function composeThreadName(value: string): { name: string } | { error: st
   return checked.ok ? { name: checked.name } : { error: `Thread name ${checked.message}` };
 }
 
+/**
+ * The thread chip in compose: one name, which follows the message (compose's
+ * suggestion, `suggestPersonThreadName`) until the person types in it. From
+ * then on it is theirs (`edited`) and never changes by itself; emptied, it
+ * follows the message again. A draft keeps `typed` only while `edited`.
+ */
+export interface ThreadNameState {
+  typed: string;
+  edited: boolean;
+}
+
+/** The chip as a draft (or a new message) opens: the draft's typed name, else following the message. */
+export function threadNameStateOf(draft: Pick<InboxDraft, 'thread_name'> | null | undefined): ThreadNameState {
+  const typed = draft?.thread_name ?? '';
+  return typed.trim() ? { typed, edited: true } : { typed: '', edited: false };
+}
+
+/** The person typed in the chip: theirs, unless they emptied it (then it follows the message again). */
+export function typeThreadName(value: string): ThreadNameState {
+  return value.trim() ? { typed: value, edited: true } : { typed: '', edited: false };
+}
+
+/** The name compose suggests for the message: the core rule, so the chip and the store agree. */
+export function suggestThreadName(body: string, files: readonly string[] = []): string {
+  return suggestPersonThreadName(body, { files });
+}
+
+/** What the chip shows: the typed name, else the suggestion. */
+export function shownThreadName(state: ThreadNameState, suggested: string): string {
+  return state.edited ? state.typed : suggested;
+}
+
+/**
+ * What a Send carries for the chip: the typed name (checked by the thread-name
+ * rules), else the suggestion marked `thread_name_auto` (best effort: the
+ * server drops one it cannot use, and the agent may rename it), else nothing.
+ */
+export function sendThreadName(state: ThreadNameState, suggested: string): { thread_name?: string; thread_name_auto?: true } | { error: string } {
+  if (state.edited) {
+    const named = composeThreadName(state.typed);
+    if ('error' in named) return named;
+    return named.name ? { thread_name: named.name } : {};
+  }
+  return suggested.trim() ? { thread_name: suggested.trim(), thread_name_auto: true } : {};
+}
+
+/** What a draft keeps of the chip: the typed name, or '' while it follows the message. */
+export function draftThreadName(state: ThreadNameState): string {
+  return state.edited ? state.typed : '';
+}
+
 /** A draft's one-line snippet: its words after the subject line, whitespace folded. */
 export function draftSnippet(body: string): string {
   const lines = body.split('\n');
@@ -138,7 +189,7 @@ export interface ComposeSnapshot {
   body: string;
   session: string | null;
   files: readonly string[];
-  /** The thread name the person typed (the chip); absent counts as none. */
+  /** The thread name the person typed in the chip (`draftThreadName`); absent counts as none. */
   threadName?: string;
 }
 

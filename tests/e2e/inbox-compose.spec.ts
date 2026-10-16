@@ -208,7 +208,9 @@ test('no agent is running: compose says so, Send sends nothing, a file attaches,
   const text = dialog.getByRole('textbox', { name: 'Message' });
   await expect(text).toBeFocused();
   await text.fill('Idea: let the Inbox list show which agent session wrote each thread.\n\nA small chip on each row would do.');
-  await expect(dialog.locator('[data-compose-subject]')).toHaveText('New thread: Idea: let the Inbox list show which agent session wrote…');
+  // The thread chip names it from the message, short, and stays a field the person can type in.
+  await expect(dialog.getByRole('textbox', { name: 'Thread name' })).toHaveValue('Inbox list');
+  await expect(dialog.locator('[data-compose-thread-name]')).toHaveAttribute('data-compose-thread-name', 'auto');
   await dialog.locator('[data-compose-attach]').setInputFiles(join(world.root, 'notes.md'));
   await expect(dialog.locator('[data-compose-file="done"]')).toHaveCount(1);
   await expect(dialog.locator('[data-compose-file="done"]')).toContainText('Markdown');
@@ -308,6 +310,8 @@ test('an agent connects: the draft reopens with To prefilled; Send starts a thre
   await expect(pane.locator('[data-delivery="queued"]')).toHaveText('Claude Code takes it as its next turn.');
   const listRow = page.locator(`.ib-listcol [data-thread-id="${command.thread_id}"]`).first();
   await expect(listRow).toContainText('To Claude Code');
+  // The chip as compose showed it.
+  await expect(listRow.locator('.ib-key').first()).toContainText('Inbox list');
   await claude.deliver(command.id);
   await expect(pane.locator('[data-delivery="delivered"]')).toHaveText(/^Delivered to Claude Code, (?:[A-Z][a-z]{2} \d{1,2}, )?\d{1,2}:\d{2} [AP]M$/);
   await shot(page, '07-thread-delivered');
