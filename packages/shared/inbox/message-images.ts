@@ -37,6 +37,7 @@
 
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isDotenvFileName } from "@plannotator/core/annotatable";
 import { MAX_REVIEW_IMAGE_PREVIEW_BYTES, MAX_REVIEW_IMAGE_PREVIEW_PIXELS, isReviewImagePath } from "../diff-paths";
@@ -67,17 +68,22 @@ function decodeAttribute(value: string): string {
   });
 }
 
+/** A remote source: `http(s):`, or protocol-relative `//host/x.png` (never a local path). */
+const REMOTE_SRC_RE = /^(https?:|\/\/|\\\\)/i;
+/** A source the server never reads: remote, `data:` or `blob:`. */
+const NOT_LOCAL_SRC_RE = /^(https?:|\/\/|\\\\|data:|blob:)/i;
+
 /**
  * Every image source the body names, as the window sends it: the markdown
  * `![alt](src)` target as written and each `<img src>` value decoded. Remote
- * (`http(s):`), `data:` and `blob:` sources are left out: the window never
- * asks the server for them.
+ * (`http(s):`, protocol-relative `//host/…`), `data:` and `blob:` sources are
+ * left out: the window never asks the server for them.
  */
 export function inboxMessageImageRefs(body: string): Set<string> {
   const refs = new Set<string>();
   const add = (src: string | undefined) => {
     if (!src) return;
-    if (/^(https?:|data:|blob:)/i.test(src)) return;
+    if (NOT_LOCAL_SRC_RE.test(src)) return;
     refs.add(src);
   };
   for (const match of body.matchAll(MARKDOWN_IMAGE_RE)) add(match[1]);
@@ -167,16 +173,17 @@ export function blankInlineCode(text: string): string {
  * captures (inline-images.ts), in the order the window steps through them.
  */
 export function inboxMessageImageRefsInOrder(body: string): string[] {
-  return imageSourcesInOrder(body).filter((src) => !/^(https?:|data:|blob:)/i.test(src));
+  return imageSourcesInOrder(body).filter((src) => !NOT_LOCAL_SRC_RE.test(src));
 }
 
 /**
- * The remote (`http:` / `https:`) images the body shows, each once, in text
- * order, outside code. The window never loads them (its CSP allows only its
- * own origin, `data:` and `blob:`), so send_message warns about them.
+ * The remote images the body shows (`http:`, `https:`, protocol-relative
+ * `//host/…`), each once, in text order, outside code. The window never loads
+ * them (its CSP allows only its own origin, `data:` and `blob:`), so
+ * send_message warns about them.
  */
 export function inboxMessageRemoteImageRefsInOrder(body: string): string[] {
-  return imageSourcesInOrder(body).filter((src) => /^https?:/i.test(src));
+  return imageSourcesInOrder(body).filter((src) => REMOTE_SRC_RE.test(src));
 }
 
 /** Every image source the body shows outside code, each once, in text order. */
@@ -208,10 +215,30 @@ export type InboxMessageImageResult =
       /** The file's mtime, from the descriptor that was read. */
       mtime: string;
     }
-  | { ok: false; status: number; code: string; error: string };
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      error: string;
+      /** `image_missing` because nothing is at the path yet (it shows once written), not a folder or FIFO there. */
+      notYet?: true;
+    };
 
 function refuse(status: number, code: string, error: string): InboxMessageImageResult {
   return { ok: false, status, code, error };
+}
+
+/** EACCES / EPERM: the file is there, and Plannotator may not read it (macOS privacy, permissions). */
+function isPermissionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EACCES" || code === "EPERM";
+}
+
+const UNREADABLE = "Plannotator can't read that image (on macOS the terminal or app running it may need to be allowed).";
+/** A read that failed for a reason not foreseen: neither missing nor refused. */
+function readFailed(error: unknown): Refusal {
+  if (isPermissionError(error)) return failRead(403, "image_unreadable", UNREADABLE);
+  return failRead(500, "image_read_failed", `That image could not be read: ${(error as Error | undefined)?.message ?? String(error)}`);
 }
 
 function isInside(path: string, root: string): boolean {
@@ -249,9 +276,33 @@ export interface InboxMessageImageInput {
   /** The folder the agent sent from (`base_path`): relative paths start here. */
   base?: string | null;
   path: string | null;
+  /**
+   * The message's author is an agent: its images may come from anywhere the
+   * user can read (owner ruling 2026-10-16). A person's own message (which a
+   * paired phone, the relay or an allowed tailnet login can post) keeps the
+   * boundary of before: the project root or the folder sent from, else
+   * `403 outside_project`. Default false.
+   */
+  anywhere?: boolean;
 }
 
 type Refusal = Extract<InboxMessageImageResult, { ok: false }>;
+
+/**
+ * Folders that never exempt hidden segments below them: `/`, the home folder
+ * (`HOME` and `os.homedir()`, each in both spellings) and every folder above
+ * it. A project at `~` must not serve `~/.ssh/key.png` or `~/.cache/…`.
+ */
+function protectedFolders(): string[] {
+  const homes = new Set<string>();
+  for (const home of [process.env.HOME, homedir()]) if (home && isAbsolute(home)) for (const spelling of spellings(home)) homes.add(spelling);
+  return [...homes];
+}
+
+function exemptsHidden(anchor: string, protectedHomes: readonly string[]): boolean {
+  if (dirname(anchor) === anchor) return false;
+  return !protectedHomes.some((home) => isInside(home, anchor));
+}
 
 /**
  * The hidden rule for one absolute path. A dotenv-family file name is refused
@@ -260,7 +311,8 @@ type Refusal = Extract<InboxMessageImageResult, { ok: false }>;
  * (`refusesHiddenHtmlAssetPath`: `~/.ssh`, `~/.config`). Inside them the
  * agent's own working tree is trusted as before: screenshots in
  * `.walkthrough/` or `.playwright-mcp/`, and a project that itself sits in a
- * hidden folder (`~/.claude/worktrees/…`), still show.
+ * hidden folder (`~/.claude/worktrees/…`), still show. An anchor that is `/`,
+ * the home folder or above it exempts nothing (`protectedFolders`).
  */
 function hiddenPath(path: string, anchors: readonly string[]): boolean {
   if (isDotenvFileName(basename(path))) return true;
@@ -299,7 +351,10 @@ function locateInboxMessageImage(input: InboxMessageImageInput): Refusal | { ok:
   const bases = input.base ? spellings(input.base) : [];
   // Relative paths start at the folder the agent sent from while it is on disk, else at the root.
   const base = bases.length > 0 && isOnDisk(bases[0]!) ? bases[bases.length - 1]! : roots[roots.length - 1]!;
-  const anchors = [...roots, ...bases];
+  const area = [...roots, ...bases];
+  const protectedHomes = protectedFolders();
+  const anchors = area.filter((folder) => exemptsHidden(folder, protectedHomes));
+  const inArea = (path: string) => input.anywhere === true || area.some((folder) => isInside(path, folder));
 
   const candidates = pathCandidates(src).filter((candidate) => isReviewImagePath(candidate));
   if (candidates.length === 0) return refuse(415, "not_an_image", "Only png, jpg, gif, webp, svg, avif, bmp and ico images are shown.") as Refusal;
@@ -309,10 +364,15 @@ function locateInboxMessageImage(input: InboxMessageImageInput): Refusal | { ok:
     let real: string;
     try {
       real = realpathSync(named);
-    } catch {
-      // Not on disk under this spelling: the next spelling is tried.
+    } catch (error) {
+      if (isPermissionError(error)) return failRead(403, "image_unreadable", UNREADABLE);
+      // Not on disk under this spelling: one a person's message names outside its area is
+      // refused as such; otherwise the next spelling is tried.
+      if (!inArea(named)) return refuse(403, "outside_project", OUTSIDE) as Refusal;
       continue;
     }
+    // A person's message: judged by where the path really leads.
+    if (!inArea(real)) return refuse(403, "outside_project", OUTSIDE) as Refusal;
     // By where it really leads (a symlink into a hidden folder is refused), and as named: the
     // name in its folder's real location (a link kept in `~/.config`, whatever spells the folder).
     if (hiddenPath(real, anchors) || hiddenPath(join(realFolder(dirname(named)), basename(named)), anchors)) {
@@ -320,8 +380,10 @@ function locateInboxMessageImage(input: InboxMessageImageInput): Refusal | { ok:
     }
     return { ok: true, real, named };
   }
-  return refuse(404, "image_missing", "That image is not on disk.") as Refusal;
+  return { ...(refuse(404, "image_missing", "That image is not on disk.") as Refusal), notYet: true };
 }
+
+const OUTSIDE = "A message you write shows images from its project only.";
 
 const HIDDEN = "That image is in a hidden folder, or is a hidden or .env file.";
 
@@ -427,7 +489,8 @@ function readImageFile(real: string): { ok: true; bytes: Buffer; mtime: string }
   } catch (error) {
     // ELOOP: the last component became a symlink after it was resolved.
     if ((error as NodeJS.ErrnoException).code === "ELOOP") return failRead(409, "image_changed", CHANGED);
-    return failRead(404, "image_missing", "That image could not be opened.");
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return failRead(404, "image_missing", "That image could not be opened.");
+    return readFailed(error);
   }
   try {
     const stat = fstatSync(fd);
@@ -456,8 +519,8 @@ function readImageFile(real: string): { ok: true; bytes: Buffer; mtime: string }
     if (total === buffer.length) return failRead(409, "image_changed", CHANGED);
     if (!stillSameFile(real, stat)) return failRead(409, "image_changed", CHANGED);
     return { ok: true, bytes: buffer.subarray(0, total), mtime: stat.mtime.toISOString() };
-  } catch {
-    return failRead(404, "image_missing", "That image could not be read.");
+  } catch (error) {
+    return readFailed(error);
   } finally {
     closeSync(fd);
   }
@@ -470,7 +533,8 @@ async function readImageFileAsync(real: string): Promise<{ ok: true; bytes: Buff
     handle = await open(real, OPEN_FLAGS);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ELOOP") return failRead(409, "image_changed", CHANGED);
-    return failRead(404, "image_missing", "That image could not be opened.");
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return failRead(404, "image_missing", "That image could not be opened.");
+    return readFailed(error);
   }
   try {
     const stat = await handle.stat();
@@ -498,8 +562,8 @@ async function readImageFileAsync(real: string): Promise<{ ok: true; bytes: Buff
     if (total === buffer.length) return failRead(409, "image_changed", CHANGED);
     if (!stillSameFile(real, stat)) return failRead(409, "image_changed", CHANGED);
     return { ok: true, bytes: buffer.subarray(0, total), mtime: stat.mtime.toISOString() };
-  } catch {
-    return failRead(404, "image_missing", "That image could not be read.");
+  } catch (error) {
+    return readFailed(error);
   } finally {
     await handle.close().catch(() => {});
   }

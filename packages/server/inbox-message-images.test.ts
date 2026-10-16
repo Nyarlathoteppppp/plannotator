@@ -4,7 +4,7 @@
  * the agent and real `fetch` for the window.
  */
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -286,7 +286,7 @@ test("send_message says which images will not show, and still sends the message"
   const body = [
     "![ok](.walkthrough/shots/after.png) ![far](../secret.png)",
     "![gone](.walkthrough/shots/missing.png) ![hidden](../.secrets/key.png)",
-    "![fake](.walkthrough/shots/fake.png) ![remote](https://example.com/shot.png)",
+    "![fake](.walkthrough/shots/fake.png) ![remote](https://example.com/shot.png) ![relative-remote](//cdn.example.com/x.png)",
     "",
     "```md",
     "![in-a-fence](.walkthrough/shots/missing-too.png)",
@@ -296,22 +296,65 @@ test("send_message says which images will not show, and still sends the message"
   const { text, structured } = await sendResult(client, { project_path: project, body });
   expect(server.store.message(structured.message_id)?.body).toBe(body);
   expect(structured.images_not_shown).toEqual([
-    { ref: ".walkthrough/shots/missing.png", reason: "not on disk, or not a file" },
+    { ref: ".walkthrough/shots/missing.png", reason: "does not exist yet; it will show if it is written there later", not_yet: true },
     { ref: "../.secrets/key.png", reason: "in a hidden folder, or a hidden or .env file" },
     { ref: ".walkthrough/shots/fake.png", reason: "not an image (png, jpg, gif, webp, svg, avif, bmp, ico)" },
     { ref: "https://example.com/shot.png", reason: "remote images never load in the Inbox" },
+    { ref: "//cdn.example.com/x.png", reason: "remote images never load in the Inbox" },
   ]);
+  expect(structured.images_not_shown_more).toBeUndefined();
+  // What never shows and what is not written yet are told apart.
   expect(text).toContain("4 images will not show");
-  expect(text).toContain(".walkthrough/shots/missing.png (not on disk, or not a file)");
-  expect(text).toContain("https://example.com/shot.png");
+  expect(text).toContain("This image does not exist yet: .walkthrough/shots/missing.png");
+  expect(text).toContain("//cdn.example.com/x.png (remote images never load in the Inbox)");
   expect(text).toContain("attach it with attachments");
   expect(text).not.toContain("missing-too.png");
   expect(text).not.toContain("nope.png");
+
+  // The route never reads a protocol-relative source as a local path.
+  const relativeRemote = await image(server, structured.message_id, "//cdn.example.com/x.png");
+  expect(relativeRemote.status).toBe(403);
+  expect(((await relativeRemote.json()) as { code: string }).code).toBe("image_not_referenced");
 
   // Every image shows (and a fenced block that mentions one): no warning at all.
   const clean = await sendResult(client, { project_path: project, body: "![ok](.walkthrough/shots/after.png)\n\n```\n![x](missing.png)\n```" });
   expect(clean.structured.images_not_shown).toBeUndefined();
   expect(clean.text).not.toContain("will not show");
+  expect(clean.text).not.toContain("does not exist yet");
+});
+
+test("the warning names at most ten images and counts the rest", async () => {
+  const { project, dataDir } = world();
+  const server = await start(dataDir);
+  const body = Array.from({ length: 13 }, (_, i) => `![r${i}](https://example.com/${i}.png)`).join(" ");
+  const { text, structured } = await sendResult(await agent(server), { project_path: project, body });
+  expect(structured.images_not_shown).toHaveLength(10);
+  expect(structured.images_not_shown_more).toBe(3);
+  expect(text).toContain("13 images will not show");
+  expect(text).toContain("…and 3 more");
+  expect(text).not.toContain("https://example.com/12.png");
+});
+
+test("a file Plannotator may not read is reported unreadable, not missing", async () => {
+  // Root reads any file, so the refusal cannot be made there.
+  if (process.getuid?.() === 0) return;
+  const { project, dataDir } = world();
+  const locked = join(project, ".walkthrough", "shots", "locked.png");
+  writeFileSync(locked, png());
+  chmodSync(locked, 0o000);
+  try {
+    const server = await start(dataDir);
+    const { text, structured } = await sendResult(await agent(server), { project_path: project, body: "![l](.walkthrough/shots/locked.png)" });
+    expect(structured.images_not_shown).toEqual([
+      { ref: ".walkthrough/shots/locked.png", reason: "Plannotator can't read this file; on macOS the app running it may need to be allowed" },
+    ]);
+    expect(text).toContain("this image will not show");
+    const answer = await image(server, structured.message_id, ".walkthrough/shots/locked.png");
+    expect(answer.status).toBe(403);
+    expect(((await answer.json()) as { code: string }).code).toBe("image_unreadable");
+  } finally {
+    chmodSync(locked, 0o644);
+  }
 });
 
 test("submit_guide's result carries the same warning", async () => {
@@ -323,11 +366,84 @@ test("submit_guide's result carries the same warning", async () => {
   const guide = { title: "One change", intent: "Shows a.", sections: [{ title: "The change", overview: "a moves to 1.", diffs: [{ file: "a.ts", summary: "Bumps a." }] }] };
   const result = (await client.callTool({
     name: "submit_guide",
-    arguments: { project_path: project, guide, patch, body: "Before: ![gone](.walkthrough/shots/missing.png)" },
+    arguments: { project_path: project, guide, patch, body: "Before: ![shot](../.secrets/key.png)" },
   })) as { isError?: boolean; content: { text: string }[]; structuredContent: Record<string, any> };
   expect(result.isError).toBeFalsy();
-  expect(result.structuredContent.images_not_shown).toEqual([{ ref: ".walkthrough/shots/missing.png", reason: "not on disk, or not a file" }]);
-  expect(result.content[0]!.text).toContain("this image will not show: .walkthrough/shots/missing.png");
+  expect(result.structuredContent.images_not_shown).toEqual([{ ref: "../.secrets/key.png", reason: "in a hidden folder, or a hidden or .env file" }]);
+  expect(result.content[0]!.text).toContain("this image will not show: ../.secrets/key.png");
+});
+
+test("a person's own reply keeps the project boundary; an agent's message does not", async () => {
+  const { root, project, dataDir } = world();
+  const server = await start(dataDir);
+  const sent = await send(await agent(server), { project_path: project, body: `![far](${join(root, "secret.png")})` });
+  // The agent's image outside the project shows.
+  expect((await image(server, sent.message_id, join(root, "secret.png"))).status).toBe(200);
+  // The person's reply naming the same file (any client can post one: the window, a phone, a tailnet login) does not.
+  const replied = await fetch(`http://127.0.0.1:${server.port}/api/inbox/messages/${sent.message_id}/reply`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ idempotency_key: "k-person-1", words: `See ![p](${join(root, "secret.png")}), ![e](.walkthrough/shots/escape.png) and ![a](.walkthrough/shots/after.png)` }),
+  });
+  expect(replied.status).toBe(200);
+  const replyId = ((await replied.json()) as { reply: { id: string } }).reply.id;
+  const outside = await image(server, replyId, join(root, "secret.png"));
+  expect(outside.status).toBe(403);
+  expect(((await outside.json()) as { code: string }).code).toBe("outside_project");
+  // Through a symlink in the project that leads out: judged by where it leads.
+  const escaped = await image(server, replyId, ".walkthrough/shots/escape.png");
+  expect(escaped.status).toBe(403);
+  expect(((await escaped.json()) as { code: string }).code).toBe("outside_project");
+  // An image of the project still shows.
+  expect((await image(server, replyId, ".walkthrough/shots/after.png")).status).toBe(200);
+  // Nor does the background capture copy it into the Inbox.
+  await fetch(`http://127.0.0.1:${server.port}/api/inbox/threads/${sent.thread_id}`);
+  await server.imageCapture.idle();
+  const captured = server.store.message(replyId)?.inline_images ?? [];
+  expect(captured.map((i) => i.ref)).toEqual([".walkthrough/shots/after.png"]);
+});
+
+test("a project at the home folder, or above it, does not open its hidden folders", async () => {
+  const { root, dataDir } = world();
+  // A scratch home: never the real one.
+  const home = join(root, "home");
+  mkdirSync(join(home, ".ssh"), { recursive: true });
+  mkdirSync(join(home, "shots"), { recursive: true });
+  writeFileSync(join(home, ".ssh", "id.png"), png());
+  writeFileSync(join(home, "shots", "ok.png"), png());
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const server = await start(dataDir);
+    const client = await agent(server);
+    const atHome = await send(client, { project_path: home, body: "![k](.ssh/id.png) ![o](shots/ok.png)" });
+    expect(atHome.project.root).toBe(home);
+    const key = await image(server, atHome.message_id, ".ssh/id.png");
+    expect(key.status).toBe(403);
+    expect(((await key.json()) as { code: string }).code).toBe("image_hidden");
+    expect((await image(server, atHome.message_id, "shots/ok.png")).status).toBe(200);
+    // A project above the home folder exempts nothing below it either.
+    const above = await send(client, { project_path: root, body: "![k](home/.ssh/id.png)" });
+    expect(above.project.root).toBe(root);
+    expect((await image(server, above.message_id, "home/.ssh/id.png")).status).toBe(403);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+});
+
+test("a link kept in a hidden folder is refused by where it is kept, even when it leads somewhere plain", async () => {
+  const { root, project, dataDir } = world();
+  mkdirSync(join(root, ".cfg"), { recursive: true });
+  writeFileSync(join(root, "pub.png"), png());
+  symlinkSync(join(root, "pub.png"), join(root, ".cfg", "link.png"));
+  const server = await start(dataDir);
+  const sent = await send(await agent(server), { project_path: project, body: "![l](../.cfg/link.png) ![p](../pub.png)" });
+  const link = await image(server, sent.message_id, "../.cfg/link.png");
+  expect(link.status).toBe(403);
+  expect(((await link.json()) as { code: string }).code).toBe("image_hidden");
+  // The file it leads to, named plainly, shows.
+  expect((await image(server, sent.message_id, "../pub.png")).status).toBe(200);
 });
 
 test("the byte cap and the pixel cap are 413", async () => {

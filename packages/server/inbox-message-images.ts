@@ -5,9 +5,11 @@
  * no CORS headers.
  *
  * Every decision is in packages/shared/inbox/message-images.ts: the path
- * must be an image the message's own body references, anywhere the person's
- * user can read except a hidden folder or a hidden or dotenv file (judged as
- * named and by realpath), an image by extension and by its magic bytes, at
+ * must be an image the message's own body references; for an agent's message
+ * anywhere the person's user can read, for a person's own message inside its
+ * project or the folder it was sent from; never a hidden folder outside those
+ * (nor under a home folder or above) or a dotenv file (judged as named and by
+ * realpath); an image by extension and by its magic bytes, at
  * most 10 MB and 50 megapixels. This file adds the
  * transport: a cross-site request is refused before anything is read, and
  * every answer carries nosniff, a sandbox CSP and a same-origin CORP, so
@@ -58,6 +60,8 @@ export async function inboxMessageImageRoute(req: Request, url: URL, store: Inbo
     root: project.root,
     base: message.base_path ?? null,
     path: url.searchParams.get("path"),
+    // An agent's images come from anywhere; a person's own message (a phone, the relay, a tailnet login) from its project.
+    anywhere: message.author.kind === "agent",
   });
   if (!result.ok) return refuse(result.status, result.code, result.error);
   // The validator is the SHA-256 of the bytes served (read once, at most the
@@ -99,8 +103,8 @@ export const INBOX_IMAGE_CAPTURE_RETRY_MS = 60_000;
 const MESSAGE_BATCH = 64;
 /** Messages the retry table remembers (least recently tried dropped first). */
 const ATTEMPTS_MAX_MESSAGES = 10_000;
-/** Refusals that cost a read of the file: not tried again until the retry window passes. */
-const COSTLY_REFUSALS = new Set(["not_an_image", "image_changed", "image_too_large", "write_failed"]);
+/** Refusals that cost a read of the file (or will fail the same way at once): not tried again until the retry window passes. */
+const COSTLY_REFUSALS = new Set(["not_an_image", "image_changed", "image_too_large", "write_failed", "image_unreadable", "image_read_failed"]);
 
 export interface InboxImageCapture {
   /** Capture the thread's uncaptured images in the background (a read never waits for it). */
@@ -167,6 +171,7 @@ export function createInboxImageCapture(
           body: latest.body,
           root: project.root,
           base: latest.base_path ?? null,
+          anywhere: latest.author.kind === "agent",
           sentAt: latest.created_at,
           capturedOnOpenAt: new Date().toISOString(),
           refs: due,

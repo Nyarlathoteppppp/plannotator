@@ -47,6 +47,8 @@ export interface CaptureInlineImagesInput {
   root: string;
   /** The folder the agent sent from (`base_path`), when not the root. */
   base?: string | null;
+  /** The message's author is an agent: images from anywhere (`InboxMessageImageInput.anywhere`). */
+  anywhere?: boolean;
   /** The message's time: each record's `sent_at`. */
   sentAt: string;
   /** Set when capturing on a later read: the records are marked `captured: "on_open"` at this time. */
@@ -59,10 +61,16 @@ export interface CaptureInlineImagesInput {
   stage?: boolean;
 }
 
+export interface InlineImageFailure {
+  ref: string;
+  code: string;
+  notYet?: true;
+}
+
 export interface CapturedInlineImages {
   images: InboxInlineImage[];
-  /** The sources not captured, with the refusal's code (`image_missing`, `not_an_image`, ...). */
-  failures: { ref: string; code: string }[];
+  /** The sources not captured, with the refusal's code (`image_missing`, `not_an_image`, ...); `notYet` when nothing is at the path yet. */
+  failures: InlineImageFailure[];
   /** The bytes read. */
   bytes: number;
   /** Move staged blobs into place (a no-op unless `stage`). */
@@ -99,16 +107,17 @@ async function place(temp: string, path: string): Promise<void> {
  */
 export async function captureInboxInlineImages(inboxDirPath: string, input: CaptureInlineImagesInput): Promise<CapturedInlineImages> {
   const images: InboxInlineImage[] = [];
-  const failures: { ref: string; code: string }[] = [];
+  const failures: InlineImageFailure[] = [];
   const staged: { temp: string; path: string }[] = [];
   let bytes = 0;
   const dir = inboxBlobsDir(inboxDirPath);
   const refs = (input.refs ?? inboxMessageImageRefsInOrder(input.body)).slice(0, input.max ?? INBOX_INLINE_IMAGES_MAX);
   for (const [index, ref] of refs.entries()) {
     if (index > 0) await yieldToLoop();
-    const read = await readInboxMessageImageAsync({ body: input.body, root: input.root, base: input.base ?? null, path: ref }).catch(() => null);
+    const read = await readInboxMessageImageAsync({ body: input.body, root: input.root, base: input.base ?? null, path: ref, anywhere: input.anywhere === true }).catch(() => null);
     if (!read || !read.ok) {
-      failures.push({ ref, code: read && !read.ok ? read.code : "image_missing" });
+      if (!read) failures.push({ ref, code: "image_read_failed" });
+      else failures.push({ ref, code: read.code, ...(read.notYet ? { notYet: true as const } : {}) });
       continue;
     }
     const sha256 = createHash("sha256").update(read.bytes).digest("hex");
