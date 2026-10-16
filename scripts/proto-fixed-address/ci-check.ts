@@ -122,6 +122,13 @@ try {
   record("Sure in the window -> on", afterSure.status === "on", `status ${afterSure.status}; reason ${afterSure.reason}; probe ${afterSure.probe}`);
   console.log("commands run:\n" + ((afterSure.log as string[] | undefined) ?? []).join("\n"));
   const privileged = ((afterSure.log as string[] | undefined) ?? []).filter((line) => /service install/.test(line));
+  if (afterSure.status === "failed" && /Port 80 is already used by another program/.test(String(afterSure.reason))) {
+    // The runner's port 80 is someone else's (Windows images: http.sys, PID 4). What must hold: a plain
+    // message, nothing installed, no privileged command. The rest of the flow needs the port.
+    finding(`${process.platform}: port 80 is held by another program on this runner; Sure refused before asking`, String(afterSure.reason));
+    record("the refusal ran no privileged command and installed nothing", privileged.length === 0 && !existsSync(join(data, "portless")), `${privileged.length} privileged; portless dir ${existsSync(join(data, "portless")) ? "exists" : "absent"}`);
+    throw new Error("stop: port 80 is not free here");
+  }
   record("exactly one privileged command, plain HTTP", privileged.length === 1 && /--no-tls/.test(privileged[0] ?? ""), privileged.join(" | ").slice(0, 300) || "(none run)");
   const moved = /tab moved to the name: true/.test(flow.out);
   const movedLine = (/tab moved to the name: .*/.exec(flow.out) ?? ["(no line)"])[0];
@@ -172,7 +179,7 @@ try {
     squatter.stop(true);
   }
 } catch (error) {
-  record("unexpected", false, String(error));
+  if (!String(error).includes("stop: port 80 is not free here")) record("unexpected", false, String(error));
 }
 
 const lines = [`### Fixed address on ${process.platform}`, "", "| | step | detail |", "|---|---|---|", ...results.map((r) => `| ${r.finding ? "⚠️" : r.ok ? "✅" : "❌"} | ${r.step} | ${r.detail.replace(/\|/g, "\\|").slice(0, 400)} |`)];

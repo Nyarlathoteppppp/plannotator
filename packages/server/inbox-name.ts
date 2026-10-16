@@ -397,7 +397,7 @@ export function classifyPort80(status: number, headers: Headers): ProxyState {
  */
 export async function readProxyState(port: number = INBOX_NAME_PROXY_PORT): Promise<ProxyState> {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/`, { headers: { host: INBOX_NAME_HOST }, redirect: "manual", signal: AbortSignal.timeout(2500) });
+    const response = await fetch(`http://127.0.0.1:${port}/`, { headers: { host: INBOX_NAME_HOST }, redirect: "manual", signal: AbortSignal.timeout(5000) });
     await response.body?.cancel().catch(() => {});
     return classifyPort80(response.status, response.headers);
   } catch (error) {

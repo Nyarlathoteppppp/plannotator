@@ -68,6 +68,20 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then netstat -ano | grep -E ':80 .*LISTENING' || true; else sudo lsof -nP -iTCP:80 -sTCP:LISTEN || true; fi
 
+      # Windows runner images keep port 80 for http.sys (System, PID 4: IIS's W3SVC/WAS).
+      # A person's PC normally does not; free it here so the rest of the flow can run.
+      # If it stays held, ci-check records the flow's plain refusal as a finding.
+      - name: Windows - free port 80 (http.sys / IIS on this runner image)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-Service W3SVC, WAS -ErrorAction SilentlyContinue | Format-Table Name, Status
+          netsh http show servicestate view=requestq | Select-String -Pattern 'URL|Registered|Process IDs' | Select-Object -First 20
+          Stop-Service W3SVC, WAS -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          netstat -ano | Select-String ':80 .*LISTENING'
+          exit 0
+
       - name: The whole flow (click Sure, verify, port change, off)
         run: bun scripts/proto-fixed-address/ci-check.ts "$RUNNER_TEMP/proto-shots"
 
