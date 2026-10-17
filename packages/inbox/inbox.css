@@ -44,6 +44,10 @@
   --ib-soft-float: ;             /* floating surfaces (menus, dialogs, popovers, the toast, a row's action): Soft's shadow and no outline (today's: an outline and a drop shadow) */
   --ib-soft-hover: ;             /* hover fills where today has none, Soft's hover colours, and 140 ms fades (today's hovers) */
   --ib-soft-chip: ;              /* the thread chip: a grey pill in the window's face (today's: an outlined monospace tag; the face changes how a phone's chip wraps) */
+  --ib-soft-hbtns: ;             /* the thread header's buttons: borderless, the label in the text colour (today's: outlined, the pressed one in the accent) */
+  --ib-soft-foot: ;              /* the thread's foot: Reply, Looks good and Send as filled pills, the reply box's soft glow and pill chips (today's: outlined buttons, a 3 px ring) */
+  --ib-soft-accept: ;            /* Accept recommended: a filled pill (today's: ui's outlined button) */
+  --ib-soft-surfaces: ;          /* raised surfaces in the thread: attachment tiles (Open shown on hover), the read line, the route chooser, the fold (today's: outlined cards) */
 }
 :root.light .pn-inbox {
   --ib-soft-nav: initial;
@@ -285,7 +289,7 @@ button.ib-mut { border-radius: 6px; }
 }
 .ib-mk { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .ib-mk > svg, .ib-mk > img { width: 16px; height: 16px; display: block; }
-.ib-mk.ib-big { width: 30px; height: 30px; border-radius: 9px; background: var(--muted); }
+.ib-mk.ib-big { width: 30px; height: 30px; border-radius: var(--ib-r9-s, 8px); background: var(--muted); }
 .ib-mk.ib-big > svg, .ib-mk.ib-big > img { width: 17px; height: 17px; }
 
 /* shell */
@@ -1654,7 +1658,7 @@ button.ib-vtime:hover { background: color-mix(in oklch, var(--primary) 22%, tran
 @media (prefers-reduced-motion: reduce) {
   .ib-msg[data-revealed], .ib-fline[data-revealed] .ib-fl-meta { animation: none; }
 }
-.ib-fline .ib-mk.ib-big { width: 24px; height: 24px; border-radius: 8px; }
+.ib-fline .ib-mk.ib-big { width: 24px; height: 24px; border-radius: var(--ib-r8-s, 6px); }
 .ib-fline .ib-mk.ib-big > svg, .ib-fline .ib-mk.ib-big > img { width: 14px; height: 14px; }
 .ib-fl-nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ib-fl-sn { color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -2837,11 +2841,15 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 /* ───────────── The Soft paint in the thread (.product/approved/inbox-soft/) ─────────────
    Owner, 2026-10-16: Soft modernizes today's thread and does not relayout it. Every rule here changes colour,
    surface, radius, weight or motion only; heights, paddings, margins, widths and font sizes stay today's, and
-   a border that goes stays as transparent width, so no box moves. Appended after the thread's own rules. */
-/* Switch tokens the thread reads (set on/off in the shell's switch block). Lines: Soft's faint fill, or
-   today's rules (--ib-soft-rows). The question card: Soft's raised surface, or ui's card (--ib-soft-card).
-   Accents: fewer of them, or today's accent on the decision tag, the way back and a tile's Open
-   (--ib-soft-accents). */
+   a border that goes stays as transparent width, so no box moves. Appended after the thread's own rules.
+   Every declaration is `var(<switch token>, <today's value>)`: today's is the window's own rule above, or ui's
+   for ui's drawing (the question card), named. A property today never declared has no fallback: off, it is
+   unset, which is what today has (inherited, or the initial value). */
+/* Switch tokens the thread reads. Lines: --ib-soft-rows. The question card, everything inside it included:
+   --ib-soft-card. Accents: --ib-soft-accents. Header buttons: --ib-soft-hbtns. The foot's pill buttons, the
+   reply box and its chips: --ib-soft-foot. Accept recommended: --ib-soft-accept. Raised surfaces in the thread
+   (attachment tiles, the read line, the route chooser, the fold): --ib-soft-surfaces. Radii, floating surfaces
+   and hovers: the shell's --ib-soft-shape, -float and -hover. */
 .pn-inbox {
   --ib-sep-s: var(--ib-soft-rows) var(--ib-fill);
   --ib-qc-border-s: var(--ib-soft-card) transparent;
@@ -2849,117 +2857,228 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   --ib-qc-bg-s: var(--ib-soft-card) var(--ib-raise);
   --ib-qc-answered-s: var(--ib-soft-card) inset 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent);
   --ib-calm-s: var(--ib-soft-accents) var(--foreground);
+  --ib-calm-w-s: var(--ib-soft-accents) 500;
+  --ib-calm-hover-s: var(--ib-soft-accents) var(--ib-hover);
+  /* The palette's own colours, read at the window, for a surface whose switch is off. */
+  --ib-fg0: var(--foreground);
+  --ib-mfg0: var(--muted-foreground);
+  --ib-primary0: var(--primary);
+  /* The question card (switch --ib-soft-card). */
+  --ib-qc-fg-s: var(--ib-soft-card) var(--ib-raise-fg);
+  --ib-qc-mfg-s: var(--ib-soft-card) var(--ib-raise-mfg);
+  --ib-qc-color-s: var(--ib-soft-card) var(--ib-raise-fg);
+  --ib-qc-eye-w-s: var(--ib-soft-card) 500;
+  --ib-qc-eye-track-s: var(--ib-soft-card) 0;
+  --ib-qc-eye-case-s: var(--ib-soft-card) none;
+  --ib-qc-tag-r-s: var(--ib-soft-card) 999px;
+  --ib-qc-tag-line-s: var(--ib-soft-card) transparent;
+  --ib-qc-tag-bg-s: var(--ib-soft-card) var(--card);
+  --ib-qc-tag-fg-s: var(--ib-soft-card) var(--muted-foreground);
+  --ib-qc-tag-track-s: var(--ib-soft-card) 0;
+  --ib-qc-svg-s: var(--ib-soft-card) var(--primary);
+  --ib-qc-off-s: var(--ib-soft-card) var(--muted-foreground);
+  --ib-qc-opt-r-s: var(--ib-soft-card) 10px;
+  --ib-qc-opt-hover-s: var(--ib-soft-card) color-mix(in oklch, var(--card) 70%, transparent);
+  --ib-qc-opt-on-s: var(--ib-soft-card) var(--card);
+  --ib-qc-choice-w-s: var(--ib-soft-card) 500;
+  --ib-qc-pill-s: var(--ib-soft-card) 999px;
+  --ib-qc-foot-line-s: var(--ib-soft-card) transparent;
+  /* Accept recommended (switch --ib-soft-accept): a filled pill, or ui's outlined button. */
+  --ib-acc-line-s: var(--ib-soft-accept) transparent;
+  --ib-acc-r-s: var(--ib-soft-accept) 999px;
+  --ib-acc-bg-s: var(--ib-soft-accept) color-mix(in oklch, var(--primary) 14%, transparent);
+  --ib-acc-hover-s: var(--ib-soft-accept) color-mix(in oklch, var(--primary) 20%, transparent);
+  --ib-acc-w-s: var(--ib-soft-accept) 550;
+  /* The header's buttons (switch --ib-soft-hbtns): borderless, the label in the text colour, the icon quiet. */
+  --ib-hb-line-s: var(--ib-soft-hbtns) transparent;
+  --ib-hb-w-s: var(--ib-soft-hbtns) 500;
+  --ib-hb-icon-s: var(--ib-soft-hbtns) var(--muted-foreground);
+  --ib-hb-hover-s: var(--ib-soft-hbtns) var(--ib-hover);
+  --ib-hb-on-bg-s: var(--ib-soft-hbtns) var(--ib-fill);
+  --ib-hb-on-fg-s: var(--ib-soft-hbtns) var(--foreground);
+  --ib-hb-on-icon-s: var(--ib-soft-hbtns) var(--primary);
+  --ib-hb-kbd-bg-s: var(--ib-soft-hbtns) transparent;
+  --ib-hb-kbd-fg-s: var(--ib-soft-hbtns) color-mix(in oklch, var(--ib-raise-mfg) 50%, var(--foreground));
+  --ib-hb-fg-s: var(--ib-soft-hbtns) var(--foreground);
+  /* The foot (switch --ib-soft-foot): pill buttons, the reply box's glow, its chips. */
+  --ib-ft-line-s: var(--ib-soft-foot) transparent;
+  --ib-ft-r-s: var(--ib-soft-foot) 999px;
+  --ib-ft-bg-s: var(--ib-soft-foot) color-mix(in oklch, var(--muted) 60%, transparent);
+  --ib-ft-fg-s: var(--ib-soft-foot) var(--ib-raise-fg);
+  --ib-ft-hover-s: var(--ib-soft-foot) color-mix(in oklch, var(--muted) 90%, transparent);
+  --ib-ft-pri-hover-s: var(--ib-soft-foot) color-mix(in oklch, var(--primary) 88%, var(--foreground));
+  --ib-ft-ghost-hover-s: var(--ib-soft-foot) var(--ib-hover);
+  --ib-ft-pressed-s: var(--ib-soft-foot) color-mix(in oklch, var(--success) 16%, transparent);
+  --ib-ft-on-s: var(--ib-soft-foot) color-mix(in oklch, var(--primary) 12%, transparent);
+  --ib-ft-box-line-s: var(--ib-soft-foot) color-mix(in oklch, var(--primary) 55%, transparent);
+  --ib-ft-box-r-s: var(--ib-soft-foot) 14px;
+  --ib-ft-box-glow-s: var(--ib-soft-foot) 0 0 0 4px color-mix(in oklch, var(--primary) 12%, transparent);
+  --ib-ft-chip-bg-s: var(--ib-soft-foot) color-mix(in oklch, var(--muted) 70%, transparent);
+  --ib-ft-skip-bg-s: var(--ib-soft-foot) color-mix(in oklch, var(--muted) 55%, transparent);
+  --ib-ft-skip-ring-s: var(--ib-soft-foot) none;
+  /* Raised surfaces in the thread (switch --ib-soft-surfaces). */
+  --ib-sf-line-s: var(--ib-soft-surfaces) transparent;
+  --ib-sf-bg-s: var(--ib-soft-surfaces) var(--ib-raise);
+  --ib-sf-fg-s: var(--ib-soft-surfaces) var(--ib-raise-fg);
+  --ib-sf-mfg-s: var(--ib-soft-surfaces) var(--ib-raise-mfg);
+  --ib-sf-color-s: var(--ib-soft-surfaces) var(--ib-raise-fg);
+  --ib-sf-r14-s: var(--ib-soft-surfaces) 14px;
+  --ib-sf-r12-s: var(--ib-soft-surfaces) 12px;
+  --ib-sf-r11-s: var(--ib-soft-surfaces) 11px;
+  --ib-sf-tile-hover-s: var(--ib-soft-surfaces) color-mix(in oklch, var(--muted) 70%, var(--card));
+  --ib-sf-tile-active-s: var(--ib-soft-surfaces) color-mix(in oklch, var(--muted) 80%, var(--card));
+  --ib-sf-fi-s: var(--ib-soft-surfaces) var(--card);
+  --ib-sf-open-o-s: var(--ib-soft-surfaces) 0;
+  --ib-sf-open-fade-s: var(--ib-soft-surfaces) opacity 140ms ease-out;
+  --ib-sf-beside-bg-s: var(--ib-soft-surfaces) color-mix(in oklch, var(--primary) 9%, var(--card));
+  --ib-sf-beside-ring-s: var(--ib-soft-surfaces) inset 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent);
+  --ib-sf-guide-s: var(--ib-soft-surfaces) color-mix(in oklch, var(--primary) 12%, var(--card));
+  /* Floating surfaces (the shell's --ib-soft-float). */
+  --ib-fl-popover-s: var(--ib-soft-float) var(--popover);
+  --ib-fl-popover-fg-s: var(--ib-soft-float) var(--popover-foreground, var(--foreground));
+  --ib-fl-600-s: var(--ib-soft-float) 600;
+  --ib-fl-550-s: var(--ib-soft-float) 550;
+  --ib-fl-kbd-font-s: var(--ib-soft-float) inherit;
+  --ib-fl-kbd-o-s: var(--ib-soft-float) 0.75;
+  /* The thread's subject a touch tighter (the labels switch: Soft's type). */
+  --ib-subj-track-s: var(--ib-soft-labels) -0.015em;
+  /* The "·" after "to you" at full quiet text (Soft's quiet text; today's fades it). */
+  --ib-tosep-o-s: var(--ib-soft-quiet) 1;
 }
 .ib-phead { border-bottom-color: var(--ib-sep-s, var(--ib-hair)); }
 /* The header's buttons are one family: borderless, the label in the text colour and the icon quiet (audit 12:
    nothing in the row reads as the primary action). */
-.pn-inbox .ib-hbtn { border-color: transparent; border-radius: 10px; font-weight: 500; transition: background-color 140ms ease-out; }
-.pn-inbox .ib-hbtn svg.ib-ic { color: var(--muted-foreground); }
-.pn-inbox .ib-hbtn:hover:not(:disabled) { background: var(--ib-hover); }
-.pn-inbox .ib-hbtn[aria-pressed="true"] { background: var(--ib-fill); border-color: transparent; color: var(--foreground); }
-.pn-inbox .ib-hbtn[aria-pressed="true"] svg.ib-ic { color: var(--primary); }
-.ib-hbtn .ib-kbd, .ib-hbtn[aria-pressed="true"] .ib-kbd { border-color: transparent; background: transparent; color: color-mix(in oklch, var(--ib-raise-mfg) 50%, var(--foreground)); }
-.pn-inbox .ib-iconbtn { border-radius: 10px; transition: background-color 140ms ease-out, color 140ms ease-out; }
-.pn-inbox .ib-iconbtn:hover { background: var(--ib-hover); color: var(--foreground); }
-.pn-inbox .ib-ptool { border-radius: 10px; }
-.pn-inbox .ib-ptool:hover { background: var(--ib-hover); }
-.ib-phead .ib-vsep { background: var(--ib-sep-s, var(--border)); }
-.ib-subject { letter-spacing: -0.015em; }
-.ib-tmeta b { color: var(--foreground); }
+.pn-inbox .ib-hbtn { border-color: var(--ib-hb-line-s, var(--border)); border-radius: var(--ib-r10-s, 7px); font-weight: var(--ib-hb-w-s, 550); transition: var(--ib-fade-s, var(--ib-ui-fade)); }
+.pn-inbox .ib-hbtn svg.ib-ic { color: var(--ib-hb-icon-s); }
+.pn-inbox .ib-hbtn:hover:not(:disabled) { background: var(--ib-hb-hover-s, var(--muted)); }
+.pn-inbox .ib-hbtn[aria-pressed="true"] { background: var(--ib-hb-on-bg-s, color-mix(in oklch, var(--primary) 13%, transparent)); border-color: var(--ib-hb-line-s, color-mix(in oklch, var(--primary) 40%, transparent)); color: var(--ib-hb-on-fg-s, var(--primary)); }
+.pn-inbox .ib-hbtn[aria-pressed="true"] svg.ib-ic { color: var(--ib-hb-on-icon-s); }
+.ib-hbtn .ib-kbd { border-color: var(--ib-hb-line-s, var(--border)); background: var(--ib-hb-kbd-bg-s); color: var(--ib-hb-kbd-fg-s, var(--muted-foreground)); }
+.ib-hbtn[aria-pressed="true"] .ib-kbd { border-color: var(--ib-hb-line-s, color-mix(in oklch, var(--primary) 40%, transparent)); color: var(--ib-hb-kbd-fg-s); }
+.pn-inbox .ib-iconbtn { border-radius: var(--ib-r10-s, 7px); transition: var(--ib-fade2-s, var(--ib-ui-fade)); }
+.pn-inbox .ib-iconbtn:hover { background: var(--ib-hb-hover-s, var(--muted)); color: var(--ib-hb-fg-s, var(--muted-foreground)); }
+.pn-inbox .ib-ptool { border-radius: var(--ib-r10-s, 7px); }
+.pn-inbox .ib-ptool:hover { background: var(--ib-hb-hover-s, var(--muted)); }
+.ib-phead .ib-vsep { background: var(--ib-sep-s, var(--ib-line)); }
+.ib-subject { letter-spacing: var(--ib-subj-track-s, -0.01em); }
+.ib-tmeta b { color: var(--ib-calm-s, var(--primary)); }
 .ib-message + .ib-message, .ib-pbody.ib-folding .ib-message, .ib-mfold, .ib-mfold-b::before { border-color: var(--ib-sep-s, var(--ib-hair)); }
-.pn-inbox :is(button.ib-fline, .ib-fline:has(> .ib-fl-hit)):hover { background: var(--ib-hover); }
-.pn-inbox .ib-fline { border-radius: 10px; }
-.ib-readline { border-radius: 12px; background: var(--ib-raise); }
+.pn-inbox :is(button.ib-fline, .ib-fline:has(> .ib-fl-hit)):hover { background: var(--ib-hover-s, color-mix(in oklch, var(--muted) 40%, transparent)); }
+.pn-inbox .ib-fline { border-radius: var(--ib-r10-s, 8px); }
+.ib-readline { border-radius: var(--ib-sf-r12-s, 8px); background: var(--ib-sf-bg-s, var(--ib-band)); }
 .ib-waitfoot { border-color: var(--ib-sep-s, color-mix(in oklch, var(--border) 60%, transparent)); }
 
 /* The question card (ui's QuestionBlock, drawn inside the Viewer, painted here for the Inbox only): a lifted,
    borderless surface; the eyebrow in sentence case; the tags quiet pills on the card's colour; no rule above
-   the footer; Accept recommended a soft pill. ui's own sizes and spacing stay. */
-/* Text on Soft's raised surfaces (the card, the tiles, the read line) takes the raised text colours, a step
-   toward black or white from the palette's, so the lifted surface never costs a palette its contrast. */
-.pn-inbox :is(fieldset.question-block, .ib-att-t, .ib-hatts, .ib-readline, .ib-route, .ib-mfold-b > span) { --foreground: var(--ib-raise-fg); --muted-foreground: var(--ib-raise-mfg); color: var(--foreground); }
+   the footer; Accept recommended a soft pill. ui's own sizes and spacing stay. Off, every value is ui's own
+   (QuestionBlock.tsx's classes, compiled: radius 10, border/85 or primary/45 once answered, the background 35%
+   into the card, the eyebrow 600 capitals spaced 0.08em, the tags `rounded` with their tone's fill). */
+/* Text on Soft's raised surfaces (the card, the tiles, the read line) takes the raised text colours (the
+   shell's --ib-raise-*: stepped, or today's with its quiet text moved with the surface), each with its
+   surface's switch. */
+.pn-inbox fieldset.question-block { --foreground: var(--ib-qc-fg-s, var(--ib-fg0)); --muted-foreground: var(--ib-qc-mfg-s, var(--ib-mfg0)); color: var(--ib-qc-color-s); }
+.pn-inbox :is(.ib-att-t, .ib-hatts, .ib-readline, .ib-route, .ib-mfold-b > span) { --foreground: var(--ib-sf-fg-s, var(--ib-fg0)); --muted-foreground: var(--ib-sf-mfg-s, var(--ib-mfg0)); color: var(--ib-sf-color-s); }
 @supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
-  /* The accent's words on the card (Recommended, Accept recommended): the same step. */
-  .pn-inbox { --ib-raise-primary: color-mix(in oklch, var(--primary) 55%, var(--ib-card-ink)); }
-  .pn-inbox .ib-readline > button { color: var(--ib-raise-primary); }
-  .pn-inbox fieldset.question-block { --primary: var(--ib-raise-primary); }
+  /* The accent's words on the card (Recommended, the decision tag) and the read line: the same step. Accept
+     recommended's words sit on its own tint, so they take a further step (AA on every palette, nord dark
+     included). */
+  .pn-inbox {
+    --ib-raise-primary: color-mix(in oklch, var(--primary) 55%, var(--ib-card-ink));
+    --ib-raise-primary-on-tint: color-mix(in oklch, var(--primary) 45%, var(--ib-card-ink));
+    --ib-qc-primary-s: var(--ib-soft-card) var(--ib-raise-primary);
+    --ib-sf-primary-s: var(--ib-soft-surfaces) var(--ib-raise-primary);
+    --ib-acc-fg-s: var(--ib-soft-card) var(--ib-raise-primary-on-tint);
+  }
+  .pn-inbox .ib-readline > button { color: var(--ib-sf-primary-s, var(--primary)); }
+  .pn-inbox fieldset.question-block { --primary: var(--ib-qc-primary-s, var(--ib-primary0)); }
 }
-/* Off, the values are ui's own (QuestionBlock: radius 10, border/85 or primary/45 once answered, the
-   background 35% into the card). */
 .pn-inbox .ib-body fieldset.question-block { border-color: var(--ib-qc-border-s, color-mix(in oklab, var(--border) 85%, transparent)); border-radius: var(--ib-qc-r-s, 10px); background: var(--ib-qc-bg-s, color-mix(in oklab, var(--background) 35%, var(--card))); }
 .pn-inbox .ib-body fieldset.question-block[data-question-status="answered"] { border-color: var(--ib-qc-border-s, color-mix(in oklab, var(--primary) 45%, transparent)); box-shadow: var(--ib-qc-answered-s, none); }
-.pn-inbox .question-block > div:first-child > span:first-child { font-weight: 500; letter-spacing: 0; text-transform: none; }
-.pn-inbox .question-block > div:first-child > span:last-child > :is(span, button) { border-radius: 999px; border-color: transparent; background: var(--card); color: var(--muted-foreground); letter-spacing: 0; }
+.pn-inbox .question-block > div:first-child > span:first-child { font-weight: var(--ib-qc-eye-w-s, 600); letter-spacing: var(--ib-qc-eye-track-s, 0.08em); text-transform: var(--ib-qc-eye-case-s, uppercase); }
+/* The eyebrow's tags. Off, each keeps its tone (ui's Tag: rec primary/15, ok success/15, skip muted, open a
+   dashed border); the tone's own values ride --ib-qt-*0, set below from ui's classes. */
+.pn-inbox .question-block > div:first-child > span:last-child > :is(span, button) { border-radius: var(--ib-qc-tag-r-s, 0.25rem); border-color: var(--ib-qc-tag-line-s, var(--ib-qt-line0, transparent)); background-color: var(--ib-qc-tag-bg-s, var(--ib-qt-bg0, transparent)); color: var(--ib-qc-tag-fg-s, var(--ib-qt-fg0, var(--muted-foreground))); letter-spacing: var(--ib-qc-tag-track-s, 0.03em); }
+.pn-inbox .question-block > div:first-child > span:last-child > .bg-primary\/15 { --ib-qt-bg0: color-mix(in oklab, var(--primary) 15%, transparent); --ib-qt-fg0: var(--primary); }
+.pn-inbox .question-block > div:first-child > span:last-child > .bg-success\/15 { --ib-qt-bg0: color-mix(in oklab, var(--success) 15%, transparent); --ib-qt-fg0: var(--success); }
+.pn-inbox .question-block > div:first-child > span:last-child > .bg-muted { --ib-qt-bg0: var(--muted); }
+.pn-inbox .question-block > div:first-child > span:last-child > .border-dashed { --ib-qt-line0: var(--border); }
 .pn-inbox .question-block > div:first-child > span:last-child > :is(span, button)[aria-pressed="true"],
 .pn-inbox .question-block > div:first-child > span:last-child > [data-question-decision-tag] { color: var(--ib-calm-s, var(--primary)); }
-.pn-inbox .question-block > div:first-child svg { color: var(--primary); }
+.pn-inbox .question-block > div:first-child svg { color: var(--ib-qc-svg-s); }
 /* The owner's decision (2026-10-16): no "Answering this records a decision" row in the Inbox; the "Records a
    decision" tag at the card's top right says it and switches it. A recorded decision's own row (its
-   statement, a link) stays. Other hosts (plan review, Workspaces) keep the row: this is the Inbox's skin. */
+   statement, a link) stays. Other hosts (plan review, Workspaces) keep the row: this is the Inbox's skin, a
+   ruling of its own and not a Soft switch. */
 .pn-inbox .question-block [data-question-decision-row]:not(:has(a)) { display: none; }
-.pn-inbox .question-block label[data-question-option] { border-radius: 10px; }
-.pn-inbox .question-block label[data-question-option]:hover { background: color-mix(in oklch, var(--card) 70%, transparent); }
-.pn-inbox .question-block label[data-question-option]:has(input:checked) { background: var(--card); }
-.pn-inbox .question-block [data-question-part="choice"] > span:first-child { font-weight: 500; }
-.pn-inbox .question-block [data-question-part="choice"] .rounded { border-radius: 999px; letter-spacing: 0; }
-.pn-inbox .question-block [role="radiogroup"] > div, .pn-inbox .question-block [role="group"] > div { border-radius: 10px; }
-.pn-inbox .question-block > div.border-t { border-top-color: transparent; }
-.pn-inbox .question-block > div.border-t > button:not(.ml-auto) { border-radius: 10px; }
-.pn-inbox .question-block > div.border-t :is(button.ml-auto, .ml-auto > button.border) { border-color: transparent; border-radius: 999px; background: color-mix(in oklch, var(--primary) 14%, transparent); font-weight: 550; }
-.pn-inbox .question-block > div.border-t :is(button.ml-auto, .ml-auto > button.border):hover { background: color-mix(in oklch, var(--primary) 20%, transparent); }
+.pn-inbox .question-block label[data-question-option] { border-radius: var(--ib-qc-opt-r-s, 7px); }
+.pn-inbox .question-block label[data-question-option]:hover { background: var(--ib-qc-opt-hover-s, color-mix(in oklab, var(--muted) 45%, transparent)); }
+.pn-inbox .question-block label[data-question-option]:has(input:checked) { background: var(--ib-qc-opt-on-s, color-mix(in oklab, var(--primary) 12%, transparent)); }
+.pn-inbox .question-block [data-question-part="choice"] > span:first-child { font-weight: var(--ib-qc-choice-w-s, 550); }
+.pn-inbox .question-block [data-question-part="choice"] .rounded { border-radius: var(--ib-qc-pill-s, 0.25rem); letter-spacing: var(--ib-qc-tag-track-s, 0.03em); }
+.pn-inbox .question-block [role="radiogroup"] > div, .pn-inbox .question-block [role="group"] > div { border-radius: var(--ib-qc-opt-r-s, 7px); }
+.pn-inbox .question-block > div.border-t { border-top-color: var(--ib-qc-foot-line-s, color-mix(in oklab, var(--border) 55%, transparent)); }
+.pn-inbox .question-block > div.border-t > button:not(.ml-auto) { border-radius: var(--ib-qc-opt-r-s, 5px); }
+/* Accept recommended (switch --ib-soft-accept); its words follow the card. */
+.pn-inbox .question-block > div.border-t :is(button.ml-auto, .ml-auto > button.border) { border-color: var(--ib-acc-line-s, color-mix(in oklab, var(--primary) 45%, transparent)); border-radius: var(--ib-acc-r-s, calc(var(--radius) - 2px)); background: var(--ib-acc-bg-s, color-mix(in oklab, var(--primary) 10%, transparent)); font-weight: var(--ib-acc-w-s, 500); color: var(--ib-acc-fg-s, var(--primary)); }
+.pn-inbox .question-block > div.border-t :is(button.ml-auto, .ml-auto > button.border):hover { background: var(--ib-acc-hover-s, color-mix(in oklab, var(--primary) 20%, transparent)); }
 
-/* Attachment tiles (audit 11): lifted surfaces with no border; "Open" only on hover, focus or open beside. */
-.ib-att-t { border-color: transparent; border-radius: 14px; background: var(--ib-raise); }
-.ib-att-t:hover { border-color: transparent; background: color-mix(in oklch, var(--muted) 70%, var(--card)); }
-.ib-att-t:active { background: color-mix(in oklch, var(--muted) 80%, var(--card)); }
-.ib-att-t .ib-fi { border-radius: 11px; background: var(--card); }
-.ib-att-t .ib-open { color: var(--ib-calm-s, var(--primary)); opacity: 0; transition: opacity 140ms ease-out; }
+/* Attachment tiles (audit 11): lifted surfaces with no border; "Open" on hover, focus or open beside (always on
+   a screen without hover). */
+.ib-att-t { border-color: var(--ib-sf-line-s, var(--border)); border-radius: var(--ib-sf-r14-s, 9px); background: var(--ib-sf-bg-s, var(--card)); }
+.ib-att-t:hover { border-color: var(--ib-sf-line-s, color-mix(in oklch, var(--primary) 45%, var(--border))); background: var(--ib-sf-tile-hover-s, color-mix(in oklch, var(--primary) 4%, var(--card))); }
+.ib-att-t:active { background: var(--ib-sf-tile-active-s, color-mix(in oklch, var(--primary) 9%, var(--card))); }
+.ib-att-t .ib-fi { border-radius: var(--ib-sf-r11-s, 7px); background: var(--ib-sf-fi-s, var(--muted)); }
+.ib-att-t .ib-open { color: var(--ib-calm-s, var(--primary)); opacity: var(--ib-sf-open-o-s, 1); transition: var(--ib-sf-open-fade-s, var(--ib-ui-fade)); }
 .ib-att-t:is(:hover, :focus-visible, .ib-open-beside) .ib-open { opacity: 1; }
-.ib-att-t.ib-open-beside { border-color: transparent; background: color-mix(in oklch, var(--primary) 9%, var(--card)); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent); }
-.ib-att-t.ib-guide .ib-fi { background: color-mix(in oklch, var(--primary) 12%, var(--card)); }
-.ib-hatts { border-radius: 14px; background: var(--ib-raise); }
+@media (hover: none) { .ib-att-t .ib-open { opacity: 1; } }
+.ib-att-t.ib-open-beside { border-color: var(--ib-sf-line-s, color-mix(in oklch, var(--primary) 55%, var(--border))); background: var(--ib-sf-beside-bg-s, color-mix(in oklch, var(--primary) 6%, var(--card))); box-shadow: var(--ib-sf-beside-ring-s, none); }
+.ib-att-t.ib-guide .ib-fi { background: var(--ib-sf-guide-s, color-mix(in oklch, var(--primary) 12%, transparent)); }
+.ib-hatts { border-radius: var(--ib-sf-r14-s, 10px); background: var(--ib-sf-bg-s, color-mix(in oklch, var(--muted) 45%, transparent)); }
 
-/* The foot: a hairline, and pill buttons (Reply, Looks good, Send) at today's sizes. */
+/* The foot (switch --ib-soft-foot): a hairline, and pill buttons (Reply, Looks good, Send) at today's sizes. */
 .ib-pfoot { border-top-color: var(--ib-sep-s, color-mix(in oklch, var(--border) 60%, transparent)); }
-.pn-inbox .ib-pfoot .ib-btn { border-color: transparent; border-radius: 999px; background: color-mix(in oklch, var(--muted) 60%, transparent); color: var(--ib-raise-fg); transition: background-color 140ms ease-out; }
-.pn-inbox .ib-pfoot .ib-btn:hover:not(:disabled) { background: color-mix(in oklch, var(--muted) 90%, transparent); }
-.pn-inbox .ib-pfoot .ib-btn.ib-pri { background: var(--primary); color: var(--primary-foreground); }
-.pn-inbox .ib-pfoot .ib-btn.ib-pri:hover:not(:disabled) { background: color-mix(in oklch, var(--primary) 88%, var(--foreground)); }
-.pn-inbox .ib-pfoot .ib-btn.ib-ghost { background: transparent; }
-.pn-inbox .ib-pfoot .ib-btn.ib-ghost:hover:not(:disabled) { background: var(--ib-hover); color: var(--foreground); }
-.pn-inbox .ib-pfoot .ib-btn[aria-pressed="true"] { background: color-mix(in oklch, var(--success) 16%, transparent); }
-.pn-inbox .ib-pfoot .ib-btn.ib-on { background: color-mix(in oklch, var(--primary) 12%, transparent); }
+.pn-inbox .ib-pfoot .ib-btn { border-color: var(--ib-ft-line-s, var(--border)); border-radius: var(--ib-ft-r-s, 7px); background: var(--ib-ft-bg-s, var(--card)); color: var(--ib-ft-fg-s); transition: var(--ib-fade-s, var(--ib-ui-fade)); }
+.pn-inbox .ib-pfoot .ib-btn:hover:not(:disabled) { background: var(--ib-ft-hover-s, var(--card)); }
+.pn-inbox .ib-pfoot .ib-btn.ib-pri { border-color: var(--ib-ft-line-s, var(--primary)); background: var(--primary); color: var(--primary-foreground); }
+.pn-inbox .ib-pfoot .ib-btn.ib-pri:hover:not(:disabled) { background: var(--ib-ft-pri-hover-s, var(--primary)); }
+.pn-inbox .ib-pfoot .ib-btn.ib-ghost { background: transparent; color: var(--ib-ft-fg-s, var(--muted-foreground)); }
+.pn-inbox .ib-pfoot .ib-btn.ib-ghost:hover:not(:disabled) { background: var(--ib-ft-ghost-hover-s, transparent); color: var(--ib-hb-fg-s, var(--muted-foreground)); }
+.pn-inbox .ib-pfoot .ib-btn[aria-pressed="true"] { background: var(--ib-ft-pressed-s, color-mix(in srgb, var(--success) 14%, var(--card))); }
+.pn-inbox .ib-pfoot .ib-btn.ib-on { border-color: var(--ib-ft-line-s, color-mix(in oklch, var(--primary) 55%, transparent)); background: var(--ib-ft-on-s, color-mix(in oklch, var(--primary) 10%, var(--card))); color: var(--ib-ft-fg-s, var(--primary)); }
 /* The reply box: the accent's ring and a soft glow; its chips are pills. */
-.ib-rbox { border-color: color-mix(in oklch, var(--primary) 55%, transparent); border-radius: 14px; box-shadow: 0 0 0 4px color-mix(in oklch, var(--primary) 12%, transparent); }
-.ib-rchip { border-radius: 999px; background: color-mix(in oklch, var(--muted) 70%, transparent); }
-.pn-inbox .ib-skipchip { border-radius: 999px; box-shadow: none; background: color-mix(in oklch, var(--muted) 55%, transparent); }
-.pn-inbox .ib-skipchip button { border-radius: 999px; }
-.ib-route, .ib-sessnote + .ib-route { border-color: transparent; border-radius: 14px; background: var(--ib-raise); }
-.ib-annpop, .ib-nmpop { border-color: transparent; border-radius: 14px; box-shadow: var(--ib-float-shadow); }
+.ib-rbox { border-color: var(--ib-ft-box-line-s, color-mix(in oklch, var(--primary) 60%, transparent)); border-radius: var(--ib-ft-box-r-s, 8px); box-shadow: var(--ib-ft-box-glow-s, 0 0 0 3px color-mix(in oklch, var(--primary) 14%, transparent)); }
+.ib-rchip { border-radius: var(--ib-ft-r-s, 6px); background: var(--ib-ft-chip-bg-s, var(--muted)); }
+.pn-inbox .ib-skipchip { border-radius: var(--ib-ft-r-s, 6px); box-shadow: var(--ib-ft-skip-ring-s, inset 0 0 0 1px var(--border)); background: var(--ib-ft-skip-bg-s); }
+.pn-inbox .ib-skipchip button { border-radius: var(--ib-ft-r-s, 5px); }
+.ib-route, .ib-sessnote + .ib-route { border-color: var(--ib-sf-line-s, var(--border)); border-radius: var(--ib-sf-r14-s, 10px); background: var(--ib-sf-bg-s, var(--card)); }
+.ib-annpop { border-color: var(--ib-float-line-s, var(--border)); border-radius: var(--ib-r14-s, 12px); box-shadow: var(--ib-float-s, 0 24px 60px rgba(0, 0, 0, 0.28)); }
+.ib-nmpop { border-color: var(--ib-float-line-s, var(--border)); border-radius: var(--ib-r14-s, 10px); box-shadow: var(--ib-float-s, 0 18px 50px rgba(0, 0, 0, 0.22)); }
 
-/* The toast: today's one 40 px line, as a pill floating above the window on the popover colour. */
-.ib-toast { border-color: transparent; border-radius: 999px; background: var(--popover); color: var(--popover-foreground, var(--foreground)); box-shadow: var(--ib-float-shadow); }
-:root:not(.light) .ib-toast { box-shadow: var(--ib-float-shadow); }
-.ib-toast .ib-tlead { font-weight: 600; }
-.pn-inbox .ib-toast .ib-tghost, .pn-inbox .ib-toast .ib-tundo { border-radius: 999px; font-weight: 550; }
-.pn-inbox .ib-toast .ib-tghost:hover { background: var(--ib-hover); }
-.ib-toast .ib-tundo kbd { border-color: transparent; font-family: inherit; opacity: 0.75; }
-.ib-toast.ib-toast-wrap { border-radius: 16px; }
+/* The toast: today's one 40 px line, as a pill floating above the window on the popover colour (--ib-soft-float). */
+.ib-toast { border-color: var(--ib-float-line-s, var(--border)); border-radius: var(--ib-pill-s, 8px); background: var(--ib-fl-popover-s, var(--card)); color: var(--ib-fl-popover-fg-s, var(--card-foreground)); box-shadow: var(--ib-float-s, 0 4px 12px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.04)); }
+:root:not(.light) .ib-toast { box-shadow: var(--ib-float-s, 0 8px 24px -8px rgba(0, 0, 0, 0.6)); }
+.ib-toast .ib-tlead { font-weight: var(--ib-fl-600-s, 500); }
+.ib-toast-wrap .ib-tlead { font-weight: var(--ib-fl-600-s, 400); }
+.pn-inbox .ib-toast .ib-tghost, .pn-inbox .ib-toast .ib-tundo { border-radius: var(--ib-pill-s, 5px); font-weight: var(--ib-fl-550-s, 500); }
+.pn-inbox .ib-toast .ib-tghost:hover { background: var(--ib-hover-s, var(--muted)); }
+.ib-toast .ib-tundo kbd { border-color: var(--ib-float-line-s, color-mix(in oklch, var(--card) 40%, transparent)); font-family: var(--ib-fl-kbd-font-s, var(--font-mono)); opacity: var(--ib-fl-kbd-o-s, 0.6); }
+.ib-toast.ib-toast-wrap { border-radius: var(--ib-r16-s, 8px); }
 
 /* The new-messages pill and the fold between read messages: soft pills on the card. */
-.pn-inbox .ib-npill { border-color: transparent; box-shadow: var(--ib-float-shadow); }
-.ib-mfold-b > span { border-color: transparent; background: var(--ib-raise); }
+.pn-inbox .ib-npill { border-color: var(--ib-float-line-s, color-mix(in oklch, var(--primary) 50%, var(--border))); box-shadow: var(--ib-float-s, 0 8px 24px rgba(0, 0, 0, 0.22)); }
+.ib-mfold-b > span { border-color: var(--ib-sf-line-s, var(--border)); background: var(--ib-sf-bg-s, var(--card)); }
 
-/* Every word in the thread reads at AA on the default palette, light and dark: the "·" between "to you" and
-   what follows is quiet text, not a faded glyph, and the "Records a decision" tag switched off keeps the quiet
-   text colour (ui fades it to 55% inline; its dotted outline and aria-pressed="false" still say off). */
-.ib-to-sep { opacity: 1; }
-.pn-inbox .question-block :is([data-question-decision-tag], [data-question-decision-toggle])[style] { color: var(--muted-foreground) !important; }
+/* Every word in the thread reads at AA on the default palette, light and dark, with Soft's quiet text: the "·"
+   between "to you" and what follows is quiet text, not a faded glyph, and the "Records a decision" tag switched
+   off keeps the quiet text colour (ui fades it to 55% inline; its dotted outline and aria-pressed="false" still
+   say off). Off, today's fades. */
+.ib-to-sep { opacity: var(--ib-tosep-o-s, 0.6); }
+.pn-inbox .question-block :is([data-question-decision-tag], [data-question-decision-toggle])[style] { color: var(--ib-qc-off-s, color-mix(in oklab, var(--muted-foreground) 55%, transparent)) !important; }
 
 /* The way back reads in the text colour (audit 6: the accent is not a link colour here). */
-.pn-inbox .ib-pback { border-radius: 10px; color: var(--ib-calm-s, var(--primary)); font-weight: 500; }
-.pn-inbox .ib-pback:hover { background: var(--ib-hover); }
+.pn-inbox .ib-pback { border-radius: var(--ib-r10-s, 7px); color: var(--ib-calm-s, var(--primary)); font-weight: var(--ib-calm-w-s, 550); }
+.pn-inbox .ib-pback:hover { background: var(--ib-calm-hover-s, color-mix(in oklch, var(--primary) 10%, transparent)); }
 @media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
-  .pn-inbox .ib-pback { color: var(--ib-calm-s, var(--primary)); }
-  .pn-inbox .ib-pback:active { background: var(--ib-hover); }
+  .pn-inbox .ib-pback { color: var(--ib-calm-s, var(--primary)); border-radius: var(--ib-r10-s, 8px); font-weight: var(--ib-calm-w-s, 500); }
+  .pn-inbox .ib-pback:active { background: var(--ib-calm-hover-s, color-mix(in oklch, var(--primary) 10%, transparent)); }
 }
