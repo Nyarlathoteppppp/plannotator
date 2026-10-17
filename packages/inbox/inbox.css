@@ -2877,10 +2877,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   --ib-qc-tag-r-s: var(--ib-soft-card) 999px;
   --ib-qc-tag-line-s: var(--ib-soft-card) transparent;
   --ib-qc-tag-bg-s: var(--ib-soft-card) var(--card);
-  --ib-qc-tag-fg-s: var(--ib-soft-card) var(--muted-foreground);
   --ib-qc-tag-track-s: var(--ib-soft-card) 0;
-  --ib-qc-svg-s: var(--ib-soft-card) var(--primary);
-  --ib-qc-off-s: var(--ib-soft-card) var(--muted-foreground);
   --ib-qc-opt-r-s: var(--ib-soft-card) 10px;
   --ib-qc-opt-hover-s: var(--ib-soft-card) color-mix(in oklch, var(--card) 70%, transparent);
   --ib-qc-opt-on-s: var(--ib-soft-card) var(--card);
@@ -2981,6 +2978,8 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
    shell's --ib-raise-*: stepped, or today's with its quiet text moved with the surface), each with its
    surface's switch. */
 .pn-inbox fieldset.question-block { --foreground: var(--ib-qc-fg-s, var(--ib-fg0)); --muted-foreground: var(--ib-qc-mfg-s, var(--ib-mfg0)); color: var(--ib-qc-color-s); }
+/* Tokens that name the card's own text and accent colours are declared on the card, so they read its colours. */
+.pn-inbox fieldset.question-block { --ib-qc-tag-fg-s: var(--ib-soft-card) var(--muted-foreground); --ib-qc-svg-s: var(--ib-soft-card) var(--primary); --ib-qc-off-s: var(--ib-soft-card) var(--muted-foreground); }
 .pn-inbox :is(.ib-att-t, .ib-hatts, .ib-readline, .ib-route, .ib-mfold-b > span) { --foreground: var(--ib-sf-fg-s, var(--ib-fg0)); --muted-foreground: var(--ib-sf-mfg-s, var(--ib-mfg0)); color: var(--ib-sf-color-s); }
 .pn-inbox .ib-mfold-b > span { color: var(--ib-sf-color-s, var(--muted-foreground)); }
 @supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
