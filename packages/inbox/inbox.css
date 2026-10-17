@@ -548,7 +548,7 @@ button.ib-band:hover { background: var(--ib-band-hover-s, var(--ib-band)); }
 /* Rows that wait on nobody (Sent, Quiet): the subject steps back. */
 :is(.ib-row, .ib-nrow)[data-section="quiet"] :is(.ib-s, .ib-l2 .ib-s) { color: var(--ib-quiet-dim, currentcolor); }
 /* The thread chip: a quiet pill in the window's own face (a name, not code; audit 4). */
-.ib-key { font-family: inherit; font-weight: 500; color: var(--ib-quiet-fg); background: color-mix(in oklch, var(--muted) 75%, transparent); border-color: transparent; border-radius: 999px; }
+.ib-key { font-family: inherit; font-weight: 500; color: var(--ib-raise-mfg); background: color-mix(in oklch, var(--muted) 75%, transparent); border-color: transparent; border-radius: 999px; }
 /* The status badges (audit 3): tinted pills, never outlined like a button. */
 .ib-badge { border-color: var(--ib-badge-border); border-radius: var(--ib-badge-radius); font-weight: var(--ib-badge-weight); background: var(--ib-badge-bg); }
 .ib-badge.ib-b-stop { background: var(--ib-badge-stop-bg); color: var(--ib-badge-stop-fg, currentcolor); }
