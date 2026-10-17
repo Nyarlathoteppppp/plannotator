@@ -42,8 +42,9 @@ function mediaMask(code: string): boolean[] {
 test('the type switch is off by default: today\'s sizes', () => {
   expect(CODE).toMatch(/--ib-soft-type:\s*initial;/);
   expect(CODE).not.toMatch(/--ib-soft-type:\s*;/);
-  expect(CODE).toMatch(/--ib-type-s:\s*var\(--ib-soft-type\)\s*0\.92857;/);
-  expect(CODE).toMatch(/--ib-type:\s*var\(--ib-type-s,\s*1\);/);
+  // The base in px, so each size is N px * base / 14: exact (14 px is 13 px on, N px off).
+  expect(CODE).toMatch(/--ib-type-s:\s*var\(--ib-soft-type\)\s*13;/);
+  expect(CODE).toMatch(/--ib-type:\s*var\(--ib-type-s,\s*14\);/);
 });
 
 test('every size of 12.5 px or more goes through its scale token, and the fallback is the same size', () => {
@@ -66,15 +67,17 @@ test('each scale token floors at 12 px and scales its own size', () => {
   const used = new Set([...CODE.matchAll(/var\(--ib-fs-([\d-]+),/g)].map((m) => m[1]!));
   for (const name of used) {
     const size = name.replace('-', '.');
-    const def = new RegExp(`--ib-fs-${name}:\\s*max\\(12px,\\s*calc\\(${size.replace('.', '\\.')}px \\* var\\(--ib-type\\)\\)\\);`);
+    const def = new RegExp(`--ib-fs-${name}:\\s*max\\(12px,\\s*calc\\(${size.replace('.', '\\.')}px \\* var\\(--ib-type\\) / 14\\)\\);`);
     expect(CODE).toMatch(def);
   }
 });
 
 test("ui's drawing follows the knob: Tailwind's type scale and its fixed sizes, in a layer after the utilities", () => {
   for (const [name, rem] of [['sm', '0.875'], ['base', '1'], ['lg', '1.0625'], ['xl', '1.1875'], ['2xl', '1.375']] as const) {
-    expect(CODE).toMatch(new RegExp(`--text-${name}:\\s*calc\\(${rem.replace('.', '\\.')}rem \\* var\\(--ib-type\\)\\);`));
+    expect(CODE).toMatch(new RegExp(`--text-${name}:\\s*calc\\(${rem.replace('.', '\\.')}rem \\* var\\(--ib-type\\) / 14\\);`));
   }
+  // Code blocks (Plannotator's fence, copied here) follow it too.
+  expect(CODE).toMatch(/pre code\.pn-code \{[^}]*font-size: var\(--ib-fs-13, 0\.8125rem\);/);
   const layer = /@layer ib-type \{([\s\S]*?)\n\}/.exec(CODE)?.[1] ?? '';
   for (const size of ['12.5', '13', '13.5', '14', '15']) {
     const cls = size.replace('.', '\\\\.');
@@ -98,11 +101,15 @@ test('layout corners are one scale; buttons keep their own', () => {
   expect(CODE).toMatch(/--ib-bt-r-s:\s*var\(--ib-soft-buttons\)\s*10px;/);
 });
 
-test('rows part with no line between them in both modes (the prototype\'s rows)', () => {
+test('rows part with no line between them in both modes (the prototype\'s rows); other lines keep today\'s colour', () => {
   expect(CODE).toMatch(/\.pn-inbox \{[^}]*--ib-soft-rows:\s*;/);
   const light = /:root\.light \.pn-inbox \{([^}]*)\}/.exec(CODE)?.[1] ?? '';
   expect(light).not.toContain('--ib-soft-rows');
   expect(CODE).toMatch(/--ib-row-line-s:\s*var\(--ib-soft-rows\)\s*transparent;/);
   expect(CODE).toMatch(/\.ib-row, \.ib-nrow \{ border-bottom-color: var\(--ib-row-line\); \}/);
   expect(CODE).toMatch(/\.ib-drow \{ border-bottom-color: var\(--ib-row-line\); \}/);
+  // Every other line keeps today's colour: its faint fill has a switch of its own, off.
+  expect(CODE).toMatch(/--ib-soft-lines:\s*initial;/);
+  expect(CODE).toMatch(/--ib-sep-s:\s*var\(--ib-soft-lines\)\s*var\(--ib-fill\);/);
+  expect(CODE).not.toMatch(/var\(--ib-soft-rows\)\s*var\(--ib-fill\)/);
 });

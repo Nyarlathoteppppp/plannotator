@@ -4,8 +4,9 @@
  *
  *  - Mark read's `E` is a keycap inside its borderless button, centred on it;
  *  - a tile's hidden Open holds no room, so a name is never cut more than in
- *    today's look; Open shows over the tile's end on hover and keyboard focus,
- *    and keeps its room on a screen without hover;
+ *    today's look; when Open shows (hover, keyboard focus) it is back in the
+ *    row and the name is cut before it, keeping its end, left to right and
+ *    right to left; a screen without hover keeps its room;
  *  - layout corners one step smaller (panes 10, row pills 8, tiles 10), buttons
  *    unchanged;
  *  - the type knob (`--ib-soft-type`, off by default): 14 px base to 13 with
@@ -32,6 +33,7 @@ const binary = resolve(process.env.PLANNOTATOR_E2E_BINARY ?? join(repo, '.local/
 const proofDir = join(resolve(process.env.PLANNOTATOR_E2E_PROOF_DIR ?? join(repo, '.local/proof')), 'soft-polish');
 
 const LONG = 'refund-worker-artifacts-reconciliation-ledger-october.md';
+const RTL = 'تقرير-مطابقة-دفتر-الأستاذ-لشهر-أكتوبر-النهائي.md';
 const ASK = ['The refund worker needs a call.', '', ':::question', 'Should the worker retry a 409?', '', '- [ ] Retry with the same key', '- [ ] Dead-letter it', ':::'].join('\n');
 
 interface World {
@@ -84,9 +86,10 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   const project = scratchProject(join(root, 'src'), 'billing');
   mkdirSync(join(project, 'docs'), { recursive: true });
   writeFileSync(join(project, 'docs', LONG), '# Reconciliation\n\nThe October ledger, refund by refund.\n');
+  writeFileSync(join(project, 'docs', RTL), '# تقرير\n\nمطابقة دفتر الأستاذ.\n');
   writeFileSync(join(project, 'docs', 'retry-plan.md'), '# Retry plan\n\nRetry once with the same key.\n');
   const claude = await SimAgent.connect({ binary, env, name: 'Claude Code', host: 'claude-code' });
-  const first = await claude.send({ project_path: project, subject: 'Refund worker: retry a 409?', thread: 'refunds', body: ASK, attachments: [`docs/${LONG}`, 'docs/retry-plan.md'] });
+  const first = await claude.send({ project_path: project, subject: 'Refund worker: retry a 409?', thread: 'refunds', body: ASK, attachments: [`docs/${LONG}`, `docs/${RTL}`, 'docs/retry-plan.md'] });
   // Each in a thread of its own (one session's plain sends would share its default thread).
   for (const subject of ['Nightly build is green', 'Ledger ownership', 'Rotate the processor key?', 'Idempotency cache and paging']) {
     await new Promise((r) => setTimeout(r, 15));
@@ -141,6 +144,14 @@ test('beside an open thread the two-line rows have no line either', async () => 
   for (const line of await rows.evaluateAll((els) => els.map((e) => getComputedStyle(e).borderBottomColor))) expect(line).toBe('rgba(0, 0, 0, 0)');
   // The open row's pill reads with no lines around it.
   expect(await page.locator('.ib-nrow.ib-sel').evaluate((e) => getComputedStyle(e, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
+  // Only the rows lose their lines: the thread's own lines (its header's, its foot's) keep today's colour.
+  const lines = () => page.evaluate(() => [getComputedStyle(document.querySelector('.ib-phead')!).borderBottomColor, getComputedStyle(document.querySelector('.ib-pfoot')!).borderTopColor]);
+  const soft = await lines();
+  const back = await todays(page, 'rows');
+  const today = await lines();
+  await back();
+  expect(soft).toEqual(today);
+  expect(soft[0]).not.toBe('rgba(0, 0, 0, 0)');
   await shot(page, '2-thread');
 });
 
@@ -178,42 +189,63 @@ test("Mark read's E is a keycap inside its button, centred on it; today's look k
   await expect(kbd).toHaveText('E');
 });
 
-test("a tile's hidden Open holds no room: the name gets the tile's width, never cut more than today's; Open shows on hover and focus", async () => {
+test("a tile's hidden Open holds no room at rest; when it shows (hover, keyboard focus) the name is cut before it and keeps its end, left to right and right to left", async () => {
   const { page } = world;
   await page.goto(`${world.url}#thread=${world.thread}`);
-  const tile = page.locator(`.ib-atts .ib-att-t:has(.ib-fname[data-name="${LONG}"])`).last();
-  await expect(tile).toBeVisible();
+  await expect(page.locator('[data-mark-read]')).toBeVisible();
+  for (const name of [LONG, RTL]) {
+    const tile = page.locator(`.ib-atts .ib-att-t:has(.ib-fname[data-name="${name}"])`).last();
+    await expect(tile).toBeVisible();
+    await page.mouse.move(700, 880);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    const measure = () =>
+      tile.evaluate((t) => {
+        const text = t.querySelector('.ib-att-text')!.getBoundingClientRect();
+        const name = t.querySelector('.ib-fname')!.getBoundingClientRect();
+        const head = t.querySelector('.ib-fname-h') as HTMLElement;
+        const tail = t.querySelector('.ib-fname-t')!.getBoundingClientRect();
+        const openEl = t.querySelector('.ib-open') as HTMLElement;
+        const open = openEl.getBoundingClientRect();
+        return {
+          shown: head.clientWidth,
+          position: getComputedStyle(openEl).position,
+          opacity: Number(getComputedStyle(openEl).opacity),
+          // The name's end (the extension) and its start are both inside the text box, and Open covers none of it.
+          tailInside: tail.left >= text.left - 0.5 && tail.right <= text.right + 0.5,
+          nameInside: name.left >= text.left - 0.5 && name.right <= text.right + 0.5,
+          clearOfOpen: name.right <= open.left + 0.5 || name.left >= open.right - 0.5,
+          openInside: open.right <= t.getBoundingClientRect().right,
+        };
+      });
+    const rest = await measure();
+    expect(rest.position, name).toBe('absolute');
+    expect(rest.opacity, name).toBe(0);
+    const back = await todays(page, 'surfaces');
+    const today = await measure();
+    await back();
+    expect(today.position).toBe('static');
+    // At rest more of the name shows than in today's look, where Open keeps its room.
+    expect(rest.shown, name).toBeGreaterThan(today.shown);
+    await tile.hover();
+    await expect.poll(async () => (await measure()).opacity).toBe(1);
+    const hovered = await measure();
+    expect(hovered.position, name).toBe('static');
+    expect(hovered, `${name} hovered`).toMatchObject({ tailInside: true, nameInside: true, clearOfOpen: true, openInside: true });
+    // Never cut more than today's look while Open shows.
+    expect(hovered.shown, name).toBeGreaterThanOrEqual(today.shown - 0.5);
+    await page.locator('.ib-atts').last().screenshot({ path: join(proofDir, `4-tiles-hover-${name === LONG ? 'ltr' : 'rtl'}.png`) });
+    // From the keyboard: focus-visible shows Open the same way.
+    await page.mouse.move(700, 880);
+    await expect.poll(async () => (await measure()).opacity).toBe(0);
+    await tile.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await expect(tile).toBeFocused();
+    await expect.poll(async () => (await measure()).opacity).toBe(1);
+    expect(await measure(), `${name} focused`).toMatchObject({ position: 'static', tailInside: true, nameInside: true, clearOfOpen: true });
+  }
   await page.mouse.move(700, 880);
-  const measure = () =>
-    tile.evaluate((t) => {
-      const head = t.querySelector('.ib-fname-h') as HTMLElement;
-      const open = t.querySelector('.ib-open') as HTMLElement;
-      const tr = t.getBoundingClientRect();
-      const or = open.getBoundingClientRect();
-      return { shown: head.clientWidth, position: getComputedStyle(open).position, opacity: Number(getComputedStyle(open).opacity), openInside: or.left >= tr.left && or.right <= tr.right };
-    });
-  const soft = await measure();
-  expect(soft.position).toBe('absolute');
-  expect(soft.opacity).toBe(0);
-  const back = await todays(page, 'surfaces');
-  const today = await measure();
-  await back();
-  expect(today.position).toBe('static');
-  // More of the name shows than in today's look, where Open keeps its room.
-  expect(soft.shown).toBeGreaterThan(today.shown);
   await page.locator('.ib-atts').last().screenshot({ path: join(proofDir, '4-tiles-rest.png') });
-  await tile.hover();
-  await expect.poll(async () => (await measure()).opacity).toBe(1);
-  expect((await measure()).openInside).toBe(true);
-  await page.locator('.ib-atts').last().screenshot({ path: join(proofDir, '4-tiles-hover.png') });
-  await page.mouse.move(700, 880);
-  await expect.poll(async () => (await measure()).opacity).toBe(0);
-  await tile.focus();
-  await page.keyboard.press('Shift');
-  // Focus from the keyboard: focus-visible shows Open.
-  await page.keyboard.press('Shift+Tab');
-  await page.keyboard.press('Tab');
-  await expect.poll(async () => (await measure()).opacity).toBe(1);
 });
 
 test('layout corners are one step smaller; buttons keep theirs', async () => {

@@ -28,7 +28,8 @@
    (2026-10-16): today's ground, selected row and section band in both modes; Soft's badges, fewer accents and
    question card in both; the sidebar's current item and quiet text today's in light, Soft's in dark. The lines
    between rows were today's in that study; the owner has since asked for the prototype's rows with no line
-   between them (2026-10-17), so --ib-soft-rows is on in both modes. Everything that is not a colour is Soft
+   between them (2026-10-17), so --ib-soft-rows is on in both modes; every other line keeps today's colour
+   (--ib-soft-lines, off). Everything that is not a colour is Soft
    (2026-10-17: "I want the soft look to be its own thing"), at today's spacing and row pitch (2026-10-16): the
    floating panes and their gutters, corners, floating surfaces, hovers, chips, the thread's header buttons,
    foot and Accept, raised surfaces, buttons, the Light / Dark / System control, Settings' groups and
@@ -39,7 +40,8 @@
   /* Colours (the blind rounds; the rows' lines since asked away, see above). */
   --ib-soft-ground: initial;     /* Soft's tinted ground under the panes (today's: the palette's background, the colour today's sidebar paints) */
   --ib-soft-selection: initial;  /* the open row: a neutral fill (today's: the accent's tint) */
-  --ib-soft-rows: ;              /* rows part by space, no line between them, as the prototype draws them; other lines take the faint fill (today's: hairlines and rules) */
+  --ib-soft-rows: ;              /* inbox items part by space, no line between them, as the prototype draws them: the list's rows, the two-line rows, a phone's rows, the Decisions rows (today's: hairlines) */
+  --ib-soft-lines: initial;      /* every other line (the thread header's, the foot's, between messages, Settings' rows, the file view, What's new) the faint fill (today's: the palette's hairlines and rules, the owner's ruling) */
   --ib-soft-band: initial;       /* section bands on the raised surface (today's: the muted band) */
   --ib-soft-badges: ;            /* Stopped and Holds up: tinted pills (today's: outlined badges) */
   --ib-soft-accents: ;           /* fewer accents: the decision tag, links, Reply, a tile's Open (today's: the accent) */
@@ -222,29 +224,29 @@
   /* Floating surfaces (--ib-soft-float): Soft's shadow with no outline. Used as var(<token>, <today's>). */
   --ib-float-s: var(--ib-soft-float) var(--ib-float-shadow);
   --ib-float-line-s: var(--ib-soft-float) transparent;
-  /* Type (--ib-soft-type): one knob. --ib-type scales every size the window sets from its 14 px base (13 / 14
-     when on, 1 when off), and ui's drawing inside it through its type scale (below); a size never goes under
+  /* Type (--ib-soft-type): one knob. --ib-type is the window's base size in px, 14 (today's) or 13 when on, and
+     every size the window sets is N px * --ib-type / 14 (exact: 14 px is 13 px on, N px off), and ui's drawing inside it through its type scale (below); a size never goes under
      12 px, and sizes already under 12 px are left as they are. Phone inputs keep 16 px (iOS zooms under it).
      Used as font-size: var(--ib-fs-N, Npx); off, each is exactly today's N px. Row and control heights keep
      today's pitch, so phones keep their 44 px targets. */
-  --ib-type-s: var(--ib-soft-type) 0.92857;
-  --ib-type: var(--ib-type-s, 1);
-  --ib-fs-12-5: max(12px, calc(12.5px * var(--ib-type)));
-  --ib-fs-13: max(12px, calc(13px * var(--ib-type)));
-  --ib-fs-13-5: max(12px, calc(13.5px * var(--ib-type)));
-  --ib-fs-14: max(12px, calc(14px * var(--ib-type)));
-  --ib-fs-14-5: max(12px, calc(14.5px * var(--ib-type)));
-  --ib-fs-15: max(12px, calc(15px * var(--ib-type)));
-  --ib-fs-15-5: max(12px, calc(15.5px * var(--ib-type)));
-  --ib-fs-16: max(12px, calc(16px * var(--ib-type)));
-  --ib-fs-17: max(12px, calc(17px * var(--ib-type)));
-  --ib-fs-18: max(12px, calc(18px * var(--ib-type)));
-  --ib-fs-20: max(12px, calc(20px * var(--ib-type)));
-  --ib-fs-22: max(12px, calc(22px * var(--ib-type)));
-  --ib-fs-24: max(12px, calc(24px * var(--ib-type)));
-  --ib-fs-30: max(12px, calc(30px * var(--ib-type)));
-  --ib-fs-32: max(12px, calc(32px * var(--ib-type)));
-  --ib-fs-34: max(12px, calc(34px * var(--ib-type)));
+  --ib-type-s: var(--ib-soft-type) 13;
+  --ib-type: var(--ib-type-s, 14);
+  --ib-fs-12-5: max(12px, calc(12.5px * var(--ib-type) / 14));
+  --ib-fs-13: max(12px, calc(13px * var(--ib-type) / 14));
+  --ib-fs-13-5: max(12px, calc(13.5px * var(--ib-type) / 14));
+  --ib-fs-14: max(12px, calc(14px * var(--ib-type) / 14));
+  --ib-fs-14-5: max(12px, calc(14.5px * var(--ib-type) / 14));
+  --ib-fs-15: max(12px, calc(15px * var(--ib-type) / 14));
+  --ib-fs-15-5: max(12px, calc(15.5px * var(--ib-type) / 14));
+  --ib-fs-16: max(12px, calc(16px * var(--ib-type) / 14));
+  --ib-fs-17: max(12px, calc(17px * var(--ib-type) / 14));
+  --ib-fs-18: max(12px, calc(18px * var(--ib-type) / 14));
+  --ib-fs-20: max(12px, calc(20px * var(--ib-type) / 14));
+  --ib-fs-22: max(12px, calc(22px * var(--ib-type) / 14));
+  --ib-fs-24: max(12px, calc(24px * var(--ib-type) / 14));
+  --ib-fs-30: max(12px, calc(30px * var(--ib-type) / 14));
+  --ib-fs-32: max(12px, calc(32px * var(--ib-type) / 14));
+  --ib-fs-34: max(12px, calc(34px * var(--ib-type) / 14));
   /* Hovers and fades (--ib-soft-hover). Today's fade is ui's global one (packages/ui/theme.css `*`). */
   --ib-ui-fade: color 150ms cubic-bezier(0.4, 0, 0.2, 1), background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --ib-hover-s: var(--ib-soft-hover) var(--ib-hover);
@@ -319,14 +321,14 @@
    layer after Tailwind's utilities so the window's own rules still win over them, as today. ui's sizes under
    12 px (text-xs and smaller) and its 16 px inputs are left alone. Off, every value is ui's own. */
 .pn-inbox {
-  --text-sm: calc(0.875rem * var(--ib-type));
-  --text-base: calc(1rem * var(--ib-type));
-  --text-lg: calc(1.0625rem * var(--ib-type));
-  --text-xl: calc(1.1875rem * var(--ib-type));
-  --text-2xl: calc(1.375rem * var(--ib-type));
-  --text-3xl: calc(1.625rem * var(--ib-type));
-  --text-4xl: calc(1.875rem * var(--ib-type));
-  --text-5xl: calc(2rem * var(--ib-type));
+  --text-sm: calc(0.875rem * var(--ib-type) / 14);
+  --text-base: calc(1rem * var(--ib-type) / 14);
+  --text-lg: calc(1.0625rem * var(--ib-type) / 14);
+  --text-xl: calc(1.1875rem * var(--ib-type) / 14);
+  --text-2xl: calc(1.375rem * var(--ib-type) / 14);
+  --text-3xl: calc(1.625rem * var(--ib-type) / 14);
+  --text-4xl: calc(1.875rem * var(--ib-type) / 14);
+  --text-5xl: calc(2rem * var(--ib-type) / 14);
 }
 @layer ib-type {
   .pn-inbox .text-\[12\.5px\] { font-size: var(--ib-fs-12-5, 12.5px); }
@@ -1364,7 +1366,7 @@ pre code.pn-code {
   padding: 1rem;
   border-radius: var(--radius);
   background: var(--code-bg) !important;
-  font-size: 0.8125rem;
+  font-size: var(--ib-fs-13, 0.8125rem);
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2960,13 +2962,13 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
    Every declaration is `var(<switch token>, <today's value>)`: today's is the window's own rule above, or ui's
    for ui's drawing (the question card), named. A property today never declared has no fallback: off, it is
    unset, which is what today has (inherited, or the initial value). */
-/* Switch tokens the thread reads. Lines: --ib-soft-rows. The question card, everything inside it included:
+/* Switch tokens the thread reads. Lines (other than between rows): --ib-soft-lines. The question card, everything inside it included:
    --ib-soft-card. Accents: --ib-soft-accents. Header buttons: --ib-soft-hbtns. The foot's pill buttons, the
    reply box and its chips: --ib-soft-foot. Accept recommended: --ib-soft-accept. Raised surfaces in the thread
    (attachment tiles, the read line, the route chooser, the fold): --ib-soft-surfaces. Radii, floating surfaces
    and hovers: the shell's --ib-soft-shape, -float and -hover. */
 .pn-inbox {
-  --ib-sep-s: var(--ib-soft-rows) var(--ib-fill);
+  --ib-sep-s: var(--ib-soft-lines) var(--ib-fill);
   --ib-qc-border-s: var(--ib-soft-card) transparent;
   --ib-qc-r-s: var(--ib-soft-card) var(--ib-lr-xl);
   --ib-qc-bg-s: var(--ib-soft-card) var(--ib-raise);
@@ -3049,14 +3051,10 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   --ib-sf-fi-s: var(--ib-soft-surfaces) var(--card);
   --ib-sf-open-o-s: var(--ib-soft-surfaces) 0;
   --ib-sf-open-fade-s: var(--ib-soft-surfaces) opacity 140ms ease-out;
-  /* While Open is hidden at rest it holds no room: it is laid over the tile's end (below). */
+  /* While Open is hidden at rest it holds no room; it is back in the row the moment it shows (below). */
   --ib-sf-open-host-s: var(--ib-soft-surfaces) relative;
   --ib-sf-open-pos-s: var(--ib-soft-surfaces) absolute;
-  --ib-sf-open-d-s: var(--ib-soft-surfaces) flex;
-  --ib-sf-open-pl-s: var(--ib-soft-surfaces) 28px;
-  --ib-sf-open-pr-s: var(--ib-soft-surfaces) 12px;
-  --ib-sf-open-pr-w-s: var(--ib-soft-surfaces) 40px;
-  --ib-sf-open-mr-s: var(--ib-soft-surfaces) 0px;
+  --ib-sf-open-inset-s: var(--ib-soft-surfaces) 0;
   --ib-sf-beside-bg-s: var(--ib-soft-surfaces) color-mix(in oklch, var(--primary) 9%, var(--card));
   --ib-sf-beside-ring-s: var(--ib-soft-surfaces) inset 0 0 0 1px color-mix(in oklch, var(--primary) 30%, transparent);
   --ib-sf-guide-s: var(--ib-soft-surfaces) color-mix(in oklch, var(--primary) 12%, var(--card));
@@ -3174,21 +3172,14 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-att-t .ib-open { color: var(--ib-calm-s, var(--primary)); opacity: var(--ib-sf-open-o-s, 1); transition: var(--ib-sf-open-fade-s, var(--ib-ui-fade)); }
 .ib-att-t:is(:hover, :focus-visible, .ib-open-beside) .ib-open { opacity: 1; }
 @media (hover: none) { .ib-att-t .ib-open { opacity: 1; } }
-/* The name keeps the tile's whole width while Open is hidden (Soft, a screen with hover): Open is laid over the
-   tile's end, the tile's own colour fading in under it, so a name is never cut more than today's and Open shows
-   on hover or focus without moving anything. Where Open always shows (the file open beside, a screen without
-   hover) it keeps its own room, as today. Off, every value falls back to today's (Open in the row). */
+/* The name keeps the tile's whole width while Open is hidden (Soft, a screen with hover): at rest Open is taken
+   out of the row, invisible over the tile's end. The moment it shows (the tile hovered or focused from the
+   keyboard, or the ⋯ beside it) it is back in the row, so the name is cut again before it and keeps its end
+   (the date, the extension) in either direction. Where Open always shows (the file open beside, a screen without
+   hover) it keeps its room, as today. Off, nothing here applies (each value is unset, today's). */
 @media (hover: hover) {
-  .ib-att-t:not(.ib-open-beside) { position: var(--ib-sf-open-host-s); --ib-tile-now: var(--ib-sf-bg-s); }
-  .ib-att-t:not(.ib-open-beside):hover { --ib-tile-now: var(--ib-sf-tile-hover-s); }
-  .ib-att-t:not(.ib-open-beside):active { --ib-tile-now: var(--ib-sf-tile-active-s); }
-  .ib-att-t:not(.ib-open-beside) .ib-open {
-    --ib-sf-open-bg-s: var(--ib-soft-surfaces) linear-gradient(to right, transparent, var(--ib-tile-now) 22px);
-    position: var(--ib-sf-open-pos-s); top: 0; bottom: 0; right: 0; display: var(--ib-sf-open-d-s); align-items: center;
-    padding-left: var(--ib-sf-open-pl-s, 14px); padding-right: var(--ib-sf-open-pr-s, 0px); margin-right: var(--ib-sf-open-mr-s, 0px);
-    background: var(--ib-sf-open-bg-s); border-top-right-radius: inherit; border-bottom-right-radius: inherit;
-  }
-  .ib-att-w > .ib-att-t:not(.ib-open-beside) .ib-open { padding-right: var(--ib-sf-open-pr-w-s, 0px); margin-right: var(--ib-sf-open-mr-s, 28px); }
+  .ib-att-t:not(.ib-open-beside, :hover, :focus-visible, .ib-att-w:hover > *, .ib-att-w:focus-within > *) { position: var(--ib-sf-open-host-s); }
+  .ib-att-t:not(.ib-open-beside, :hover, :focus-visible, .ib-att-w:hover > *, .ib-att-w:focus-within > *) .ib-open { position: var(--ib-sf-open-pos-s); top: var(--ib-sf-open-inset-s); right: var(--ib-sf-open-inset-s); }
 }
 .ib-att-t.ib-open-beside { border-color: var(--ib-sf-line-s, color-mix(in oklch, var(--primary) 55%, var(--border))); background: var(--ib-sf-beside-bg-s, color-mix(in oklch, var(--primary) 6%, var(--card))); box-shadow: var(--ib-sf-beside-ring-s, none); }
 .ib-att-t.ib-guide .ib-fi { background: var(--ib-sf-guide-s, color-mix(in oklch, var(--primary) 12%, transparent)); }
