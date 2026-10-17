@@ -399,11 +399,11 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 /* The Soft paint on the list (owner, 2026-10-16: Soft modernizes today's Inbox, it does not relayout it). Every
    rule here changes colour, surface, radius or face only: rows, bands, chips and badges keep today's sizes,
    columns and places. A border that goes keeps its width in a transparent colour, so no box moves. */
-.ib-band { background: transparent; color: var(--ib-quiet-fg); border-radius: 10px; }
-.ib-band .ib-n, .ib-band .ib-ic { color: inherit; }
+.ib-band { background: var(--ib-raise); color: var(--ib-raise-fg); border-radius: 10px; }
+.ib-band .ib-n, .ib-band .ib-ic { color: var(--ib-raise-mfg); }
 .ib-band .ib-n { font-weight: 450; }
-button.ib-band { transition: background-color 140ms ease-out, color 140ms ease-out; }
-button.ib-band:hover { background: var(--ib-hover); color: var(--foreground); }
+button.ib-band { transition: background-color 140ms ease-out; }
+button.ib-band:hover { background: color-mix(in oklch, var(--muted) 70%, var(--card)); }
 /* Rows part by space, not rules. */
 .ib-row, .ib-nrow { border-bottom-color: transparent; }
 :is(.ib-row, .ib-nrow, button.ib-drow)::before { border-radius: 10px; }
@@ -2539,7 +2539,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 
 /* The Soft paint on a phone's list: today's rows and sticky section headers, rows parted by space. */
 @media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
-  .ib-lbody .ib-band { background: var(--card); }
+  .ib-lbody .ib-band { background: var(--ib-raise); }
   .ib-mrow { border-bottom-color: transparent; }
   .ib-mrow:active { background: var(--ib-hover); }
 }
