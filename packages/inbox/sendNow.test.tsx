@@ -178,11 +178,19 @@ test.skipIf(!hasDom)('idle: "Sending to Claude Code…"; after Send now: "Sendin
   expect(line(el).textContent).toStartWith('Delivered to Claude Code, ');
 });
 
-test.skipIf(!hasDom)('an agent that only reads the thread: the truthful wording, no Send now', async () => {
-  connection = { busy: true, idle_since: null, send_now: true };
+test.skipIf(!hasDom)('an agent that only reads the thread (no connection polls for it): the truthful wording, no Send now', async () => {
+  connection = null;
   const el = await render(thread({ wakes: false }));
   expect(line(el).textContent).toBe('Saved for Claude Code. It sees it when it next reads this thread.');
   expect(el.querySelector('[data-send-now]')).toBeNull();
+});
+
+test.skipIf(!hasDom)('a message sent without the wake mark from a session whose connection polls (the shim inside Claude Code): queued, with Send now', async () => {
+  connection = { busy: true, idle_since: null, send_now: true };
+  const el = await render(thread({ wakes: false }));
+  expect(line(el).getAttribute('data-delivery')).toBe('queued');
+  expect(line(el).textContent).toContain('Queued · Claude Code is working');
+  expect(el.querySelector('[data-send-now]')).not.toBeNull();
 });
 
 test.skipIf(!hasDom)('Send now refused (the connection went away): the reason shows, and the line stays', async () => {

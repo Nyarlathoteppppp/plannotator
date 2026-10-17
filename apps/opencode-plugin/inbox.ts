@@ -52,6 +52,14 @@ export const RUNNING_CROSS_CHECK_MS = 20_000;
 const IDLE_PROBE_MS = 300;
 /** Marks the wake's prompt in the session. */
 const INBOX_PROMPT_SOURCE = "plannotator-inbox";
+/**
+ * Send now: after the run a steer row was sent into ends, how long OpenCode
+ * may still take to deliver it before the wake sends it as a queued turn
+ * instead (an idle session may not promote a pending steer row, #1734).
+ */
+export const STEER_IDLE_GRACE_MS = 3_000;
+/** The longest a steer row may wait for its run's next step before the wake gives up on it. */
+export const STEER_CONFIRM_MAX_MS = 10 * 60_000;
 
 /** The Inbox connection for this OpenCode process, or null when the switch is off or no Inbox was found. */
 export async function findInboxConnection(): Promise<InboxAgentConnection | null> {
@@ -181,6 +189,8 @@ class OpenCode2Wakes {
   private readonly seen = new Set<string>();
   private readonly controller = new AbortController();
   private eventsAvailable = false;
+  /** Send now: steer rows waiting for `session.inbox.delivered`, by row id. */
+  private readonly steering = new Map<string, { sessionID: string; settle: (delivered: boolean) => void; grace: ReturnType<typeof setTimeout> | null }>();
 
   constructor(
     private readonly v2: V2ContextLike,
@@ -201,7 +211,29 @@ class OpenCode2Wakes {
     })();
   }
 
+  /** Resolves true when the steer row `id` is delivered, false when its run ended without it (after the grace) or after the cap. */
+  private awaitSteer(sessionID: string, id: string): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const cap = setTimeout(() => entry.settle(false), STEER_CONFIRM_MAX_MS);
+      const entry = {
+        sessionID,
+        grace: null as ReturnType<typeof setTimeout> | null,
+        settle: (delivered: boolean) => {
+          if (this.steering.get(id) !== entry) return;
+          this.steering.delete(id);
+          clearTimeout(cap);
+          if (entry.grace) clearTimeout(entry.grace);
+          resolve(delivered);
+        },
+      };
+      this.steering.set(id, entry);
+      // Not running any more (the run ended between the busy check and now): the grace starts at once.
+      if (!this.state(sessionID).running) entry.grace = setTimeout(() => entry.settle(false), STEER_IDLE_GRACE_MS);
+    });
+  }
+
   dispose(): void {
+    for (const entry of [...this.steering.values()]) entry.settle(false);
     this.controller.abort();
     for (const wake of this.wakes.values()) wake.dispose();
     this.wakes.clear();
@@ -232,6 +264,8 @@ class OpenCode2Wakes {
   private onEvent(event: unknown): void {
     if (!event || typeof event !== "object") return;
     const { type, data } = event as { type?: unknown; data?: Record<string, unknown> };
+    // A steer row Send now sent entered the model context: delivered.
+    if (type === "session.inbox.delivered" && typeof data?.inboxID === "string") this.steering.get(data.inboxID)?.settle(true);
     const sessionID = typeof data?.sessionID === "string" ? data.sessionID : null;
     if (typeof type !== "string" || !sessionID) return;
     const state = this.state(sessionID);
@@ -245,6 +279,10 @@ class OpenCode2Wakes {
       case "session.execution.failed":
       case "session.execution.interrupted":
         state.running = false;
+        // A steer row of this session not delivered yet: OpenCode may still promote it; past the grace, it is sent queued.
+        for (const entry of this.steering.values()) {
+          if (entry.sessionID === sessionID && !entry.grace) entry.grace = setTimeout(() => entry.settle(false), STEER_IDLE_GRACE_MS);
+        }
         return;
       case "session.inbox.enqueued":
         // A prompt is entering the session (the person, another plugin, or
@@ -309,15 +347,22 @@ class OpenCode2Wakes {
         await prompt({ sessionID, id: createOpenCodeMessageId(), text, delivery: "queue", metadata: { source: INBOX_PROMPT_SOURCE } });
       },
       // Send now while a run is going (the person pressed it in the Inbox): a
-      // steer joins that run at its next step. Only while it runs: an idle
-      // session gets the queued turn above (an idle session promotes pending
-      // steer rows alone, #1734).
+      // steer joins that run at its next step. It counts as delivered only on
+      // `session.inbox.delivered` for that row; when the run ends first and
+      // OpenCode does not promote the row within the grace (#1734), it goes
+      // in as a queued turn instead. Only while the event stream runs, which
+      // is how the delivery is seen.
       ...(typeof this.v2.session?.prompt === "function"
         ? {
+            canSteer: () => this.eventsAvailable,
             steer: async (text: string) => {
               const prompt = this.v2.session?.prompt;
               if (typeof prompt !== "function") throw new Error("this OpenCode cannot receive a prompt from a plugin");
-              await prompt({ sessionID, id: createOpenCodeMessageId(), text, delivery: "steer", metadata: { source: INBOX_PROMPT_SOURCE } });
+              const id = createOpenCodeMessageId();
+              const delivered = this.awaitSteer(sessionID, id);
+              await prompt({ sessionID, id, text, delivery: "steer", metadata: { source: INBOX_PROMPT_SOURCE } });
+              if (await delivered) return;
+              await prompt({ sessionID, id: createOpenCodeMessageId(), text, delivery: "queue", metadata: { source: INBOX_PROMPT_SOURCE } });
             },
           }
         : {}),

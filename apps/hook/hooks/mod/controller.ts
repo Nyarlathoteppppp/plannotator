@@ -348,6 +348,11 @@ export class PlannotatorMod {
           sessionId: session.sessionId,
           tools: session.inboxTools,
           isBusy: () => this.turns.busy,
+          // Send now goes into a running main turn, never into this session's own Ask question.
+          steerableTurn: () => {
+            const turn = this.turns.runningTurn
+            return turn !== null && !this.turns.ownsTurn(turn) ? turn : null
+          },
           ...(session.cwd ? { cwd: session.cwd } : {}),
           instanceId: this.instanceId,
         })
@@ -1556,8 +1561,8 @@ export class PlannotatorMod {
   }
 
   /** A main-loop model request is about to go out (every turn.step without an agent id), from register.ts. */
-  onMainStep(_turnId: string): void {
-    this.inbox?.onMainStep()
+  onMainStep(turnId: string): void {
+    this.inbox?.onMainStep(turnId)
   }
 
   /** A model request of a turn is about to go out (turn.step), from register.ts. */
@@ -1586,7 +1591,7 @@ export class PlannotatorMod {
   onTurnComplete(turnId: string, answer: string, aborted: boolean): void {
     this.host.debug(`turn.complete ${turnId}${aborted ? ' (aborted)' : ''}: ${answer.length} chars`)
     this.turns.onTurnComplete(turnId, answer, aborted)
-    this.inbox?.onMainTurnComplete()
+    this.inbox?.onMainTurnComplete(turnId)
     this.pushBridgeStatus()
   }
 

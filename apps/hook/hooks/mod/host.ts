@@ -61,6 +61,13 @@ export interface Host {
    * (tests) that model an engine without it.
    */
   appendUserRow?(text: string): Promise<void>
+  /**
+   * Whether this engine has `$.session.append` (a build that documents it;
+   * `claude plugin validate` refuses reading `$.session.append` as a value,
+   * so it is decided from the engine's version). Absent or false: Send now
+   * is never advertised.
+   */
+  sessionAppendAvailable?(): Promise<boolean>
   /** `$.session.append` of a notice the transcript shows and the model never reads. */
   appendNotice?(text: string): Promise<void>
   suggest(text: string): Promise<void>

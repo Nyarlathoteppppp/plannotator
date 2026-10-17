@@ -34,7 +34,7 @@
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
@@ -359,6 +359,12 @@ export interface InboxWakeTarget {
    * and the window never offers Send now for its sessions.
    */
   steer?(text: string, command: InboxReplyCommand): Promise<void>;
+  /**
+   * Whether `steer` can work right now (OpenCode 2: only while its event
+   * stream runs, which is how a steer's delivery is confirmed). Absent: as
+   * long as `steer` exists.
+   */
+  canSteer?(): boolean;
   /** A line for the person, outside the model's context (a toast, a notice). */
   notify(message: string): void;
   /**
@@ -387,6 +393,8 @@ export class InboxWake {
   private readonly abort = new AbortController();
   /** Handed out by the Inbox and not yet settled here, in arrival order. */
   private readonly pending = new Map<string, InboxReplyCommand>();
+  /** Send now could not go into the running turn: these wait for idle, as before. */
+  private readonly noSteer = new Set<string>();
   /** Settled here: delivered, claimed by another process, or reported. */
   private readonly settled = new Set<string>();
   /** Delivered, not yet acknowledged to the Inbox. */
@@ -493,16 +501,22 @@ export class InboxWake {
     if (now - this.leaseCheckedAt >= INBOX_LEASE_EVERY_MS) this.holdLease(now);
     if (!this.leader) return;
     if (!this.polling && now >= this.retryAt) void this.poll();
-    // Send now: a command the person asked to deliver at once goes in without waiting for two idle ticks.
-    const urgent = [...this.pending.values()].find((command) => command.now === true) ?? null;
+    // Send now: once the person asked for one, the waiting replies go in without waiting for two idle
+    // ticks, oldest first (an urgent reply never overtakes an older one to the same session).
+    const urgent = [...this.pending.values()].some((command) => command.now === true && !this.noSteer.has(command.id));
     if (!this.delivering && this.pending.size > 0 && (this.idleTicks >= 2 || urgent)) {
       this.delivering = true;
       try {
-        await this.deliverNext(this.idleTicks >= 2 ? null : urgent);
+        await this.deliverNext(this.idleTicks < 2 && urgent);
       } finally {
         this.delivering = false;
       }
     }
+  }
+
+  /** `steer` exists and can work now. */
+  private get steerable(): boolean {
+    return typeof this.target.steer === "function" && (this.target.canSteer?.() ?? true);
   }
 
   /** A turn started or ended: the Inbox's live sessions say so (a `state` event, as the Claude Code mod posts). */
@@ -538,7 +552,7 @@ export class InboxWake {
         ...(typeof projectPath === "string" && projectPath ? { project_path: projectPath } : {}),
         started_at: this.startedAt,
         ...(this.busy === null ? {} : { busy: this.busy, idle_since: this.idleSince }),
-        ...(this.target.steer ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
+        ...(this.steerable ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
       },
       signal,
     );
@@ -574,12 +588,12 @@ export class InboxWake {
   }
 
   /**
-   * Deliver the oldest waiting reply as a turn, once; `urgent` (Send now,
-   * the session not idle for two ticks yet): that one, into the running turn
-   * when one runs.
+   * Deliver the oldest waiting reply as a turn, once; `urgent` (the person
+   * pressed Send now, the session not idle for two ticks yet): into the
+   * running turn when one runs (`steer`), else as a turn at once.
    */
-  private async deliverNext(urgent: InboxReplyCommand | null = null): Promise<void> {
-    const command = urgent ?? (this.pending.values().next().value as InboxReplyCommand | undefined);
+  private async deliverNext(urgent = false): Promise<void> {
+    const command = this.pending.values().next().value as InboxReplyCommand | undefined;
     if (!command) return;
     // Still waiting? An agent may have read it through the tool meanwhile, or
     // another process delivered it.
@@ -590,7 +604,8 @@ export class InboxWake {
       return;
     }
     const busy = await this.target.isBusy();
-    if (busy && !(urgent && this.target.steer)) {
+    const steering = busy && urgent && this.steerable;
+    if (busy && !steering) {
       this.idleTicks = 0;
       return;
     }
@@ -605,9 +620,29 @@ export class InboxWake {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") this.settle(command.id);
       return;
     }
+    if (steering) {
+      try {
+        await this.target.steer!(inboxWakeText(command), command);
+      } catch {
+        // It did not go into the running turn: give the claim back, and the
+        // reply reads as queued again and waits for idle, as before.
+        try {
+          rmSync(claim, { recursive: true, force: true });
+        } catch {
+          // A leftover claim: this instance cannot take it again; another process reports it.
+        }
+        this.noSteer.add(command.id);
+        void this.connection.bridge(INBOX_BRIDGE_EVENT_PATH, this.sessionId, { type: "send_now_failed", id: command.id }).catch(() => null);
+        return;
+      }
+      writeQuietly(join(claim, "delivered"), new Date().toISOString());
+      this.settle(command.id);
+      this.unacked.add(command.id);
+      await this.acknowledge(command.id);
+      return;
+    }
     try {
-      if (busy && this.target.steer) await this.target.steer(inboxWakeText(command), command);
-      else await this.target.deliver(inboxWakeText(command), command);
+      await this.target.deliver(inboxWakeText(command), command);
     } catch (error) {
       this.settle(command.id);
       writeQuietly(join(claim, "reported"), "1");

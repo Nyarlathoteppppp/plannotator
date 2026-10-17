@@ -151,6 +151,23 @@ describe("Send now through the server", () => {
     expect(((await late.json()) as { code: string }).code).toBe("already_delivered");
   });
 
+  test("`now` goes only to a connection that said it can; one that cannot take it mid-turn says so and the mark goes (the line reads queued again)", async () => {
+    const { server, client, project } = await setup();
+    const asked = await agentSends(client, project, "ses-a", "Done.");
+    await poll(server, "ses-a", project, { busy: true, [INBOX_SEND_NOW_POLL_FIELD]: true });
+    const sent = await reply(server, asked.message_id, "Next.");
+    expect((await sendNow(server, sent.id)).status).toBe(200);
+    // A poll without the field (the same session from a connection that cannot steer): no `now`.
+    const plain = await poll(server, "ses-a", project, { busy: true });
+    expect(plain[0]!.now).toBeUndefined();
+    // The engine refused the row: the mark goes, and only that session may say so.
+    expect((await bridge(server, INBOX_BRIDGE_EVENT_PATH, { session: "ses-other", host: "claude-code", type: "send_now_failed", id: sent.id })).status).toBe(422);
+    expect((await bridge(server, INBOX_BRIDGE_EVENT_PATH, { session: "ses-a", host: "claude-code", type: "send_now_failed", id: sent.id })).status).toBe(200);
+    expect((await thread(server, asked.thread_id)).messages.at(-1)!.deliver_now_at).toBeNull();
+    const after = await poll(server, "ses-a", project, { busy: true, [INBOX_SEND_NOW_POLL_FIELD]: true });
+    expect(after[0]!.now).toBeUndefined();
+  });
+
   test("a held poll answers at once when the person presses Send now", async () => {
     const { server, client, project } = await setup();
     const asked = await agentSends(client, project, "ses-a", "Done with the export.");

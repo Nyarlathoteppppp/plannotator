@@ -2541,6 +2541,24 @@ export class InboxStore {
     return next;
   }
 
+  /**
+   * The session's connection could not put a Send now reply into the running
+   * turn (the engine refused it): the mark goes, so the window reads it as
+   * queued again and the reply waits for idle as before. Only the session it
+   * goes to may say so; a delivered reply or one without the mark is left as
+   * it is.
+   */
+  clearDeliverNow(messageId: string, session: string): InboxMessage {
+    const message = this.messages.get(messageId);
+    if (!message) throw new InboxError("message_not_found", `No message ${messageId}.`);
+    if (!this.isFor(message, session)) throw new InboxError("validation_error", "session: this message goes to another session.", { field: "session" });
+    if (message.delivery || !message.deliver_now_at) return message;
+    const at = this.stamp();
+    const next: InboxMessage = { ...message, deliver_now_at: null };
+    this.appendMessage(next, at);
+    return next;
+  }
+
   /** The blobs the store's messages use (attachments and guided reviews): the upload sweep keeps them. */
   usedBlobs(): Set<string> {
     const used = new Set<string>();

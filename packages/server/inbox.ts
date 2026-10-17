@@ -90,6 +90,7 @@ import {
   INBOX_BRIDGE_POLL_MAX_MS,
   INBOX_BRIDGE_POLL_PATH,
   INBOX_MAX_REQUEST_BYTES,
+  INBOX_SEND_NOW_POLL_FIELD,
   type InboxReplyCommand,
 } from "@plannotator/shared/inbox/connection";
 import {
@@ -1239,7 +1240,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
   // out again on every poll until it is delivered or an agent read it, and it
   // survives an Inbox restart.
   const threadPageUrl = (base: string, threadId: string) => `${base}#thread=${threadId}`;
-  const replyCommand = (reply: InboxMessage): InboxReplyCommand => {
+  /** `sendNow`: the polling connection said it can deliver into a running turn; only then does a Send now reply carry `now`. */
+  const replyCommand = (reply: InboxMessage, sendNow = false): InboxReplyCommand => {
     // A reply the person sent to another session because the one that asked
     // had ended: the wake says so, naming the agent that asked.
     const asked = reply.to && reply.reply_to ? store.message(reply.reply_to) : null;
@@ -1275,7 +1277,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       ...(reply.started_by_person && reply.thread_id === reply.id ? { new_thread: true } : {}),
       ...(continues && !redirected ? { continues_thread: true } : {}),
       // Send now: the connection delivers it at once, into the running turn when one runs.
-      ...(reply.deliver_now_at ? { now: true } : {}),
+      ...(reply.deliver_now_at && sendNow ? { now: true } : {}),
     };
   };
 
@@ -1293,7 +1295,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     const waitMs = Math.min(Math.max(requested, 0), INBOX_BRIDGE_POLL_MAX_MS);
     // Step 8: a polling session is live (New message can reach it) while its poll is held.
     const answered = await live.pollStarted(session, bridgeHost(body), body);
-    const commands = () => store.pendingReplies(session).map(replyCommand);
+    const sendNow = body[INBOX_SEND_NOW_POLL_FIELD] === true;
+    const commands = () => store.pendingReplies(session).map((reply) => replyCommand(reply, sendNow));
     const now = commands();
     if (now.length > 0 || waitMs === 0) {
       answered();
@@ -1331,6 +1334,11 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     const host = bridgeHost(body);
     if (body.type === "state") {
       live.stateChanged(session, host, body);
+      return json({ ok: true });
+    }
+    // Send now could not go into the running turn: the reply reads as queued again and waits for idle.
+    if (body.type === "send_now_failed" && typeof body.id === "string") {
+      store.clearDeliverNow(body.id, session);
       return json({ ok: true });
     }
     if (body.type !== "delivered" || typeof body.id !== "string") {

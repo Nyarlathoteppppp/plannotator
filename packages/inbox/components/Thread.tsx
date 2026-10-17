@@ -1687,8 +1687,11 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   // The session the person's last reply goes to, when its connection wakes it: a message addressed to a
   // session (`lastTo`), or a reply to an agent message sent through a waking connection (`wakes`).
   const repliedTo = last.author.kind === 'person' && !lastTo ? askedBy(last) : undefined;
-  const wakingSession = repliedTo?.author.kind === 'agent' && repliedTo.wakes === true && repliedTo.author.session ? repliedTo.author.session : null;
-  const recipientSession = lastTo?.session ?? wakingSession;
+  const askedSession = repliedTo?.author.kind === 'agent' && repliedTo.author.session ? repliedTo.author.session : null;
+  // Its connection wakes it when the asking message came through one (`wakes`), or, for a message sent
+  // another way from such a session (the stdio shim run inside Claude Code), when that session polls now.
+  const wakingSession = askedSession && repliedTo?.wakes === true ? askedSession : null;
+  const recipientSession = lastTo?.session ?? askedSession;
   const waitingOnWake = !!recipientSession && !last.delivery && !(lastTo === null && sent?.checked_at);
   // How that session is connected now ("Queued", "Sending", Send now), and, for compose, whether it
   // stopped before it took it (after the asker grace). Read every few seconds while the reply waits.
@@ -1712,7 +1715,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
             name: asker,
             deliveredAt: sent?.checked_at ?? null,
             time: whenTime,
-            wakes: wakingSession !== null,
+            wakes: wakingSession !== null || (askedSession !== null && recipientConnection != null),
             sendingNow: !!last.deliver_now_at,
             connection: recipientConnection,
             askerEnded: askerEnded && asking ? { name: asking.name } : null,

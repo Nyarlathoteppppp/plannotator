@@ -716,4 +716,114 @@ describe('Claude Code ↔ Plannotator Inbox (real Inbox, real processes)', () =>
     expect(session.host.submits).toHaveLength(1)
     w.proof(`the turn ended before reading it: one follow-up turn:\n${follow}\n`)
   }, 120_000)
+
+  /** Send now pressed on a reply, as the window does. */
+  async function pressSendNow(w: World, replyId: string): Promise<void> {
+    const { port } = registry(w)
+    const health = (await (await fetch(`http://127.0.0.1:${port}/api/inbox/health`)).json()) as { serverSession: string }
+    const pressed = await fetch(`http://127.0.0.1:${port}/api/inbox/messages/${replyId}/send-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${port}` },
+      body: JSON.stringify({ serverSession: health.serverSession }),
+    })
+    expect(pressed.status).toBe(200)
+  }
+
+  /** Waits until the Inbox has heard this session busy (its poll said so). */
+  async function busyKnown(w: World, threadId: string, session: string): Promise<void> {
+    await waitFor('the busy connection', async () => {
+      const model = (await (await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/threads/${threadId}/sessions?asker=${session}`)).json()) as {
+        asker: { connection: { busy: boolean | null; send_now: boolean } | null }
+      }
+      return model.asker.connection?.busy === true && model.asker.connection.send_now === true
+    })
+  }
+
+  test('Send now, and the turn ends just before the row would go in (after the claim): it goes in as a turn, never as a row in an idle conversation', async () => {
+    const w = world('14-send-now-turn-ends-before-the-append')
+    startInbox(w)
+    const session = await open(w, 'session-race')
+    const asked = await send(session, w, QUESTION)
+    await session.startTurn('Refactor the handler.')
+    const replyId = await personSends(w, asked.message_id, 'Retry with the same key.')
+    await busyKnown(w, asked.thread_id, 'session-race')
+    // The turn ends while the delivery is claimed: every check before it read busy.
+    session.host.onRun = (argv) => {
+      if (argv.includes('plannotator-inbox-claim')) session.endTurn()
+    }
+    await pressSendNow(w, replyId)
+    const turn = await waitFor('the wake turn', () => session.turns.find((t) => t.text.includes(replyId)))
+    expect(session.host.appended).toEqual([])
+    expect(session.host.submits).toHaveLength(1)
+    expect(session.host.submits[0]!.startsWith(`Plannotator Inbox: What should the worker do on a Stripe 409? (${replyId})`)).toBe(true)
+    w.proof(`the turn ended before the append: delivered as turn ${turn.id}, 0 rows`)
+  }, 120_000)
+
+  test('Send now, and the turn ends while the row goes in: the pointer turn goes at once (the next turn would otherwise mark it read)', async () => {
+    const w = world('15-send-now-turn-ends-during-the-append')
+    startInbox(w)
+    const session = await open(w, 'session-during')
+    const asked = await send(session, w, QUESTION)
+    await session.startTurn('Refactor the handler.')
+    const replyId = await personSends(w, asked.message_id, 'Fail the job and alert.')
+    await busyKnown(w, asked.thread_id, 'session-during')
+    session.host.onAppend = async () => {
+      session.endTurn()
+    }
+    await pressSendNow(w, replyId)
+    const follow = await waitFor('the pointer turn', () => session.host.submits[0])
+    expect(session.host.appended).toHaveLength(1)
+    expect(follow).toBe(inboxSentNowFollowUpText({ id: replyId, subject: 'What should the worker do on a Stripe 409?', type: 'reply' }))
+    // A later turn's step does not swallow it, and nothing is sent twice.
+    await session.startTurn('Next thing.')
+    session.step()
+    session.endTurn()
+    await Bun.sleep(1_500)
+    expect(session.host.submits).toHaveLength(1)
+  }, 120_000)
+
+  test("Send now while this session's own Ask question runs, or waits queued: never into that turn; it goes in as a turn once the session is idle", async () => {
+    const w = world('16-send-now-ask-this-session')
+    startInbox(w)
+    const session = await open(w, 'session-ask')
+    const asked = await send(session, w, QUESTION)
+    const sink = { delta: () => {}, tool: () => {}, done: () => {}, error: () => {} }
+    // Queued: the question is in flight, no turn runs yet.
+    expect(session.mod.turns.beginAsk('ask-1', 'What does the retry loop do?', sink)).toBe(true)
+    const replyId = await personSends(w, asked.message_id, 'Retry with the same key.')
+    await busyKnown(w, asked.thread_id, 'session-ask')
+    await pressSendNow(w, replyId)
+    await Bun.sleep(3_000)
+    expect(session.host.appended).toEqual([])
+    expect(session.host.submits).toEqual([])
+    // Running: the question's own turn.
+    await session.startTurn('Plannotator asks: What does the retry loop do?')
+    await Bun.sleep(3_000)
+    expect(session.host.appended).toEqual([])
+    expect(session.host.submits).toEqual([])
+    w.proof('the Ask question queued, then running: 0 rows, 0 submits')
+    session.endTurn('It retries three times.')
+    await waitFor('the wake turn', () => session.turns.find((t) => t.text.includes(replyId)))
+    expect(session.host.appended).toEqual([])
+    expect(session.host.submits).toHaveLength(1)
+  }, 120_000)
+
+  test('Send now with an older reply waiting for the same session: both go into the running turn, oldest first', async () => {
+    const w = world('17-send-now-keeps-the-order')
+    startInbox(w)
+    const session = await open(w, 'session-order')
+    const first = await send(session, w, QUESTION)
+    const second = await session.callInbox({ action: 'send_message', body: 'Second question: rename the worker?', thread: 'naming' }, w.project)
+    if ('deny' in second) throw new Error(second.deny)
+    const secondId = (JSON.parse(second.text.slice(second.text.indexOf('{'))) as { message_id: string; thread_id: string })
+    await session.startTurn('Refactor the handler.')
+    const older = await personSends(w, first.message_id, 'Retry with the same key.')
+    const newer = await personSends(w, secondId.message_id, 'Yes, rename it.')
+    await busyKnown(w, first.thread_id, 'session-order')
+    await pressSendNow(w, newer)
+    await waitFor('both rows', () => session.host.appended.length === 2)
+    expect(session.host.appended[0]!).toContain(`(${older})`)
+    expect(session.host.appended[1]!).toContain(`(${newer})`)
+    expect(session.host.submits).toEqual([])
+  }, 120_000)
 })

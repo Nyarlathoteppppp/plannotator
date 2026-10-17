@@ -44,6 +44,10 @@ export interface RealHost extends Host {
   timers: Set<ReturnType<typeof setInterval>>
   /** Set by the session: `$.prompt.submit`'s turn. */
   onSubmit: (text: string) => Promise<void>
+  /** Called as `$.session.append` stores a user row (a test ends the turn here). */
+  onAppend: (text: string) => Promise<void>
+  /** Called before every `$.process.run` (a test acts at a given step, e.g. the delivery claim). */
+  onRun: (argv: readonly string[]) => void
 }
 
 export function realHost(options: RealHostOptions): RealHost {
@@ -57,6 +61,8 @@ export function realHost(options: RealHostOptions): RealHost {
     fetches: [],
     timers: new Set(),
     onSubmit: async () => undefined,
+    onAppend: async () => undefined,
+    onRun: () => undefined,
     now: async () => Date.now(),
     sleep: (ms, signal) =>
       new Promise((resolve, reject) => {
@@ -85,6 +91,7 @@ export function realHost(options: RealHostOptions): RealHost {
       }
     },
     run: async (argv, init) => {
+      host.onRun(argv)
       const proc = Bun.spawn([...argv], {
         cwd: init?.cwd ?? options.cwd,
         env: { ...options.env, ...init?.env },
@@ -114,7 +121,9 @@ export function realHost(options: RealHostOptions): RealHost {
     },
     appendUserRow: async (text) => {
       host.appended.push(text)
+      await host.onAppend(text)
     },
+    sessionAppendAvailable: async () => true,
     appendNotice: async (text) => {
       host.notices.push(text)
     },

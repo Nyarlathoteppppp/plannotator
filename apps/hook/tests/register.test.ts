@@ -615,6 +615,8 @@ describe('register', () => {
     })
     const session = mock.session(on)
     on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
+    // An engine whose API has `$.session.append` (the version decides: validate refuses testing the noun itself).
+    on('session.version', () => ({ value: { version: '2.1.302', base: '2.1.302' } }))
     await $.session.start(SESSION)
     // A main-loop turn starts and keeps running (a subagent's start alone would not count).
     await $.turn.start({ turnId: 'turn-1', text: 'Refactor the handler.' })
@@ -646,5 +648,19 @@ describe('register', () => {
     for (let second = 0; second < 6; second++) await w.clock.advance(1_000)
     expect(w.submits).toHaveLength(1)
     expect(delivered).toBe(true)
+  })
+
+  test('an engine older than the API with $.session.append never says it can take a reply mid-turn', async ($: any, on: any) => {
+    const calls: { url: string; body: any }[] = []
+    const w = world(on, {
+      files: withRegistry(),
+      fetch: inbox(TOOLS, calls, (path) => (path === '/api/inbox/bridge/poll' ? { commands: [] } : { ok: true })),
+    })
+    on('session.version', () => ({ value: { version: '2.1.290', base: '2.1.290' } }))
+    await $.session.start(SESSION)
+    for (let second = 0; second < 4; second++) await w.clock.advance(1_000)
+    const polls = calls.filter((c) => c.url.endsWith('/api/inbox/bridge/poll'))
+    expect(polls.length).toBeGreaterThan(0)
+    expect(polls.some((c) => c.body.send_now === true)).toBe(false)
   })
 })

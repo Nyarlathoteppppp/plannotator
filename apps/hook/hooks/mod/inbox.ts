@@ -70,6 +70,28 @@ import {
 import { INBOX_DEFAULT_TOOLS } from './inbox-default-tools'
 import { privateDirArgv } from './launch'
 
+/**
+ * The first Claude Code whose published hooks-module API documents
+ * `$.session.append` (the 2.1.301 plugin-authoring types): the oldest engine
+ * Send now is offered on. A module cannot test for the noun itself
+ * (`claude plugin validate` refuses reading `$.session.append` as a value),
+ * so the engine's version decides; an older or unknown one never advertises
+ * Send now.
+ */
+export const SESSION_APPEND_MIN_ENGINE = '2.1.301'
+
+/** Whether an engine version (`$.session.version()`'s `base`, else `version`) is at least SESSION_APPEND_MIN_ENGINE. */
+export function engineHasSessionAppend(version: string | null | undefined): boolean {
+  const parts = /^(\d+)\.(\d+)\.(\d+)/.exec(typeof version === 'string' ? version.trim() : '')
+  if (!parts) return false
+  const min = SESSION_APPEND_MIN_ENGINE.split('.').map(Number)
+  const have = parts.slice(1, 4).map(Number)
+  for (let i = 0; i < 3; i++) {
+    if (have[i]! !== min[i]!) return have[i]! > min[i]!
+  }
+  return true
+}
+
 /** The host this connection names on its messages and deliveries. */
 export const INBOX_HOST = 'claude-code'
 /** How the person sees this agent in the Inbox. */
@@ -236,6 +258,13 @@ export interface InboxLinkOptions {
   tools: readonly InboxToolInfo[]
   /** A turn is running (or a question of Ask this session is in flight). */
   isBusy: () => boolean
+  /**
+   * The main-loop turn running now when a Send now reply may go into it, else
+   * null: never the turn of this session's own "Ask this session" question
+   * (its answer streams to Plannotator), and null while that question is
+   * queued with no turn running. Absent: Send now is never advertised.
+   */
+  steerableTurn?: () => string | null
   /** The session's working folder, sent with each poll so New message can find the session by project. */
   cwd?: () => Promise<string>
   /** Names this process in the lease and the claims. */
@@ -280,7 +309,9 @@ export class InboxLink {
    * (that request carries it). A turn that ends with none read it, so a short
    * turn points Claude at it.
    */
-  private sentNow: { command: InboxReplyCommand; stepped: boolean } | null = null
+  private sentNow: { command: InboxReplyCommand; turnId: string; stepped: boolean }[] = []
+  /** Whether this engine has `$.session.append` (decided once, `Host.sessionAppendAvailable`). */
+  private appendOk: boolean | null = null
   /** Send now could not go into the running turn (the engine refused the row): these wait for idle, as before. */
   private noSteer = new Set<string>()
   /** The engine refused a row once (an engine without `$.session.append`): stop offering Send now. */
@@ -466,8 +497,13 @@ export class InboxLink {
     for (const id of [...this.unacked]) await this.acknowledge(id)
     if (!this.leader) return
     if (!this.polling && now >= this.retryAt) void this.poll()
-    // Send now (the person pressed it in the Inbox): that one goes in without waiting for two idle ticks.
-    const urgent = this.idleTicks >= 2 ? null : ([...this.pending.values()].find((command) => command.now === true && !this.noSteer.has(command.id)) ?? null)
+    // Send now (the person pressed it in the Inbox): the waiting replies go in without waiting for two
+    // idle ticks, oldest first (an urgent reply never overtakes an older one), but only when there is a
+    // turn they may go into or the session is idle: never into this session's own Ask question.
+    const urgent =
+      this.idleTicks < 2 &&
+      [...this.pending.values()].some((command) => command.now === true && !this.noSteer.has(command.id)) &&
+      (this.steerableTurn() !== null || !this.options.isBusy())
     if (!this.delivering && this.pending.size > 0 && (this.idleTicks >= 2 || urgent)) {
       this.delivering = true
       void this.deliverNext(urgent).finally(() => {
@@ -476,9 +512,13 @@ export class InboxLink {
     }
   }
 
-  /** A main-loop model request is going out: a reply put into the running turn is in it. */
-  onMainStep(): void {
-    if (this.sentNow) this.sentNow.stepped = true
+  private steerableTurn(): string | null {
+    return this.options.steerableTurn?.() ?? null
+  }
+
+  /** A main-loop model request of `turnId` is going out: the replies put into that turn are in it. */
+  onMainStep(turnId: string): void {
+    for (const entry of this.sentNow) if (entry.turnId === turnId) entry.stepped = true
   }
 
   /**
@@ -486,12 +526,17 @@ export class InboxLink {
    * carried (the turn was making its last request when the row landed) has
    * not been read: a short turn of its own points Claude at it.
    */
-  onMainTurnComplete(): void {
-    const sent = this.sentNow
-    this.sentNow = null
-    if (!sent || sent.stepped || this.disposed) return
-    this.host.debug(`inbox: ${sent.command.id} landed as the turn ended; pointing Claude at it`)
-    void this.host.submit(inboxSentNowFollowUpText(sent.command)).catch(() => undefined)
+  onMainTurnComplete(turnId: string): void {
+    const ended = this.sentNow.filter((entry) => entry.turnId === turnId)
+    this.sentNow = this.sentNow.filter((entry) => entry.turnId !== turnId)
+    if (this.disposed) return
+    for (const entry of ended) if (!entry.stepped) this.followUp(entry.command)
+  }
+
+  /** One short turn pointing Claude at a reply that went into the conversation but no request carried. */
+  private followUp(command: InboxReplyCommand): void {
+    this.host.debug(`inbox: ${command.id} landed as the turn ended; pointing Claude at it`)
+    void this.host.submit(inboxSentNowFollowUpText(command)).catch(() => undefined)
   }
 
   /**
@@ -540,7 +585,7 @@ export class InboxLink {
       ...(this.startedAt ? { started_at: this.startedAt } : {}),
       ...(this.busy === null ? {} : { busy: this.busy, idle_since: this.idleSince }),
       // Send now: this engine can put a reply into a running turn (`$.session.append`).
-      ...(this.host.appendUserRow && !this.steerRefused ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
+      ...((await this.canAppend()) ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
     })
     return response && response.status === 200 ? parseInboxBridgeCommands(response.text) : null
   }
@@ -577,17 +622,21 @@ export class InboxLink {
     this.settled.add(id)
   }
 
+  /** Whether Send now can work here: the engine has `$.session.append`, it never refused a row, and the session tells its turns apart. */
+  private async canAppend(): Promise<boolean> {
+    if (!this.host.appendUserRow || !this.options.steerableTurn || this.steerRefused) return false
+    if (this.appendOk === null) this.appendOk = (await this.host.sessionAppendAvailable?.().catch(() => false)) ?? false
+    return this.appendOk
+  }
+
   /**
-   * Deliver the oldest waiting reply as a turn, once; `urgent` (Send now,
-   * the session not idle for two ticks yet): that one at once, into the
-   * running turn while one runs (`appendUserRow`), else as a turn.
+   * Deliver the oldest waiting reply as a turn, once; `urgent` (the person
+   * pressed Send now, the session not idle for two ticks yet): at once, into
+   * the running turn while one runs (`appendUserRow`), else as a turn.
    */
-  private async deliverNext(urgent: InboxReplyCommand | null = null): Promise<void> {
-    const command = urgent ?? (this.pending.values().next().value as InboxReplyCommand | undefined)
+  private async deliverNext(urgent = false): Promise<void> {
+    const command = this.pending.values().next().value as InboxReplyCommand | undefined
     if (!command) return
-    // Into the running turn only when the person asked and the engine can; otherwise it waits for idle.
-    const into = urgent !== null && this.options.isBusy()
-    if (into && !this.host.appendUserRow) return
     // Still waiting? An agent may have read it through the tool meanwhile, or
     // another process delivered it.
     const fresh = await this.pendingNow(0)
@@ -607,21 +656,34 @@ export class InboxLink {
     if (claim?.exitCode !== INBOX_CLAIM_EXIT.won) return
     this.submitting = command.id
     await this.host.writeFile(`${dir}/alive`, String(await this.host.now())).catch(() => undefined)
-    this.host.debug(`inbox: delivering ${command.type} ${command.id}${into ? ' into the running turn' : ''}`)
+    // Decided HERE, after every await above: the turn may have ended (or one started) meanwhile. Into the
+    // running turn only when the person asked, one runs that may take it, and the engine can; else as a
+    // turn when idle; else (this session's own Ask question holds it) it waits, its claim kept.
+    const turn = urgent && (await this.canAppend()) ? this.steerableTurn() : null
+    if (!turn && this.options.isBusy()) {
+      this.submitting = null
+      return
+    }
+    this.host.debug(`inbox: delivering ${command.type} ${command.id}${turn ? ` into the running turn ${turn}` : ''}`)
     try {
-      if (into) {
+      if (turn) {
         // Send now while Claude works: a user row in the running turn, read at its next model request.
         try {
           await this.host.appendUserRow!(inboxWakeText(command))
         } catch (error) {
-          // Refused: nothing entered, so it is delivered when the session is idle (the claim is this instance's, so it wins again).
+          // Refused: nothing entered, so it is delivered when the session is idle (the claim is this instance's,
+          // so it wins again), the window reads it as queued again, and Send now is no longer offered here.
           this.submitting = null
           this.noSteer.add(command.id)
           this.steerRefused = true
+          void this.bridge(INBOX_BRIDGE_EVENT_PATH, { type: 'send_now_failed', id: command.id })
           this.host.debug(`inbox: ${command.id} could not go into the running turn (${error instanceof Error ? error.message : String(error)}); it waits for idle`)
           return
         }
-        this.sentNow = { command, stepped: false }
+        // The turn ended (or another began) while the row went in: no request of it will carry the row,
+        // so point Claude at it now. Otherwise the turn's next request does, or its end sends the pointer.
+        if (this.steerableTurn() === turn) this.sentNow.push({ command, turnId: turn, stepped: false })
+        else this.followUp(command)
         await this.host
           .appendNotice?.(`Plannotator Inbox: the person's ${command.type === 'message' ? 'message' : 'reply'} (${command.subject ?? 'a thread'}) went into this turn.`)
           .catch(() => undefined)

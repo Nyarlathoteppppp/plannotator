@@ -20,9 +20,11 @@ import {
   createInboxWorld,
   destroyInboxWorld,
   personSends,
+  pressSendNow,
   QUESTION,
   registry,
   removeStubbedHtml,
+  sendNowOffered,
   startInbox,
   stubBuiltHtml,
   waitFor,
@@ -218,5 +220,75 @@ describe.skipIf(process.platform === "win32")("OpenCode 2's Inbox wake on a host
     expect(events.subscribers).toBe(1);
     await waitFor("the event subscription to end", () => (events.aborted === 1 ? true : undefined), 5_000);
     w.proof("a draft without add: registered nothing, and the wakes' event subscription ended");
+  }, 60_000);
+});
+
+describe.skipIf(process.platform === "win32")("OpenCode 2's Send now (a steer, confirmed by its delivery)", () => {
+  async function world(name: string) {
+    const w = createInboxWorld("plannotator-inbox-oc2-steer-", name, "opencode2");
+    worlds.push(w);
+    startInbox(w);
+    mkdirSync(w.dataDir, { recursive: true });
+    writeFileSync(path.join(w.dataDir, "config.json"), JSON.stringify({ inboxTool: { opencode: true } }));
+    process.env.PLANNOTATOR_DATA_DIR = w.dataDir;
+    process.env.PLANNOTATOR_BIN = path.join(w.bin, "plannotator");
+    const connection = await findInboxConnection();
+    const events = eventStream();
+    const prompts: { id: string; text: string; delivery: string }[] = [];
+    const v2 = {
+      location: { directory: w.project },
+      event: { subscribe: events.subscribe },
+      session: {
+        get: async () => ({ location: { directory: w.project } }),
+        wait: async () => undefined,
+        prompt: async (input: { id: string; text: string; delivery: string }) => {
+          prompts.push({ id: input.id, text: input.text, delivery: input.delivery });
+        },
+      },
+    };
+    let pending: Parameters<NonNullable<InboxToolDomainLike["transform"]>>[0] | null = null;
+    const stop = new AbortController();
+    stops.push(stop);
+    await registerInboxOpenCode2({ transform: (apply) => void (pending = apply) }, v2 as never, connection!, async (sessionID) => ({ root: sessionID }), { signal: stop.signal });
+    let tool: { execute: (input: unknown, context: { sessionID: string }) => Promise<{ content: string }> } | null = null;
+    pending!({ add: (definition) => (tool = definition as never) });
+    const sessionID = "ses_steer";
+    events.emit({ type: "session.execution.started", data: { sessionID } });
+    const sent = await tool!.execute({ action: "send_message", body: QUESTION }, { sessionID });
+    const asked = JSON.parse(sent.content.slice(sent.content.indexOf("{"))) as { message_id: string; thread_id: string };
+    return { w, events, prompts, sessionID, asked };
+  }
+
+  test("busy: Send now steers the reply into the run, and it counts as delivered only once OpenCode delivers that row", async () => {
+    const { w, events, prompts, sessionID, asked } = await world("08-opencode2-send-now-steer");
+    const replyId = await personSends(w, asked.message_id, "Retry with the same key.");
+    await sendNowOffered(w, asked.thread_id, sessionID);
+    await Bun.sleep(1_500);
+    expect(prompts).toEqual([]);
+    await pressSendNow(w, replyId);
+    const steer = await waitFor("the steer row", () => prompts.find((prompt) => prompt.delivery === "steer"));
+    expect(steer.text).toContain(`(${replyId})`);
+    await Bun.sleep(1_000);
+    const deliveryOf = async () => ((await (await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/threads/${asked.thread_id}`)).json()) as { thread: { messages: { id: string; delivery?: unknown }[] } }).thread.messages.find((m) => m.id === replyId)?.delivery;
+    // Not delivered until OpenCode says the row entered the model context.
+    expect(await deliveryOf()).toBeUndefined();
+    events.emit({ type: "session.inbox.delivered", data: { sessionID, inboxID: steer.id } });
+    expect(await waitFor("the delivery record", deliveryOf)).toMatchObject({ host: "opencode", session: sessionID });
+    expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
+  }, 60_000);
+
+  test("the run ends before OpenCode delivers the steer row: after the grace it goes in as a queued turn", async () => {
+    const { w, events, prompts, sessionID, asked } = await world("09-opencode2-send-now-steer-fallback");
+    const replyId = await personSends(w, asked.message_id, "Fail the job and alert.");
+    await sendNowOffered(w, asked.thread_id, sessionID);
+    await pressSendNow(w, replyId);
+    await waitFor("the steer row", () => prompts.find((prompt) => prompt.delivery === "steer"));
+    events.emit({ type: "session.execution.succeeded", data: { sessionID } });
+    const queued = await waitFor("the queued turn", () => prompts.find((prompt) => prompt.delivery === "queue"), 15_000);
+    expect(queued.text).toContain(`(${replyId})`);
+    const delivery = await waitFor("the delivery record", async () =>
+      ((await (await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/threads/${asked.thread_id}`)).json()) as { thread: { messages: { id: string; delivery?: unknown }[] } }).thread.messages.find((m) => m.id === replyId)?.delivery,
+    );
+    expect(delivery).toMatchObject({ host: "opencode" });
   }, 60_000);
 });

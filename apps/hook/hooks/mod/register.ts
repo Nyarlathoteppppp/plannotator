@@ -61,7 +61,7 @@
 import { PlannotatorMod } from './controller'
 import { resolveAgentToolEnabled, resolveClaudeModEnabled, resolveInboxReminderEnabled, resolveInboxToolEnabled } from './enabled'
 import type { Host } from './host'
-import { discoverInboxTools, inboxRegistryPathOf, withInboxReminder } from './inbox'
+import { discoverInboxTools, engineHasSessionAppend, inboxRegistryPathOf, withInboxReminder } from './inbox'
 import { inboxAgentTool, type InboxToolInfo } from './inbox-contract'
 import { INBOX_DEFAULT_TOOLS } from './inbox-default-tools'
 import { COMMANDS, dataDirOf, debugAppendArgv, isModCommand, waitArgv } from './launch'
@@ -113,7 +113,7 @@ function hostOf($: Engine, debugPath: string | null): Host {
     submit: async (text) => {
       await $.prompt.submit({ text })
     },
-    // An engine without `$.session.append` rejects: the Inbox link then stops offering Send now (inbox.ts).
+    // Called only where `sessionAppendAvailable` said the engine has it; a refusal stops Send now here (inbox.ts).
     appendUserRow: async (text) => {
       const stored = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
       if (stored && typeof stored.deny === 'string') throw new Error(stored.deny)
@@ -121,6 +121,15 @@ function hostOf($: Engine, debugPath: string | null): Host {
     appendNotice: async (text) => {
       const stored = await $.session.append({ message: { type: 'system', content: [{ type: 'text', text }] } })
       if (stored && typeof stored.deny === 'string') throw new Error(stored.deny)
+    },
+    // Decided from the engine's version (validate refuses `typeof $.session.append`): an older engine never offers Send now.
+    sessionAppendAvailable: async () => {
+      try {
+        const version = await $.session.version()
+        return engineHasSessionAppend(version?.base ?? version?.version)
+      } catch {
+        return false
+      }
     },
     suggest: async (text) => {
       await $.prompt.suggest({ text })
