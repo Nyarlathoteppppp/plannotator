@@ -2900,7 +2900,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   --ib-hb-on-fg-s: var(--ib-soft-hbtns) var(--foreground);
   --ib-hb-on-icon-s: var(--ib-soft-hbtns) var(--primary);
   --ib-hb-kbd-bg-s: var(--ib-soft-hbtns) transparent;
-  --ib-hb-kbd-fg-s: var(--ib-soft-hbtns) color-mix(in oklch, var(--ib-raise-mfg) 50%, var(--foreground));
+  --ib-hb-kbd-fg-s: var(--ib-soft-hbtns) color-mix(in oklch, var(--ib-raise-mfg) 35%, var(--foreground));
   --ib-hb-fg-s: var(--ib-soft-hbtns) var(--foreground);
   /* The foot (switch --ib-soft-foot): pill buttons, the reply box's glow, its chips. */
   --ib-ft-line-s: var(--ib-soft-foot) transparent;
