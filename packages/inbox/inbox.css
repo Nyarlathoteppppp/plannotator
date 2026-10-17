@@ -130,8 +130,8 @@
     --ib-side-fg-soft: color-mix(in oklch, var(--foreground) 88%, var(--ib-ink));
     --ib-side-mfg-soft: color-mix(in oklch, var(--muted-foreground) 78%, var(--ib-ink));
     --ib-quiet-fg-soft: color-mix(in oklch, var(--muted-foreground) 82%, var(--ib-card-ink));
-    --ib-raise-fg-soft: color-mix(in oklch, var(--foreground) 88%, var(--ib-card-ink));
-    --ib-raise-mfg-soft: color-mix(in oklch, var(--muted-foreground) 78%, var(--ib-card-ink));
+    --ib-raise-fg-soft: color-mix(in oklch, var(--foreground) 84%, var(--ib-card-ink));
+    --ib-raise-mfg-soft: color-mix(in oklch, var(--muted-foreground) 68%, var(--ib-card-ink));
     /* The badge's words step toward the card's ink rather than the text colour, so a palette's red or amber
        reads on its own tint. */
     --ib-badge-stop-fg-soft: color-mix(in oklab, var(--destructive) 50%, var(--ib-card-ink));
@@ -2649,7 +2649,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .pn-inbox .ib-hbtn:hover:not(:disabled) { background: var(--ib-hover); }
 .pn-inbox .ib-hbtn[aria-pressed="true"] { background: var(--ib-fill); border-color: transparent; color: var(--foreground); }
 .pn-inbox .ib-hbtn[aria-pressed="true"] svg.ib-ic { color: var(--primary); }
-.ib-hbtn .ib-kbd, .ib-hbtn[aria-pressed="true"] .ib-kbd { border-color: transparent; background: transparent; color: color-mix(in oklch, var(--ib-quiet-fg) 70%, var(--foreground)); }
+.ib-hbtn .ib-kbd, .ib-hbtn[aria-pressed="true"] .ib-kbd { border-color: transparent; background: transparent; color: color-mix(in oklch, var(--ib-quiet-fg) 50%, var(--foreground)); }
 .pn-inbox .ib-iconbtn { border-radius: 10px; transition: background-color 140ms ease-out, color 140ms ease-out; }
 .pn-inbox .ib-iconbtn:hover { background: var(--ib-hover); color: var(--foreground); }
 .pn-inbox .ib-ptool { border-radius: 10px; }
@@ -2671,7 +2671,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .pn-inbox :is(fieldset.question-block, .ib-att-t, .ib-hatts, .ib-readline, .ib-route, .ib-mfold-b > span) { --foreground: var(--ib-raise-fg); --muted-foreground: var(--ib-raise-mfg); color: var(--foreground); }
 @supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
   /* The accent's words on the card (Recommended, Accept recommended): the same step. */
-  .pn-inbox { --ib-raise-primary: color-mix(in oklch, var(--primary) 70%, var(--ib-card-ink)); }
+  .pn-inbox { --ib-raise-primary: color-mix(in oklch, var(--primary) 62%, var(--ib-card-ink)); }
   .pn-inbox .ib-readline > button { color: var(--ib-raise-primary); }
   .pn-inbox fieldset.question-block { --primary: var(--ib-raise-primary); }
 }
