@@ -143,7 +143,8 @@ export function ProjectTip({ name, root, children }: { name: string; root: strin
       <Tip side="right" content={<ProjectTipText name={name} root={root} />}>
         {cloneElement(children as ReactElement<{ 'aria-describedby'?: string }>, { 'aria-describedby': describedBy })}
       </Tip>
-      <span id={describedBy} className="ib-sr" data-project-folder="">
+      {/* `hidden`: not read a second time in browse mode; aria-describedby still reads it. */}
+      <span id={describedBy} hidden data-project-folder="">
         {root}
       </span>
     </>

@@ -1,9 +1,14 @@
 import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
 import { Tooltip } from '@plannotator/ui/components/Tooltip';
-import { isTextCut, noHover } from '@plannotator/ui/utils/textCut';
+import { isTextCut as isTextCutIn, noHover } from '@plannotator/ui/utils/textCut';
 
-/** The cut check lives in ui (HostTitle uses it too): a whole pixel, or the text's Range wider than its box. */
-export { isTextCut };
+/**
+ * ui's cut check (a whole pixel, or the text's Range wider than its box). A
+ * FileName (`.ib-fname`) counts as cut when its first part (`.ib-fname-h`) is.
+ */
+export function isTextCut(el: Element | null | undefined): boolean {
+  return isTextCutIn(el, el?.classList.contains('ib-fname') ? '.ib-fname-h' : undefined);
+}
 
 /** How long the pointer rests before a tooltip opens (the list chips' timing). */
 export const TIP_DELAY_MS = 150;

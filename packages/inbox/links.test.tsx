@@ -162,6 +162,8 @@ test.skipIf(!hasDom)('in a message, an attached file opens beside the thread; an
     expect(mock.hasAttribute('title')).toBe(false);
     expect(await tooltipOf(mock)).toBe('Open design/mock.html beside the thread');
     unhover(mock);
+    // A screen reader still hears it, as the link's description.
+    expect(document.getElementById(mock.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Open design/mock.html beside the thread');
     await act(async () => mock.click());
     expect(opened).toEqual(['att_mock']);
 
@@ -188,6 +190,7 @@ test.skipIf(!hasDom)('in a message, an attached file opens beside the thread; an
     expect(notes.hasAttribute('title')).toBe(false);
     expect(await tooltipOf(notes)).toContain('Not attached');
     unhover(notes);
+    expect(document.getElementById(notes.getAttribute('aria-describedby') ?? '')?.textContent).toContain('Not attached');
     const rawOther = [...host!.querySelectorAll<HTMLElement>('[data-local-link="unavailable"]')].find((el) => el.textContent === 'raw other')!;
     expect(rawOther.hasAttribute('href')).toBe(false);
     await act(async () => {
@@ -206,6 +209,32 @@ test.skipIf(!hasDom)('in a message, an attached file opens beside the thread; an
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test.skipIf(!hasDom)('with component tooltips off (other hosts), a resolved local link keeps its native title and gains no aria attributes', async () => {
+  await mount(
+    <MessageBody
+      message={message('See [the mock](mock.html) and [my notes](notes.md).', [MOCK])}
+      projectRoot={ROOT}
+      onOpenAttachment={() => {}}
+      readOnly={false}
+      answers={new Map()}
+      onPick={() => {}}
+      footerFor={() => null}
+      recordingOf={() => undefined}
+      onToggleDecision={() => {}}
+      onOpenDecision={() => {}}
+    />,
+  );
+  const mock = host!.querySelector<HTMLAnchorElement>('a[data-local-link="open"]')!;
+  expect(mock.getAttribute('title')).toBe('Open design/mock.html beside the thread');
+  const notes = host!.querySelector<HTMLElement>('[data-local-link="unavailable"]')!;
+  expect(notes.getAttribute('title')).toContain('Not attached');
+  for (const node of [mock, notes]) {
+    expect(node.hasAttribute('aria-describedby')).toBe(false);
+    expect(node.hasAttribute('aria-label')).toBe(false);
+  }
+  expect(host!.querySelectorAll('[data-host-title-description]').length).toBe(0);
 });
 
 test.skipIf(!hasDom)('a Viewer without resolveLocalLink draws a local link as it always has', async () => {

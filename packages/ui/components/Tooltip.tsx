@@ -105,9 +105,10 @@ export const Tooltip: React.FC<TooltipProps> = ({
     >
       <BaseTooltip.Trigger render={children} delay={delayDuration} />
       <BaseTooltip.Portal container={container ?? undefined}>
-        <BaseTooltip.Positioner side={side} align={align} sideOffset={sideOffset} className="isolate z-50">
+        {/* Above the annotation toolbar (z-[100]), so a tooltip that flips toward it is never tucked under it. */}
+        <BaseTooltip.Positioner side={side} align={align} sideOffset={sideOffset} className="isolate z-[110]">
           <BaseTooltip.Popup
-            className={`z-50 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md origin-[var(--transform-origin)] transition-[opacity,scale] duration-150 ease-out data-[starting-style]:opacity-0 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[ending-style]:scale-95 ${
+            className={`z-[110] px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md origin-[var(--transform-origin)] transition-[opacity,scale] duration-150 ease-out data-[starting-style]:opacity-0 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[ending-style]:scale-95 ${
               wide
                 ? 'max-w-[min(260px,calc(100vw-1rem))] leading-snug whitespace-normal [overflow-wrap:anywhere]'
                 : 'whitespace-nowrap'

@@ -1,15 +1,16 @@
 /**
  * Is this element's text cut (its own overflow with "…", or a line clamp)?
- * A FileName-style element (`.ib-fname`) is cut when its first part
- * (`.ib-fname-h`) is. Rounding can hide a cut of under a pixel (a chip
+ * With `partSelector`, it also counts as cut when its first descendant
+ * matching it is (a name drawn in two parts, whose first part shrinks).
+ * Rounding can hide a cut of under a pixel (a chip
  * measured a scrollWidth of 104 in a clientWidth of 103 with its ellipsis
  * showing, and another 98 in 98 with the text 0.06 px wider than its box),
  * so any whole pixel counts, and where layout can be read the text's own
  * width (a Range over its contents) is compared with the box's content width.
  */
-export function isTextCut(el: Element | null | undefined): boolean {
+export function isTextCut(el: Element | null | undefined, partSelector?: string): boolean {
   if (typeof HTMLElement === 'undefined' || !(el instanceof HTMLElement)) return false;
-  const part = el.classList.contains('ib-fname') ? el.querySelector<HTMLElement>('.ib-fname-h') : null;
+  const part = partSelector ? el.querySelector<HTMLElement>(partSelector) : null;
   if (part && overflows(part)) return true;
   return overflows(el);
 }
