@@ -77,14 +77,6 @@ function mainWidthOf(root: HTMLElement): number {
 }
 
 /**
- * The stack for the window (`.pn-inbox`). Read before paint whenever one of
- * `deps` changes (the caller passes what moves the sidebar's target: the
- * route, the sidebar's open state, an open file), so a thread opened from its
- * link, or a sidebar toggled, never draws squeezed first; a ResizeObserver
- * (the window, the sidebar's resize edge) handles everything else. Off on a
- * phone, which shows one screen at a time already (phone.ts).
- */
-/**
  * The room the floating panes' gutters take: one on each side of `.ib-main` and one between its two panes,
  * read from inbox.css's `--ib-gutter`, 8 px while the Soft look's panes switch (`--ib-soft-panes`) is on and
  * 0 while it is off (today's flat window). Measured rooms leave them out, so two panes stack rather than draw
@@ -98,6 +90,14 @@ export function paneGutters(el?: Element | null): number {
   return Number.isFinite(gutter) ? 3 * gutter : 0;
 }
 
+/**
+ * The stack for the window (`.pn-inbox`). Read before paint whenever one of
+ * `deps` changes (the caller passes what moves the sidebar's target: the
+ * route, the sidebar's open state, an open file), so a thread opened from its
+ * link, or a sidebar toggled, never draws squeezed first; a ResizeObserver
+ * (the window, the sidebar's resize edge) handles everything else. Off on a
+ * phone, which shows one screen at a time already (phone.ts).
+ */
 export function useStack(ref: RefObject<HTMLElement | null>, phone: boolean, deps: DependencyList): Stack {
   const [stack, setStack] = useState<Stack>(NO_STACK);
   const measure = () => {
