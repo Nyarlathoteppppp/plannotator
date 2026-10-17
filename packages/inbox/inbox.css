@@ -148,6 +148,20 @@
   --ib-sel-today: color-mix(in oklch, var(--primary) 10%, transparent);
   --ib-sel-hover-today: color-mix(in oklch, var(--primary) 14%, transparent);
 }
+/* A floor under the separations. Some palettes set --muted to their --card (or --background), so a ground or a
+   raised surface built from --muted alone would vanish. Where relative colours are there, each is mixed half
+   and half with the card taken a fixed step in lightness (the ground always deeper; a raised surface deeper on
+   a light card, lighter on a dark one), so every palette keeps its panes and lifted surfaces visible while
+   keeping its own hue. */
+@supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
+  .pn-inbox {
+    --ib-ground: var(--inbox-ground, color-mix(in oklch, color-mix(in oklch, var(--background) 82%, var(--ib-shadow-ink)) 50%, oklch(from var(--card) calc(l - 0.07) c h)));
+    --ib-raise: var(--inbox-raise, color-mix(in oklch, color-mix(in oklch, var(--muted) 40%, var(--card)) 50%, oklch(from var(--card) calc(l - sign(l - 0.6) * 0.05) c h)));
+  }
+  :root.light .pn-inbox {
+    --ib-ground: var(--inbox-ground, color-mix(in oklch, color-mix(in oklch, var(--muted) 55%, var(--background)) 50%, oklch(from var(--card) calc(l - 0.07) c h)));
+  }
+}
 /* Resets in Tailwind's base layer: the window's own classes (unlayered) and
    ui's utilities (the question card inside Viewer) both win over them. */
 @layer base {
