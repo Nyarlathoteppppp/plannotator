@@ -182,7 +182,7 @@ export interface ThreadMessage {
   delivery?: { state: string; host: string; session: string; at: string } | null;
 }
 
-export async function thread(w: InboxWorld, threadId: string): Promise<{ subject: string; project: { root: string }; messages: ThreadMessage[] }> {
+export async function thread(w: InboxWorld, threadId: string): Promise<{ subject: string; thread_name?: string | null; project: { root: string }; messages: ThreadMessage[] }> {
   const response = await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/threads/${threadId}`);
   return ((await response.json()) as { thread: never }).thread;
 }
@@ -220,8 +220,7 @@ export async function pressSendNow(w: InboxWorld, replyId: string): Promise<void
     body: JSON.stringify({ serverSession: health.serverSession }),
   });
   if (response.status !== 200) throw new Error(`Send now answered ${response.status}: ${await response.text()}`);
-  w.proof(`> the person presses Send now on ${replyId}
-`);
+  w.proof(`> the person presses Send now on ${replyId}\n`);
 }
 
 /** Waits until the session's connection polled busy and able to take a reply mid-turn (Send now offered). */
@@ -232,6 +231,21 @@ export async function sendNowOffered(w: InboxWorld, threadId: string, session: s
     };
     return model.asker.connection?.busy === true && model.asker.connection.send_now === true;
   });
+}
+
+/** The person starts a thread from compose (POST /api/inbox/messages) with a live session; returns the root message id. */
+export async function personComposes(w: InboxWorld, to: { host: string; session: string }, body: string, extra: { thread_name?: string } = {}): Promise<string> {
+  const { port } = registry(w);
+  const health = (await (await fetch(`http://127.0.0.1:${port}/api/inbox/health`)).json()) as { serverSession: string };
+  const response = await fetch(`http://127.0.0.1:${port}/api/inbox/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: `http://127.0.0.1:${port}` },
+    body: JSON.stringify({ serverSession: health.serverSession, to, body, idempotency_key: `compose-${to.session}-${body.length}`, ...extra }),
+  });
+  if (response.status !== 200) throw new Error(`compose answered ${response.status}: ${await response.text()}`);
+  const message = ((await response.json()) as { message: { id: string } }).message;
+  w.proof(`> the person starts a thread from compose, to ${to.host} ${to.session}: ${message.id}\n${body}\n`);
+  return message.id;
 }
 
 export async function waitFor<T>(what: string, check: () => T | null | undefined | false | Promise<T | null | undefined | false>, timeoutMs = 20_000): Promise<T> {
