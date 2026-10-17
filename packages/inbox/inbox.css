@@ -2805,7 +2805,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 
 /* A file's chrome: the panes' hairline, the bar under the file on the card. */
 .ib-vhead, .ib-vfoot, .ib-apanel, .ib-fold .ib-sheet-h { border-color: var(--ib-fill); }
-.ib-stepbox { border-color: transparent; border-radius: 10px; background: var(--ib-raise); }
+.ib-stepbox { border-color: transparent; border-radius: 10px; background: var(--ib-raise); --foreground: var(--ib-raise-fg); --muted-foreground: var(--ib-raise-mfg); color: var(--foreground); }
 .pn-inbox .ib-stepbtn, .pn-inbox .ib-steppos { border-radius: 8px; }
 .ib-toolstrip { border-radius: 12px; box-shadow: var(--ib-float-shadow); }
 .ib-fvbar, .ib-fvchip, .ib-fvver { border-color: transparent; border-radius: 12px; box-shadow: var(--ib-float-shadow); }
