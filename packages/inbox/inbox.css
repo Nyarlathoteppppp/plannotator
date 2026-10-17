@@ -6,34 +6,109 @@
  * drawn by ui itself, untouched.
  */
 
-/* The Soft look (.product/approved/inbox-soft/, approved 2026-10-16): the list and the thread are rounded
-   panes floating on a tinted ground, the sidebar sits on the ground with no rule beside it. Every value is
-   derived from the active palette's tokens, so each theme gets its own ground, lifted surface and shadow. */
+/* The Soft look (.product/approved/inbox-soft/, approved 2026-10-16): today's window, modernized: the list and
+   the thread are rounded panes floating on a tinted ground, the sidebar sits on the ground with no rule beside
+   it. Every colour, shadow and surface is derived from the active palette's theme tokens (packages/ui/theme.css),
+   so each theme gets its own ground, lifted surface and shadow; nothing here names a colour of its own.
+
+   A palette may set any of these theme-level tokens to replace the derived value:
+     --inbox-ground        the ground the panes float on
+     --inbox-raise         a surface lifted inside a pane (question cards, tiles, section bands)
+     --inbox-shadow-ink    the colour of the panes' and floating surfaces' shadows
+     --inbox-pane-shadow   the panes' shadow
+     --inbox-float-shadow  menus, dialogs, the toast, the search palette
+
+   Switches. Each turns one part of the Soft paint back to today's colours, and nothing else: a space
+   (`--ib-soft-x: ;`) is on, `initial` is off. They work by the space-toggle: a token built as
+   `var(--ib-soft-x) <Soft value>` is invalid while its switch is `initial`, so `var(<token>, <today's value>)`
+   falls back to today's. */
 .pn-inbox {
-  --ib-ground: color-mix(in oklch, var(--background) 87%, black);
-  /* Quiet text on the ground (the sidebar): a step toward the text colour, so a palette whose muted text
-     only just clears AA on its own background still clears it on the slightly deeper ground. */
-  --ib-side-mfg: color-mix(in oklch, var(--muted-foreground) 70%, var(--foreground));
-  --ib-side-fg: var(--foreground);
-  /* Quiet text on a pane (section headers, chips) and text on a raised surface inside one (question cards,
-     tiles): without relative colours, a step toward the text colour. */
-  --ib-quiet-fg: color-mix(in oklch, var(--muted-foreground) 75%, var(--foreground));
-  --ib-raise-fg: var(--foreground);
-  --ib-raise-mfg: var(--ib-quiet-fg);
-  --ib-raise: color-mix(in oklch, var(--muted) 40%, var(--card));
+  --ib-soft-selection: ;   /* the open row: a neutral fill (off: today's accent tint) */
+  --ib-soft-nav: ;         /* the sidebar's current page: a lifted card (off: today's accent tint and text) */
+  --ib-soft-badges: ;      /* Stopped and Holds up: tinted pills (off: today's outlined badges) */
+  --ib-soft-rows: ;        /* rows part by space (off: today's hairline under each row) */
+  --ib-soft-quiet: ;       /* quiet text stepped for the ground and raised surfaces (off: today's colours) */
+}
+.pn-inbox {
+  /* The shadows' colour: the palette's own background taken toward black in its own hue (dark); the text
+     colour (light, below). Without relative colours it is the background, and the ground is the background. */
+  --ib-shadow-ink: var(--inbox-shadow-ink, var(--background));
+  --ib-ground: var(--inbox-ground, color-mix(in oklch, var(--background) 82%, var(--ib-shadow-ink)));
+  --ib-raise: var(--inbox-raise, color-mix(in oklch, var(--muted) 40%, var(--card)));
   --ib-hover: color-mix(in oklch, var(--muted) 45%, transparent);
   --ib-fill: color-mix(in oklch, var(--foreground) 7%, transparent);
   --ib-gutter: 8px;
   --ib-pane-r: 14px;
-  --ib-pane-shadow: 0 0 0 1px oklch(100% 0 0 / 0.06), inset 0 1px 0 oklch(100% 0 0 / 0.04), 0 8px 24px -10px oklch(0% 0 0 / 0.6);
-  --ib-float-shadow: 0 0 0 1px oklch(100% 0 0 / 0.08), 0 16px 40px -10px oklch(0% 0 0 / 0.7);
+  --ib-pane-shadow: var(--inbox-pane-shadow, 0 0 0 1px color-mix(in oklch, var(--foreground) 6%, transparent), inset 0 1px 0 color-mix(in oklch, var(--foreground) 4%, transparent), 0 8px 24px -10px color-mix(in oklch, var(--ib-shadow-ink) 60%, transparent));
+  --ib-float-shadow: var(--inbox-float-shadow, 0 0 0 1px color-mix(in oklch, var(--foreground) 8%, transparent), 0 16px 40px -10px color-mix(in oklch, var(--ib-shadow-ink) 70%, transparent));
   --ib-band: color-mix(in oklch, var(--muted) 75%, var(--card));
-  /* A selected row's pill (dark first; light below), and the light a row gets after Show. */
-  --ib-sel: var(--ib-fill);
-  --ib-sel-hover: color-mix(in oklch, var(--foreground) 10%, transparent);
   --ib-lit: color-mix(in oklch, var(--primary) 15%, var(--card));
   --ib-line: color-mix(in oklch, var(--border) 70%, transparent);
   --ib-hair: color-mix(in oklch, var(--border) 55%, transparent);
+
+  /* Quiet text. Soft's (below, stepped where relative colours are there) or today's. Without relative
+     colours, Soft's is a step toward the text colour, so a palette whose muted text only just clears AA on
+     its own background still clears it on the slightly deeper ground and on a raised surface. */
+  --ib-side-fg-soft: var(--foreground);
+  --ib-side-mfg-soft: color-mix(in oklch, var(--muted-foreground) 70%, var(--foreground));
+  --ib-quiet-fg-soft: color-mix(in oklch, var(--muted-foreground) 75%, var(--foreground));
+  --ib-raise-fg-soft: var(--foreground);
+  --ib-raise-mfg-soft: var(--ib-quiet-fg-soft);
+  --ib-q-side-fg: var(--ib-soft-quiet) var(--ib-side-fg-soft);
+  --ib-q-side-mfg: var(--ib-soft-quiet) var(--ib-side-mfg-soft);
+  --ib-q-quiet-fg: var(--ib-soft-quiet) var(--ib-quiet-fg-soft);
+  --ib-q-raise-fg: var(--ib-soft-quiet) var(--ib-raise-fg-soft);
+  --ib-q-raise-mfg: var(--ib-soft-quiet) var(--ib-raise-mfg-soft);
+  --ib-side-fg: var(--ib-q-side-fg, var(--foreground));
+  --ib-side-mfg: var(--ib-q-side-mfg, var(--muted-foreground));
+  --ib-quiet-fg: var(--ib-q-quiet-fg, var(--muted-foreground));
+  --ib-raise-fg: var(--ib-q-raise-fg, var(--foreground));
+  --ib-raise-mfg: var(--ib-q-raise-mfg, var(--muted-foreground));
+  /* A Sent or Quiet row's subject (Soft steps it back; today only Sent's is). Used as var(--ib-quiet-dim, currentcolor). */
+  --ib-quiet-dim: var(--ib-soft-quiet) var(--muted-foreground);
+
+  /* The selected row's pill: a neutral fill (Soft) or the accent's tint (today; dark here, light below). */
+  --ib-sel-today: color-mix(in oklch, var(--primary) 15%, transparent);
+  --ib-sel-hover-today: color-mix(in oklch, var(--primary) 19%, transparent);
+  --ib-sel-s: var(--ib-soft-selection) var(--ib-fill);
+  --ib-sel-hover-s: var(--ib-soft-selection) color-mix(in oklch, var(--foreground) 10%, transparent);
+  --ib-sel: var(--ib-sel-s, var(--ib-sel-today));
+  --ib-sel-hover: var(--ib-sel-hover-s, var(--ib-sel-hover-today));
+
+  /* The sidebar's current page: a lifted card with the icon in the accent (Soft) or the accent's tint and
+     text (today). */
+  --ib-cur-bg-s: var(--ib-soft-nav) var(--card);
+  --ib-cur-fg-s: var(--ib-soft-nav) var(--foreground);
+  --ib-cur-shadow-s: var(--ib-soft-nav) 0 1px 2px color-mix(in oklch, var(--foreground) 8%, transparent), 0 0 0 1px color-mix(in oklch, var(--border) 50%, transparent);
+  --ib-cur-bg: var(--ib-cur-bg-s, color-mix(in oklch, var(--primary) 12%, transparent));
+  --ib-cur-fg: var(--ib-cur-fg-s, var(--primary));
+  --ib-cur-shadow: var(--ib-cur-shadow-s, none);
+
+  /* The status badges: tinted pills (Soft) or today's outline. */
+  --ib-badge-border-s: var(--ib-soft-badges) transparent;
+  --ib-badge-radius-s: var(--ib-soft-badges) 999px;
+  --ib-badge-weight-s: var(--ib-soft-badges) 600;
+  --ib-badge-bg-s: var(--ib-soft-badges) color-mix(in oklch, var(--muted) 80%, transparent);
+  --ib-badge-stop-bg-s: var(--ib-soft-badges) color-mix(in oklch, var(--destructive) 13%, transparent);
+  --ib-badge-hold-bg-s: var(--ib-soft-badges) color-mix(in oklch, var(--warning) 17%, transparent);
+  --ib-badge-stop-fg-soft: color-mix(in oklab, var(--destructive) 70%, var(--foreground));
+  --ib-badge-hold-fg-soft: color-mix(in oklab, var(--warning) 50%, var(--foreground));
+  --ib-badge-stop-fg-s: var(--ib-soft-badges) var(--ib-badge-stop-fg-soft);
+  --ib-badge-hold-fg-s: var(--ib-soft-badges) var(--ib-badge-hold-fg-soft);
+  --ib-badge-border: var(--ib-badge-border-s, color-mix(in oklch, var(--foreground) 35%, transparent));
+  --ib-badge-radius: var(--ib-badge-radius-s, 6px);
+  --ib-badge-weight: var(--ib-badge-weight-s, 550);
+  --ib-badge-bg: var(--ib-badge-bg-s, transparent);
+  --ib-badge-stop-bg: var(--ib-badge-stop-bg-s, transparent);
+  --ib-badge-hold-bg: var(--ib-badge-hold-bg-s, transparent);
+  /* Used as var(--ib-badge-stop-fg, currentcolor): today's badge takes its row's colour. */
+  --ib-badge-stop-fg: var(--ib-badge-stop-fg-s);
+  --ib-badge-hold-fg: var(--ib-badge-hold-fg-s);
+
+  /* The line under each row: none (Soft; its 1 px stays, transparent) or today's hairline. */
+  --ib-row-line-s: var(--ib-soft-rows) transparent;
+  --ib-row-line: var(--ib-row-line-s, var(--ib-hair));
+
   height: 100%;
   font-family: var(--font-sans);
   font-feature-settings: "ss01", "ss02", "cv01";
@@ -43,30 +118,35 @@
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
-/* Where relative colours and sign() are there: the sidebar's text is mixed a little toward black on a light
-   ground and toward white on a dark one (whatever the palette calls its half), so the deeper ground never
-   costs contrast. */
+/* Where relative colours and sign() are there: the shadows' colour is the background taken toward black in its
+   own hue, and text Soft draws on the deeper ground or a lifted surface is mixed a little toward black on a light
+   surface and toward white on a dark one (whatever the palette calls its half), so it never costs contrast. */
 @supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
   .pn-inbox {
+    --ib-shadow-ink: var(--inbox-shadow-ink, oklch(from var(--background) calc(l * 0.2) calc(c * 0.5) h));
     /* No hue (`none`): mixed into a colour, the ink moves its lightness and keeps its hue. */
     --ib-ink: oklch(from var(--ib-ground) calc(0.5 - sign(l - 0.6) * 0.5) 0 none);
-    --ib-side-fg: color-mix(in oklch, var(--foreground) 88%, var(--ib-ink));
-    --ib-side-mfg: color-mix(in oklch, var(--muted-foreground) 78%, var(--ib-ink));
-    /* The same step on a pane: toward black on a light card, white on a dark one. A Soft surface that is not
-       the palette's own card (the raised question card and tiles), and the quiet text Soft draws where the
-       window had full-strength text (the section headers, the chips), never cost a palette its contrast. */
     --ib-card-ink: oklch(from var(--card) calc(0.5 - sign(l - 0.6) * 0.5) 0 none);
-    --ib-quiet-fg: color-mix(in oklch, var(--muted-foreground) 82%, var(--ib-card-ink));
-    --ib-raise-fg: color-mix(in oklch, var(--foreground) 88%, var(--ib-card-ink));
-    --ib-raise-mfg: color-mix(in oklch, var(--muted-foreground) 78%, var(--ib-card-ink));
+    --ib-side-fg-soft: color-mix(in oklch, var(--foreground) 88%, var(--ib-ink));
+    --ib-side-mfg-soft: color-mix(in oklch, var(--muted-foreground) 78%, var(--ib-ink));
+    --ib-quiet-fg-soft: color-mix(in oklch, var(--muted-foreground) 82%, var(--ib-card-ink));
+    --ib-raise-fg-soft: color-mix(in oklch, var(--foreground) 88%, var(--ib-card-ink));
+    --ib-raise-mfg-soft: color-mix(in oklch, var(--muted-foreground) 78%, var(--ib-card-ink));
+    /* The badge's words step toward the card's ink rather than the text colour, so a palette's red or amber
+       reads on its own tint. */
+    --ib-badge-stop-fg-soft: color-mix(in oklab, var(--destructive) 50%, var(--ib-card-ink));
+    --ib-badge-hold-fg-soft: color-mix(in oklab, var(--warning) 45%, var(--ib-card-ink));
   }
 }
 :root.light .pn-inbox {
-  --ib-ground: color-mix(in oklch, var(--muted) 55%, var(--background));
-  --ib-pane-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 55%, transparent), 0 1px 2px color-mix(in oklch, var(--foreground) 5%, transparent), 0 6px 18px -8px color-mix(in oklch, var(--foreground) 12%, transparent);
-  --ib-float-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 70%, transparent), 0 12px 32px -8px color-mix(in oklch, var(--foreground) 22%, transparent);
+  --ib-shadow-ink: var(--inbox-shadow-ink, var(--foreground));
+  --ib-ground: var(--inbox-ground, color-mix(in oklch, var(--muted) 55%, var(--background)));
+  --ib-pane-shadow: var(--inbox-pane-shadow, 0 0 0 1px color-mix(in oklch, var(--border) 55%, transparent), 0 1px 2px color-mix(in oklch, var(--ib-shadow-ink) 5%, transparent), 0 6px 18px -8px color-mix(in oklch, var(--ib-shadow-ink) 12%, transparent));
+  --ib-float-shadow: var(--inbox-float-shadow, 0 0 0 1px color-mix(in oklch, var(--border) 70%, transparent), 0 12px 32px -8px color-mix(in oklch, var(--ib-shadow-ink) 22%, transparent));
   --ib-band: color-mix(in oklch, var(--muted) 55%, var(--card));
   --ib-lit: color-mix(in oklch, var(--primary) 10%, var(--card));
+  --ib-sel-today: color-mix(in oklch, var(--primary) 10%, transparent);
+  --ib-sel-hover-today: color-mix(in oklch, var(--primary) 14%, transparent);
 }
 /* Resets in Tailwind's base layer: the window's own classes (unlayered) and
    ui's utilities (the question card inside Viewer) both win over them. */
@@ -137,8 +217,8 @@ button.ib-mut { border-radius: 6px; }
 .ib-nav .ib-n { margin-left: auto; font-size: 12.5px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 /* The page shown: a lifted card on the ground (the panes' own surface), its icon in the accent; the words stay the text colour. */
 .ib-nav:hover:not(.ib-on):not(:disabled) { background: color-mix(in oklch, var(--card) 55%, transparent); }
-.ib-nav.ib-on .ib-n { color: var(--foreground); }
-.ib-nav.ib-on, .ib-proj.ib-on { background: var(--card); color: var(--foreground); font-weight: 550; box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 8%, transparent), 0 0 0 1px color-mix(in oklch, var(--border) 50%, transparent); }
+.ib-nav.ib-on .ib-n { color: var(--ib-cur-fg); }
+.ib-nav.ib-on, .ib-proj.ib-on { background: var(--ib-cur-bg); color: var(--ib-cur-fg); font-weight: 550; box-shadow: var(--ib-cur-shadow); }
 .ib-nav .ib-ic { color: var(--muted-foreground); }
 .ib-nav.ib-on .ib-ic { color: var(--primary); }
 .ib-nav:disabled { opacity: 0.55; }
@@ -405,23 +485,17 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 button.ib-band { transition: background-color 140ms ease-out; }
 button.ib-band:hover { background: color-mix(in oklch, var(--muted) 70%, var(--card)); }
 /* Rows part by space, not rules. */
-.ib-row, .ib-nrow { border-bottom-color: transparent; }
+.ib-row, .ib-nrow { border-bottom-color: var(--ib-row-line); }
 :is(.ib-row, .ib-nrow, button.ib-drow)::before { border-radius: 10px; }
 :is(.ib-row, .ib-nrow, button.ib-drow):hover::before { background: var(--ib-hover) !important; }
 /* Rows that wait on nobody (Sent, Quiet): the subject steps back. */
-:is(.ib-row, .ib-nrow)[data-section="quiet"] :is(.ib-s, .ib-l2 .ib-s) { color: var(--muted-foreground); }
+:is(.ib-row, .ib-nrow)[data-section="quiet"] :is(.ib-s, .ib-l2 .ib-s) { color: var(--ib-quiet-dim, currentcolor); }
 /* The thread chip: a quiet pill in the window's own face (a name, not code; audit 4). */
 .ib-key { font-family: inherit; font-weight: 500; color: var(--ib-quiet-fg); background: color-mix(in oklch, var(--muted) 75%, transparent); border-color: transparent; border-radius: 999px; }
 /* The status badges (audit 3): tinted pills, never outlined like a button. */
-.ib-badge { border-color: transparent; border-radius: 999px; font-weight: 600; background: color-mix(in oklch, var(--muted) 80%, transparent); color: var(--foreground); }
-.ib-badge.ib-b-stop { background: color-mix(in oklch, var(--destructive) 13%, transparent); color: color-mix(in oklab, var(--destructive) 70%, var(--foreground)); }
-.ib-badge.ib-b-hold { background: color-mix(in oklch, var(--warning) 17%, transparent); color: color-mix(in oklab, var(--warning) 50%, var(--foreground)); }
-/* Where relative colours are there, the badge's words step toward black on a light card and white on a dark
-   one rather than toward the text colour, so a palette's red or amber reads on its own tint. */
-@supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
-  .ib-badge.ib-b-stop { color: color-mix(in oklab, var(--destructive) 50%, var(--ib-card-ink)); }
-  .ib-badge.ib-b-hold { color: color-mix(in oklab, var(--warning) 45%, var(--ib-card-ink)); }
-}
+.ib-badge { border-color: var(--ib-badge-border); border-radius: var(--ib-badge-radius); font-weight: var(--ib-badge-weight); background: var(--ib-badge-bg); }
+.ib-badge.ib-b-stop { background: var(--ib-badge-stop-bg); color: var(--ib-badge-stop-fg, currentcolor); }
+.ib-badge.ib-b-hold { background: var(--ib-badge-hold-bg); color: var(--ib-badge-hold-fg, currentcolor); }
 .ib-att { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 13px; white-space: nowrap; flex: none; }
 .ib-notice { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 8px; background: color-mix(in oklch, var(--primary) 10%, var(--card)); border: 1px solid color-mix(in oklch, var(--primary) 25%, transparent); font-size: 13.5px; margin-bottom: 12px; width: 100%; text-align: left; }
 .ib-notice b { margin-left: auto; color: var(--primary); font-weight: 550; }
@@ -2540,7 +2614,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 /* The Soft paint on a phone's list: today's rows and sticky section headers, rows parted by space. */
 @media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
   .ib-lbody .ib-band { background: var(--ib-raise); }
-  .ib-mrow { border-bottom-color: transparent; }
+  .ib-mrow { border-bottom-color: var(--ib-row-line); }
   .ib-mrow:active { background: var(--ib-hover); }
 }
 
@@ -2556,7 +2630,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .pn-inbox .ib-hbtn:hover:not(:disabled) { background: var(--ib-hover); }
 .pn-inbox .ib-hbtn[aria-pressed="true"] { background: var(--ib-fill); border-color: transparent; color: var(--foreground); }
 .pn-inbox .ib-hbtn[aria-pressed="true"] svg.ib-ic { color: var(--primary); }
-.ib-hbtn .ib-kbd, .ib-hbtn[aria-pressed="true"] .ib-kbd { border-color: transparent; background: transparent; color: var(--ib-quiet-fg); }
+.ib-hbtn .ib-kbd, .ib-hbtn[aria-pressed="true"] .ib-kbd { border-color: transparent; background: transparent; color: color-mix(in oklch, var(--ib-quiet-fg) 70%, var(--foreground)); }
 .pn-inbox .ib-iconbtn { border-radius: 10px; transition: background-color 140ms ease-out, color 140ms ease-out; }
 .pn-inbox .ib-iconbtn:hover { background: var(--ib-hover); color: var(--foreground); }
 .pn-inbox .ib-ptool { border-radius: 10px; }
