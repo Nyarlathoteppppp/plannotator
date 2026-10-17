@@ -115,8 +115,8 @@ button.ib-mut { border-radius: 6px; }
 }
 .ib-mk { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .ib-mk > svg, .ib-mk > img { width: 16px; height: 16px; display: block; }
-.ib-mk.ib-big { width: 30px; height: 30px; border-radius: 8px; background: var(--muted); }
-.ib-mk.ib-big > svg, .ib-mk.ib-big > img { width: 17px; height: 17px; }
+.ib-mk.ib-big { width: 28px; height: 28px; border-radius: 9px; background: var(--muted); }
+.ib-mk.ib-big > svg, .ib-mk.ib-big > img { width: 16px; height: 16px; }
 
 /* shell */
 .ib-shell { display: flex; height: 100%; width: 100%; overflow: hidden; }
@@ -1455,8 +1455,8 @@ button.ib-vtime:hover { background: color-mix(in oklch, var(--primary) 22%, tran
 @media (prefers-reduced-motion: reduce) {
   .ib-msg[data-revealed], .ib-fline[data-revealed] .ib-fl-meta { animation: none; }
 }
-.ib-fline .ib-mk.ib-big { width: 24px; height: 24px; border-radius: 6px; }
-.ib-fline .ib-mk.ib-big > svg, .ib-fline .ib-mk.ib-big > img { width: 14px; height: 14px; }
+.ib-fline .ib-mk.ib-big { width: 24px; height: 24px; border-radius: 8px; }
+.ib-fline .ib-mk.ib-big > svg, .ib-fline .ib-mk.ib-big > img { width: 16px; height: 16px; }
 .ib-fl-nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ib-fl-sn { color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .ib-fl-sn b { font-weight: 600; color: var(--foreground); }
