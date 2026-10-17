@@ -414,6 +414,64 @@ describe("a 👍 the window ends after the thread moved on", () => {
   });
 });
 
+describe("wait_for_reply never answers acknowledged for a 👍 that was not sent", () => {
+  const waitWith = async (client: Client, threadId: string, cursor: number | undefined, seconds = 1) =>
+    (await client.callTool({
+      name: "wait_for_reply",
+      arguments: { thread_id: threadId, agent_session: SESSION, timeout_seconds: seconds, ...(cursor === undefined ? {} : { cursor }) },
+    })) as { structuredContent: { status: string; cursor: number; reply?: { message_id: string } } };
+
+  test("replied, stored: after the reply was returned, a wait past it finds the settled-but-not-sent 👍 and keeps waiting", async () => {
+    const { server, client, threadId, messageId } = await setup();
+    await ack(server, messageId);
+    const replied = await post(server, `/api/inbox/messages/${messageId}/reply`, { serverSession: server.serverSession, idempotency_key: "r-stored", words: "Also bump the version." });
+    const replyId = ((await replied.json()) as { reply: { id: string } }).reply.id;
+    const got = await waitWith(client, threadId, undefined);
+    expect(got.structuredContent.status).toBe("replied");
+    expect(got.structuredContent.reply?.message_id).toBe(replyId);
+    await Bun.sleep(DELAY + 400);
+    // The ack settled after the reply, on the caller's latest message: only `not_sent` keeps it out.
+    // Read the values first: Bun's toMatchObject writes an asymmetric matcher into the object it is given.
+    const settled = { ...server.store.message(messageId)?.ack };
+    expect(settled.not_sent).toBe("replied");
+    expect(settled.settled_seq ?? 0).toBeGreaterThan(got.structuredContent.cursor);
+    expect((await waitWith(client, threadId, got.structuredContent.cursor)).structuredContent.status).toBe("waiting");
+  });
+
+  test("replied, live: a wait held past the reply is not ended by the settle line of the not-sent 👍", async () => {
+    const { server, client, threadId, messageId } = await setup();
+    await ack(server, messageId);
+    const replied = await post(server, `/api/inbox/messages/${messageId}/reply`, { serverSession: server.serverSession, idempotency_key: "r-live", words: "Also bump the version." });
+    expect(replied.status).toBe(200);
+    const got = await waitWith(client, threadId, undefined);
+    expect(got.structuredContent.status).toBe("replied");
+    const held = waitWith(client, threadId, got.structuredContent.cursor, 2);
+    await Bun.sleep(DELAY + 400);
+    expect(server.store.message(messageId)!.ack).toMatchObject({ not_sent: "replied" });
+    expect((await held).structuredContent.status).toBe("waiting");
+  });
+
+  test("wrote again, stored: the agent's newer question is what a wait waits on; the old 👍 never answers it", async () => {
+    const { server, client, threadId, messageId, send } = await setup();
+    await ack(server, messageId);
+    await send(QUESTION, messageId);
+    await Bun.sleep(DELAY + 400);
+    expect(server.store.message(messageId)!.ack).toMatchObject({ not_sent: "wrote_again" });
+    expect((await waitWith(client, threadId, undefined)).structuredContent.status).toBe("waiting");
+    expect((await waitWith(client, threadId, 0)).structuredContent.status).toBe("waiting");
+  });
+
+  test("wrote again, live: a wait held on the newer question keeps waiting through the settle line", async () => {
+    const { server, client, threadId, messageId, send } = await setup();
+    await ack(server, messageId);
+    await send(QUESTION, messageId);
+    const held = waitWith(client, threadId, undefined, 2);
+    await Bun.sleep(DELAY + 400);
+    expect(server.store.message(messageId)!.ack).toMatchObject({ not_sent: "wrote_again" });
+    expect((await held).structuredContent.status).toBe("waiting");
+  });
+});
+
 describe("the Pi and OpenCode wake (agent-link)", () => {
   for (const host of [
     { id: "pi", name: "Pi" },
