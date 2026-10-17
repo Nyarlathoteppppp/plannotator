@@ -553,6 +553,22 @@ describe.skipIf(!hasDom)('seen on sight in the thread pane', () => {
     expect(seen).toEqual([6]);
   });
 
+  test('a short arrival at the end that lands while the tab is hidden: on return, with no scroll, the pill goes and it is seen', async () => {
+    stub(HTMLElement.prototype, 'scrollHeight', { get: () => 1200 });
+    stub(HTMLElement.prototype, 'clientHeight', { get: () => 800 });
+    stub(HTMLElement.prototype, 'scrollTop', { get: () => 400, set: () => {} });
+    stub(HTMLElement.prototype, 'scrollBy', { value: () => {} });
+    visibility = 'hidden';
+    boxes = { msg_A2: { top: 752, height: 40 } };
+    const seen: number[] = [];
+    const el = await openThenArrive({ onSeen: (through) => seen.push(through) }, A2);
+    const pill = el.querySelector<HTMLButtonElement>('[data-new-pill]')!;
+    visibility = 'visible';
+    act(() => void document.dispatchEvent(new Event('visibilitychange')));
+    await wait(SEEN_DWELL_MS + 400);
+    expect({ off: pill.hasAttribute('data-off'), seen }).toEqual({ off: true, seen: [6] });
+  });
+
   test('a hidden tab marks nothing: an arrival on screen while the tab is hidden still counts once the person scrolls away', async () => {
     visibility = 'hidden';
     boxes = { msg_A2: { top: 400, height: 200 } };

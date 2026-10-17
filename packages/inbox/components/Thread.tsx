@@ -1270,6 +1270,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
     body.addEventListener('scroll', trackEnd, { passive: true });
     body.addEventListener('scroll', updateChrome, { passive: true });
     window.addEventListener('resize', updateChrome);
+    document.addEventListener('visibilitychange', updateChrome);
     // The thread's own box changes without a scroll or a window resize when
     // the foot grows (the reply box, the stale guard, the New-message
     // composer) or a file opens beside it.
@@ -1279,6 +1280,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       body.removeEventListener('scroll', trackEnd);
       body.removeEventListener('scroll', updateChrome);
       window.removeEventListener('resize', updateChrome);
+      document.removeEventListener('visibilitychange', updateChrome);
       resized?.disconnect();
     };
   }, [updateChrome]);
@@ -1319,7 +1321,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       }
     }
     updateChrome();
-  }, [foldState, thread, file?.id, updateChrome, sighted]);
+  }, [foldState, thread, file?.id, updateChrome, sighted, paneCovered]);
 
   /**
    * n goes to the first new message (at the divider); the pill to what it
