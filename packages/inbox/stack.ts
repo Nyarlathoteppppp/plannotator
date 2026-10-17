@@ -45,20 +45,9 @@ export interface Stack {
 export const NO_STACK: Stack = { thread: false, file: false, decision: false };
 
 /**
- * The ground the panes float on (inbox.css `--ib-gutter`, 8 px): one gutter on
- * each side of `.ib-main` and one between its two panes. The room measured for
- * the panes leaves them out, so two panes stack rather than draw narrower than
- * their readable widths (440 and 480 px): a window stacks 24 px wider than it
- * did before the panes floated (an iPad on its side, 1080 px, still keeps the
- * list beside a 444 px thread).
- */
-export const PANE_GUTTERS = 3 * 8;
-
-/**
  * Which panes cover which, for the room the list and its pane share
- * (`.ib-main`, the window less the docked sidebar, less the gutters) and the
- * window's width less the gutters (an open file closes the sidebar, so it
- * shares the whole window with its thread).
+ * (`.ib-main`, the window less the docked sidebar) and the window's width (an
+ * open file closes the sidebar, so it shares the whole window with its thread).
  */
 export function stackFor(mainWidth: number, windowWidth: number): Stack {
   return {
@@ -95,11 +84,26 @@ function mainWidthOf(root: HTMLElement): number {
  * (the window, the sidebar's resize edge) handles everything else. Off on a
  * phone, which shows one screen at a time already (phone.ts).
  */
+/**
+ * The room the floating panes' gutters take: one on each side of `.ib-main` and one between its two panes,
+ * read from inbox.css's `--ib-gutter`, 8 px while the Soft look's panes switch (`--ib-soft-panes`) is on and
+ * 0 while it is off (today's flat window). Measured rooms leave them out, so two panes stack rather than draw
+ * narrower than their readable widths.
+ */
+export function paneGutters(el?: Element | null): number {
+  if (typeof document === 'undefined') return 0;
+  const root = el ?? document.querySelector('.pn-inbox');
+  if (!root) return 0;
+  const gutter = parseFloat(getComputedStyle(root).getPropertyValue('--ib-gutter'));
+  return Number.isFinite(gutter) ? 3 * gutter : 0;
+}
+
 export function useStack(ref: RefObject<HTMLElement | null>, phone: boolean, deps: DependencyList): Stack {
   const [stack, setStack] = useState<Stack>(NO_STACK);
   const measure = () => {
     const root = ref.current;
-    const next = phone || !root ? NO_STACK : stackFor(mainWidthOf(root) - PANE_GUTTERS, root.getBoundingClientRect().width - PANE_GUTTERS);
+    const gutters = paneGutters(root);
+    const next = phone || !root ? NO_STACK : stackFor(mainWidthOf(root) - gutters, root.getBoundingClientRect().width - gutters);
     setStack((current) => (same(current, next) ? current : next));
   };
   // The caller's deps are what change the sidebar's target in the same commit.
