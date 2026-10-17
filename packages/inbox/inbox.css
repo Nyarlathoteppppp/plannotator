@@ -2980,6 +2980,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
    surface's switch. */
 .pn-inbox fieldset.question-block { --foreground: var(--ib-qc-fg-s, var(--ib-fg0)); --muted-foreground: var(--ib-qc-mfg-s, var(--ib-mfg0)); color: var(--ib-qc-color-s); }
 .pn-inbox :is(.ib-att-t, .ib-hatts, .ib-readline, .ib-route, .ib-mfold-b > span) { --foreground: var(--ib-sf-fg-s, var(--ib-fg0)); --muted-foreground: var(--ib-sf-mfg-s, var(--ib-mfg0)); color: var(--ib-sf-color-s); }
+.pn-inbox .ib-mfold-b > span { color: var(--ib-sf-color-s, var(--muted-foreground)); }
 @supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
   /* The accent's words on the card (Recommended, the decision tag) and the read line: the same step. Accept
      recommended's words sit on its own tint, so they take a further step (AA on every palette, nord dark
@@ -3043,7 +3044,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .pn-inbox .ib-pfoot .ib-btn:hover:not(:disabled) { background: var(--ib-ft-hover-s, var(--card)); }
 .pn-inbox .ib-pfoot .ib-btn.ib-pri { border-color: var(--ib-ft-line-s, var(--primary)); background: var(--primary); color: var(--primary-foreground); }
 .pn-inbox .ib-pfoot .ib-btn.ib-pri:hover:not(:disabled) { background: var(--ib-ft-pri-hover-s, var(--primary)); }
-.pn-inbox .ib-pfoot .ib-btn.ib-ghost { background: transparent; color: var(--ib-ft-fg-s, var(--muted-foreground)); }
+.pn-inbox .ib-pfoot .ib-btn.ib-ghost { border-color: transparent; background: transparent; color: var(--ib-ft-fg-s, var(--muted-foreground)); }
 .pn-inbox .ib-pfoot .ib-btn.ib-ghost:hover:not(:disabled) { background: var(--ib-ft-ghost-hover-s, transparent); color: var(--ib-hb-fg-s, var(--muted-foreground)); }
 .pn-inbox .ib-pfoot .ib-btn[aria-pressed="true"] { background: var(--ib-ft-pressed-s, color-mix(in srgb, var(--success) 14%, var(--card))); }
 .pn-inbox .ib-pfoot .ib-btn.ib-on { border-color: var(--ib-ft-line-s, color-mix(in oklch, var(--primary) 55%, transparent)); background: var(--ib-ft-on-s, color-mix(in oklch, var(--primary) 10%, var(--card))); color: var(--ib-ft-fg-s, var(--primary)); }
