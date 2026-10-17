@@ -20,9 +20,9 @@
 
    Switches. Each turns one part of the Soft paint on or off, and nothing else: a space (`--ib-soft-x: ;`) is
    Soft, `initial` is today's. They work by the space-toggle: a token built as `var(--ib-soft-x) <Soft value>`
-   is invalid while its switch is `initial`, so `var(<token>, <today's value>)` falls back to today's (or, for
-   ui's own drawing, `revert-layer`, which gives ui's value back). A switch may differ per mode: the light
-   block below sets the light half.
+   is invalid while its switch is `initial`, so `var(<token>, <today's value>)` falls back to today's (for
+   ui's own drawing, ui's own values, named). A switch may differ per mode: the light block below sets
+   the light half.
 
    The values are the owner's (two blind rounds, 2026-10-16; .product/approved/inbox-soft/approval.md):
    today's background and panes, selected row, lines and section band in both modes; Soft's badges, fewer
