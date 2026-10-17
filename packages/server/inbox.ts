@@ -132,12 +132,14 @@ import { inboxCanonicalBaseUrl, inboxCanonicalRedirect } from "./inbox-canonical
 import { createInboxWindows, parseWindowId, parseWindowOrigin, parseWindowPermission } from "./inbox-windows";
 import {
   agentSpec,
+  claudeCodeModOn,
   connectInboxAgents,
   createAgentEnvironment,
   createAgentEnvironmentFor,
   displayPath,
   inboxAgentReach,
   inboxConnectDisabled,
+  inboxPluginStatus,
   readInboxAgents,
   setInboxAgentReach,
   setInboxTool,
@@ -375,6 +377,8 @@ const ERROR_STATUS: Record<string, number> = {
   // Compose: a new thread the person starts (packages/server/inbox-compose.ts).
   already_delivered: 409,
   not_addressed: 422,
+  // A thread name another open thread of the project already has.
+  thread_name_taken: 409,
   draft_conflict: 409,
   upload_refused: 422,
   upload_too_large: 413,
@@ -784,12 +788,25 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         const reach = await inboxAgentReach(id, options);
         const host = (INBOX_TOOL_HOSTS as readonly string[]).includes(id) ? (id as InboxToolHost) : null;
         // The Inbox tool switch of the three Plannotator hosts stays reachable whether or not the agent was found.
-        const tool = host ? { on: resolveInboxTool(config, env, host), locked: toolEnv !== undefined } : null;
-        const reminder = host ? { on: resolveInboxReminder(config, env, host), locked: toolEnv !== undefined, needs_tool: !resolveInboxTool(config, env, host) } : null;
+        // chosen_off: config.json turns it off by name (the person's choice, e.g. Settings' switch), not the host default.
+        // Claude Code's tool comes from its plugin's mod: with the mod off (PLANNOTATOR_CLAUDE_MOD / claudeCodeMod) there is none.
+        const modOff = id === "claude-code" && !claudeCodeModOn(agentEnvironment);
+        const tool = host
+          ? {
+              on: !modOff && resolveInboxTool(config, env, host),
+              locked: toolEnv !== undefined,
+              chosen_off: toolEnv === undefined && configuredInboxTool(config, host) === false,
+              ...(modOff ? { mod_off: true } : {}),
+            }
+          : null;
+        // No tool (the inboxTool switch, or Claude Code's mod off): no reminder.
+        const reminder = host
+          ? { on: !modOff && resolveInboxReminder(config, env, host), locked: toolEnv !== undefined, needs_tool: modOff || !resolveInboxTool(config, env, host) }
+          : null;
         // With PLANNOTATOR_INBOX_NOTES=0 only a note already written is listed, so it can still be turned off.
         const status = (INBOX_NOTE_AGENT_IDS as readonly string[]).includes(id) ? noteStatus(id as InboxNoteAgentId, dataDir, agentEnvironment) : null;
         const note = status && (!notesOff || status.state === "added" || status.state === "edited") ? status : null;
-        return { id, label: INBOX_AGENT_LABELS[id], detected, reach, tool, reminder, note };
+        return { id, label: INBOX_AGENT_LABELS[id], detected, reach, tool, reminder, note, plugin: inboxPluginStatus(id, agentEnvironment) };
       }),
     );
     return {
@@ -1274,6 +1291,11 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
   // out again on every poll until it is delivered or an agent read it, and it
   // survives an Inbox restart.
   const threadPageUrl = (base: string, threadId: string) => `${base}#thread=${threadId}`;
+  /** The session a person's message without `to` goes to: the author of the message it answers. */
+  const recipientOf = (reply: InboxMessage): string | null => {
+    const parent = reply.reply_to ? store.message(reply.reply_to) : null;
+    return parent?.author.kind === "agent" ? parent.author.session : null;
+  };
   const replyCommand = (reply: InboxMessage): InboxReplyCommand => {
     // A reply the person sent to another session because the one that asked
     // had ended: the wake says so, naming the agent that asked.
@@ -1309,6 +1331,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       // A thread the person started: the wake says so (INBOX_NEW_THREAD_INSTRUCTION).
       ...(reply.started_by_person && reply.thread_id === reply.id ? { new_thread: true } : {}),
       ...(continues && !redirected ? { continues_thread: true } : {}),
+      // A thread the person started with no name yet, handed to a session that may name it: the wake asks it to.
+      ...(store.canNameThread(reply.thread_id, reply.to?.session ?? recipientOf(reply)) ? { name_thread: true } : {}),
     };
   };
 
