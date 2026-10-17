@@ -400,6 +400,13 @@ test('long, right-to-left and CJK text stays inside the palette', async () => {
   const arabic = palette(page).locator(`[data-result="thread"][data-result-id="${world.threads.arabic}"] .ib-sp-p`);
   await expect(arabic).toHaveAttribute('dir', 'auto');
   await expect(arabic).not.toHaveAttribute('title', /./);
+  // Cut it (a narrow box, as on a phone): hovered, the component tooltip holds the whole right-to-left text.
+  await arabic.evaluate((el) => ((el as HTMLElement).style.maxWidth = '140px'));
+  expect(await arabic.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  await arabic.hover();
+  await expect(palette(page).locator('[data-side].bg-popover')).toHaveText('تقرير أخطاء الدفع بعد آخر deploy على الخادم الثاني');
+  await page.mouse.move(1, 1);
+  await arabic.evaluate((el) => ((el as HTMLElement).style.maxWidth = ''));
   await shot(page, '09-stress-long-rtl');
 });
 

@@ -85,11 +85,10 @@ async function openPage(browser: import('@playwright/test').Browser) {
 test('nothing in the window has a native title; a cut project label and a sidebar project open the component tooltip at once', async ({ browser }) => {
   const { context, page } = await openPage(browser);
   try {
-    // The Inbox's own chrome. A question card's decision tag is @plannotator/ui's QuestionBlock (shared with plan
-    // review), which keeps its own title; an iframe's title is its accessible name.
+    // The whole window, ui's question card included (componentTooltips); an iframe's title is its accessible name.
     const titles = await page.evaluate(() =>
       [...document.querySelectorAll('.pn-inbox [title]')]
-        .filter((el) => el.tagName !== 'IFRAME' && !el.closest('[data-question-key]'))
+        .filter((el) => el.tagName !== 'IFRAME')
         .map((el) => `${el.tagName}.${el.className}: ${el.getAttribute('title')}`),
     );
     expect(titles).toEqual([]);
@@ -185,6 +184,35 @@ test('Escape with a tooltip open still closes the thread (the tooltip does not s
     await page.keyboard.press('Escape');
     await expect(page.locator('section.ib-pane')).toHaveCount(0);
     await expect(tooltip(page)).toHaveCount(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test('a wrapped control keeps its width: Mark read never spills over Archive, from 320 px to 1440 px', async ({ browser }) => {
+  const { context, page } = await openPage(browser);
+  try {
+    for (const width of [320, 390, 600, 810, 1024, 1280, 1440]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.waitForTimeout(150);
+      const boxes = await page.evaluate(() => {
+        const box = (sel: string) => document.querySelector(`section.ib-pane ${sel}`)?.getBoundingClientRect() ?? null;
+        const mark = box('[data-mark-read]');
+        const wrap = box('[data-tip-wrap]:has(> [data-mark-read])');
+        const archive = box('[data-archive]');
+        const button = document.querySelector<HTMLElement>('section.ib-pane [data-mark-read]');
+        const style = button ? getComputedStyle(button) : null;
+        const margins = style ? parseFloat(style.marginLeft) + parseFloat(style.marginRight) : 0;
+        return mark && archive && wrap && button
+          ? { markRight: mark.right, wrapWidth: wrap.width, markWidth: mark.width + margins, archiveLeft: archive.left, cut: button.scrollWidth > button.clientWidth }
+          : null;
+      });
+      expect(boxes, `the header at ${width}px`).not.toBeNull();
+      expect(boxes!.markRight, `Mark read ends before Archive at ${width}px`).toBeLessThanOrEqual(boxes!.archiveLeft);
+      // The wrapper is exactly as wide as the button it holds (with its margins), and the button is never squeezed.
+      expect(Math.abs(boxes!.wrapWidth - boxes!.markWidth), `the wrapper at ${width}px`).toBeLessThan(0.5);
+      expect(boxes!.cut, `Mark read squeezed at ${width}px`).toBe(false);
+    }
   } finally {
     await context.close();
   }

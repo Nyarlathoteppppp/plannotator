@@ -1,5 +1,9 @@
 import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
 import { Tooltip } from '@plannotator/ui/components/Tooltip';
+import { isTextCut, noHover } from '@plannotator/ui/utils/textCut';
+
+/** The cut check lives in ui (HostTitle uses it too): a whole pixel, or the text's Range wider than its box. */
+export { isTextCut };
 
 /** How long the pointer rests before a tooltip opens (the list chips' timing). */
 export const TIP_DELAY_MS = 150;
@@ -70,50 +74,6 @@ export function Tip({
       {trigger}
     </Tooltip>
   );
-}
-
-function noHover(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(hover: none)').matches;
-}
-
-/**
- * Is this element's text cut (its own overflow with "…", or a line clamp)?
- * A FileName (`.ib-fname`) is cut when its first part is. Rounding can hide
- * a cut of under a pixel (an Arabic chip measured a scrollWidth of 104 in a
- * clientWidth of 103 with its ellipsis showing), so any whole pixel counts,
- * and where layout can be read the text's own width is compared with the
- * box's content width to catch what rounding hides.
- */
-export function isTextCut(el: Element | null | undefined): boolean {
-  if (!(el instanceof HTMLElement)) return false;
-  const part = el.classList.contains('ib-fname') ? el.querySelector<HTMLElement>('.ib-fname-h') : null;
-  if (part && overflows(part)) return true;
-  return overflows(el);
-}
-
-function overflows(el: HTMLElement): boolean {
-  if (el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight + 1) return true;
-  if (el.clientWidth === 0 || typeof document.createRange !== 'function') return false;
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  const text = range.getBoundingClientRect?.().width ?? 0;
-  if (!(text > 0)) return false;
-  const style = getComputedStyle(el);
-  if (style.overflowX === 'visible') return false;
-  const box = el.getBoundingClientRect().width;
-  const inner =
-    box -
-    num(style.paddingLeft) -
-    num(style.paddingRight) -
-    num(style.borderLeftWidth) -
-    num(style.borderRightWidth);
-  // Chrome draws the ellipsis for any overflow (a chip lost 0.06 px): a hundredth of a pixel counts.
-  return text > inner + 0.01;
-}
-
-function num(value: string): number {
-  const n = Number.parseFloat(value);
-  return Number.isFinite(n) ? n : 0;
 }
 
 /** A project's tooltip: its whole name (a row may cut it) over its folder, which no row shows. */

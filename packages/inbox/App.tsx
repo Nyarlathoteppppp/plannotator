@@ -94,6 +94,9 @@ import type { DraftView } from './api';
 // Inbox does not have, so the composer says so instead of posting nowhere.
 configurePlannotatorUI({
   serverSync: inboxThemeSync,
+  // ui's own hover text (annotation panel and toolbar, question cards, links to attachments) as ui's Tooltip,
+  // never a native title (the owner, 2026-10-17).
+  componentTooltips: true,
   // Images in a message load from the Inbox's per-message route (#1813).
   imageSrcResolver: inboxImageSrcResolver,
   webmcp: { enabled: false, namePrefix: 'plannotator.' },

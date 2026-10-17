@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { Menu } from '@base-ui/react/menu';
 import type { ProjectFolder } from '../api';
@@ -132,15 +132,20 @@ function ProjectMenuItems({ name, readable, onAction }: { name: string; readable
 /**
  * A sidebar project's tooltip, on hover or keyboard focus: its whole name
  * (the row cuts a long one) over the folder it is, which the row never
- * shows. Always opens, since the folder is never on screen.
+ * shows. Always opens, since the folder is never on screen. A screen reader
+ * hears the folder as the row's description (visually hidden text named by
+ * `aria-describedby`), as it did from the native title.
  */
 export function ProjectTip({ name, root, children }: { name: string; root: string; children: ReactElement }) {
+  const describedBy = useId();
   return (
-    <Tip
-      side="right"
-      content={<ProjectTipText name={name} root={root} />}
-    >
-      {children}
-    </Tip>
+    <>
+      <Tip side="right" content={<ProjectTipText name={name} root={root} />}>
+        {cloneElement(children as ReactElement<{ 'aria-describedby'?: string }>, { 'aria-describedby': describedBy })}
+      </Tip>
+      <span id={describedBy} className="ib-sr" data-project-folder="">
+        {root}
+      </span>
+    </>
   );
 }

@@ -2589,5 +2589,5 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 
 /* Tip: a control that can be disabled hangs its tooltip on this wrapper, since a disabled control takes no
    pointer events; the pointer passes through the disabled control to the wrapper. */
-.ib-tipwrap { display: inline-flex; min-width: 0; }
+.ib-tipwrap { display: inline-flex; flex: none; }
 .ib-tipwrap > :disabled { pointer-events: none; }

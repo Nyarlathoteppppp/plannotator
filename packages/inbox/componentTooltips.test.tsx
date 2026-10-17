@@ -165,7 +165,9 @@ for (const withMenu of [true, false]) {
     expect(tip).toContain(LONG_PROJECT);
     expect(tip).toContain(`/Users/ramos/src/${LONG_PROJECT}`);
     expect(openTooltips().length).toBe(1);
-    // The row's accessible name is its own text, never the tooltip.
+    // The row's accessible name is its own text, never the tooltip; a screen reader hears the folder as its description.
     expect(project.textContent).toBe(`${LONG_PROJECT}1`);
+    const described = document.getElementById(project.getAttribute('aria-describedby') ?? '');
+    expect(described?.textContent).toBe(`/Users/ramos/src/${LONG_PROJECT}`);
   });
 }
