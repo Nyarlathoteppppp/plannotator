@@ -362,6 +362,23 @@ test('Settings shows the status, a test and the reach; after a port change "move
   await expect.poll(() => config().inboxNotifications?.allowedOrigin).toBe(new URL(url).origin);
 });
 
+test('an Inbox restart forgets the windows; the open tab reconnects and reports its permission as it is now', async () => {
+  const { page } = world;
+  // This tab's stream was opened before Allow, so its URL still says permission=default.
+  const health = async () =>
+    ((await (await fetch(`${world.url}api/inbox/health`)).json()) as { notify_reach: { windows: number; allowed: number } }).notify_reach;
+  await expect.poll(async () => (await health()).allowed).toBe(1);
+  const before = registry();
+  await stopScratchInbox(world.dataDir);
+  const url = startInbox();
+  expect(new URL(url).port).toBe(String(before.port));
+  // EventSource retries every 2 s; on its hello the page reports again.
+  await expect.poll(async () => health(), { timeout: 20_000 }).toMatchObject({ windows: 1, allowed: 1 });
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.locator('[data-settings-notifications] [data-notify-reach="yes"]')).toBeVisible();
+  await page.goto(url);
+});
+
 test('with permission, a Stopped thread raises exactly one notification with the subject', async () => {
   const { page } = world;
   await page.goto(world.url);

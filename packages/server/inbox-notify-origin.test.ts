@@ -103,19 +103,6 @@ test("the tailnet listener is never redirected", () => {
   expect(inboxCanonicalRedirect(req, new URL(req.url), 5555, "local")?.status).toBe(307);
 });
 
-test("with the fixed-address prototype's name active, loopback spellings (localhost too) go to the name; the name itself is served", async () => {
-  const { server } = await inbox({ canonicalUrl: () => "http://inbox.plannotator.localhost/" });
-  const port = server.port;
-  for (const host of [`localhost:${port}`, `127.0.0.1:${port}`]) {
-    const answer = await raw(port, "/", { Host: host, ...NAVIGATE });
-    expect(answer.status).toBe(307);
-    expect(answer.headers.location).toBe("http://inbox.plannotator.localhost/");
-  }
-  expect((await raw(port, "/", { Host: "inbox.plannotator.localhost", ...NAVIGATE })).status).toBe(200);
-  const settings = JSON.parse((await raw(port, "/api/inbox/settings", { Host: `localhost:${port}` })).text) as { canonical_url: string };
-  expect(settings.canonical_url).toBe("http://inbox.plannotator.localhost/");
-});
-
 /** Read an event stream until `until` matches, then stop. */
 async function readStream(response: Response, until: (text: string) => boolean, controller: AbortController): Promise<string> {
   const reader = response.body!.getReader();
@@ -225,6 +212,81 @@ test("a reconnect resumes from Last-Event-ID, not the cursor its URL was opened 
   controller.abort();
   expect(text).toContain(missed);
   expect(text).not.toContain(`"id":"${early}"`);
+
+  // An unusable Last-Event-ID (empty, not a number) falls back to the URL's cursor: neither a full replay nor none.
+  for (const header of ["", "abc", "-1", "1.5"]) {
+    const ctl = new AbortController();
+    const again = await fetch(`http://127.0.0.1:${server.port}/api/inbox/events?cursor=${seenUpTo}`, {
+      headers: { "Last-Event-ID": header },
+      signal: ctl.signal,
+    });
+    const got = await readStream(again, (t) => t.includes(missed) && t.includes('"kind":"question"'), ctl);
+    ctl.abort();
+    expect([header, got.includes(missed)]).toEqual([header, true]);
+    expect([header, got.includes(`"id":"${early}"`)]).toEqual([header, false]);
+  }
+});
+
+test("reach frames go to Inbox windows only, never to a stream without a window id (the phone's door, contract 7.9)", async () => {
+  const { server } = await inbox();
+  const base = `http://127.0.0.1:${server.port}`;
+  const plain = new AbortController();
+  const plainStream = await fetch(`${base}/api/inbox/events?cursor=0`, { signal: plain.signal });
+  const plainReader = plainStream.body!.getReader();
+  let plainText = "";
+  const reading = (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await plainReader.read();
+        if (done) break;
+        plainText += new TextDecoder().decode(value);
+      }
+    } catch {
+      // Aborted.
+    }
+  })();
+  const windowCtl = new AbortController();
+  const windowStream = await fetch(`${base}/api/inbox/events?cursor=0&window=w-tab-one-000&permission=granted`, { signal: windowCtl.signal });
+  const windowText = await readStream(windowStream, (t) => t.includes("event: reach"), windowCtl);
+  expect(windowText).toContain("event: reach");
+  // A second window opening changes the counts: the window streams hear it, the plain one never does.
+  const second = new AbortController();
+  const secondStream = await fetch(`${base}/api/inbox/events?cursor=0&window=w-tab-two-000&permission=default`, { signal: second.signal });
+  expect(await readStream(secondStream, (t) => t.includes("event: reach"), second)).toContain('"windows":2');
+  await Bun.sleep(200);
+  plain.abort();
+  windowCtl.abort();
+  second.abort();
+  await reading;
+  expect(plainText).toContain("event: hello");
+  expect(plainText).not.toContain("event: reach");
+});
+
+test("a reconnect past the grace comes back with its URL's stale permission; the page's report on hello puts it right", async () => {
+  const { server } = await inbox({ windowGraceMs: 50 });
+  const base = `http://127.0.0.1:${server.port}`;
+  const report = (permission: string) =>
+    fetch(`${base}/api/inbox/window`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ window: "w-tab-one-000", permission, origin: "http://localhost:1" }),
+    });
+  // Opened before the person allowed notifications, allowed since.
+  const url = `${base}/api/inbox/events?cursor=0&window=w-tab-one-000&permission=default&origin=${encodeURIComponent("http://localhost:1")}`;
+  const first = new AbortController();
+  await readStream(await fetch(url, { signal: first.signal }), (t) => t.includes("event: reach"), first);
+  await report("granted");
+  expect(await health(server)).toMatchObject({ windows: 1, allowed: 1 });
+  first.abort();
+  await Bun.sleep(120);
+  // EventSource reconnects with the same URL, past the grace (or after a restart): the record is new and stale.
+  const again = new AbortController();
+  await readStream(await fetch(url, { signal: again.signal }), (t) => t.includes("event: reach"), again);
+  expect(await health(server)).toMatchObject({ windows: 1, allowed: 0 });
+  // What the page does on the stream's hello (notify.ts reportWindow): the count is right again.
+  await report("granted");
+  expect(await health(server)).toMatchObject({ windows: 1, allowed: 1 });
+  again.abort();
 });
 
 test("createInboxWindows: a report that lands before its stream is kept; a reconnect keeps the reported permission", async () => {

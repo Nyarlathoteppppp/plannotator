@@ -16,10 +16,10 @@
  * (curl, the tests' fetches) are answered where they asked. The tailnet
  * listener never gets here (its requests carry `via: "tailnet"`), and any name
  * that is not a loopback literal (`inbox.plannotator.localhost`, a
- * `PLANNOTATOR_ALLOWED_HOSTS` name) is left alone. The fragment
- * (`#thread=…`) is kept by the browser across the redirect; the query is
- * carried in `Location`. 307 and `no-store`: never cached, since another
- * server may hold this port later.
+ * `PLANNOTATOR_ALLOWED_HOSTS` name) is left alone, so a proxy that rewrites
+ * Host to a name never loops. The fragment (`#thread=…`) is kept by the
+ * browser across the redirect; the query is carried in `Location`. 307 and
+ * `no-store`: never cached, since another server may hold this port later.
  */
 
 import { isLoopbackHostHeader } from "@plannotator/shared/loopback-host";
@@ -34,36 +34,15 @@ export function inboxCanonicalBaseUrl(port: number): string {
 
 /**
  * The redirect for a top-level navigation of `/` that reached this port by a
- * loopback spelling that is not the window's one address, or null to answer
- * the request as it is.
- *
- * `canonical`: another address the window lives at, set only by the
- * fixed-address prototype while its name is active
- * (`http://inbox.plannotator.localhost/`, proto/inbox-fixed-address). Then
- * `localhost:<port>` goes there too. The name's own requests never redirect:
- * their Host is not a loopback spelling of this port.
+ * loopback literal (`127.x.y.z`, `[::1]`), or null to answer the request as it is.
  */
-export function inboxCanonicalRedirect(
-  req: Request,
-  url: URL,
-  port: number,
-  via: "local" | "tailnet",
-  canonical: string | null = null,
-): Response | null {
+export function inboxCanonicalRedirect(req: Request, url: URL, port: number, via: "local" | "tailnet"): Response | null {
   if (via !== "local") return null;
   if (req.method !== "GET" || url.pathname !== "/") return null;
   if (req.headers.get("sec-fetch-mode") !== "navigate" || req.headers.get("sec-fetch-dest") !== "document") return null;
   const host = req.headers.get("host");
   if (!host || !isLoopbackHostHeader(host, port)) return null;
-  let target = inboxCanonicalBaseUrl(port);
-  if (canonical) {
-    try {
-      const parsed = new URL(canonical);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") target = `${parsed.origin}/`;
-    } catch {
-      // Not a URL: localhost stays the one address.
-    }
-  }
+  const target = inboxCanonicalBaseUrl(port);
   if (new URL(target).host === host.trim().toLowerCase()) return null;
   return new Response(null, {
     status: 307,

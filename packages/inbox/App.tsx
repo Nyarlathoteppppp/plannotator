@@ -460,7 +460,7 @@ function Inbox() {
       void refreshList(true);
     },
   });
-  const { observe: observeEvent, flush: flushNotifications, setReach: setNotifyReach, windowReport } = notifications;
+  const { observe: observeEvent, flush: flushNotifications, setReach: setNotifyReach, windowReport, reportWindow } = notifications;
 
   useEffect(() => {
     const onHash = () => {
@@ -766,6 +766,8 @@ function Inbox() {
         },
         // Whether any open Inbox tab can show a notification (Settings → General).
         onReach: setNotifyReach,
+        // Every (re)connect: the permission now, since a reconnect's URL may be stale.
+        onConnect: reportWindow,
       }, windowReport());
     })();
     return () => {
@@ -773,7 +775,7 @@ function Inbox() {
       unsubscribe();
       if (timer) clearTimeout(timer);
     };
-  }, [refreshList, refreshSettings, refreshThread, observeEvent, flushNotifications, refreshDecisions, decisionsProjectOf, setNotifyReach, windowReport]);
+  }, [refreshList, refreshSettings, refreshThread, observeEvent, flushNotifications, refreshDecisions, decisionsProjectOf, setNotifyReach, windowReport, reportWindow]);
 
   // Opening a thread: read it, record the look, and update its row in place.
   // While any thread is open the list holds still (settle.ts): the look

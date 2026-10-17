@@ -214,8 +214,6 @@ export interface SettingsModel {
   notifications: NotificationSettings;
   /** Whether a notification can reach the person now (open windows, how many may notify). Absent from an older Inbox. */
   notify_reach?: InboxNotifyReach;
-  /** The window's one address on this computer (`http://localhost:<port>/`). Absent from an older Inbox. */
-  canonical_url?: string;
   /** The question sound (config.json inboxSound). Absent from an Inbox that predates it. */
   sound?: InboxSoundSettings;
   /** Settings → About: update notices and automatic updates (`env`: the env var decides). Absent from an older Inbox. */
@@ -585,9 +583,21 @@ export const inboxApi = {
     post<{ inbox_tool: SettingsModel['inbox_tool'] }>('/api/inbox/settings', { inbox_tool: hosts }),
   saveNotifications: (change: Partial<NotificationSettings>) =>
     post<{ notifications: NotificationSettings }>('/api/inbox/settings', { notifications: change }),
-  /** This window's notification permission for its own origin (notify.ts); an older Inbox answers 404. */
-  reportWindow: (report: { window: string; permission: Exclude<InboxWindowPermission, 'unknown'>; origin: string }) =>
-    post<{ notify_reach: InboxNotifyReach }>('/api/inbox/window', report),
+  /**
+   * This window's notification permission for its own origin (notify.ts); an
+   * older Inbox answers 404. Sent without the page's serverSession on purpose:
+   * it changes nothing the person decided, and it must reach an Inbox that
+   * restarted under this tab (whose serverSession is new) so the count of
+   * windows that may notify is right again.
+   */
+  reportWindow: async (report: { window: string; permission: Exclude<InboxWindowPermission, 'unknown'>; origin: string }) =>
+    readJson<{ notify_reach: InboxNotifyReach }>(
+      await fetch('/api/inbox/window', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(report),
+      }),
+    ),
   saveSound: (change: { enabled?: boolean; volume?: number }) => post<{ sound: InboxSoundSettings }>('/api/inbox/settings', { sound: change }),
   /** Ask to show the one-time sound dialog: `show` is true for the first page that ever asks after an update, and only that one. */
   claimSoundDialog: () => post<{ show: boolean; sound: InboxSoundSettings }>('/api/inbox/sound/dialog', {}),
@@ -696,6 +706,12 @@ export function subscribeInboxEvents(
     onStatus: (update: InboxHealth['update'], updated?: string | null) => void;
     /** Whether a notification can reach the person now (inbox-windows.ts); never called by an older Inbox. */
     onReach?: (reach: InboxNotifyReach) => void;
+    /**
+     * The stream (re)connected: the server's `hello`. A reconnect carries the
+     * URL it was first opened with, so its `permission=` may be stale (a grant
+     * since, a restarted Inbox that forgot the window): report again here.
+     */
+    onConnect?: () => void;
   },
   /** This window, so the server counts it (and what its browser allows) while the stream is open. */
   win?: { id: string; permission: InboxWindowPermission; origin: string },
@@ -707,6 +723,7 @@ export function subscribeInboxEvents(
     query.set('origin', win.origin);
   }
   const source = new EventSource(`/api/inbox/events?${query}`);
+  source.addEventListener('hello', () => handlers.onConnect?.());
   source.addEventListener('reach', (event) => {
     try {
       handlers.onReach?.(JSON.parse((event as MessageEvent<string>).data) as InboxNotifyReach);

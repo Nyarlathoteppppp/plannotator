@@ -410,6 +410,54 @@ describe.if(hasDom)('useInboxNotifications', () => {
     }
   });
 
+  test('every (re)connect of the event stream reports the permission as it is now, not as the stream URL says', async () => {
+    const posted: { window: string; permission: string }[] = [];
+    const realFetch = globalThis.fetch;
+    const RealEventSource = (globalThis as Record<string, unknown>).EventSource;
+    const sources: { url: string; listeners: Map<string, (event: Event) => void> }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/inbox/window') posted.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ notify_reach: { enabled: true, windows: 1, allowed: 1, allowed_origins: [] } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    (globalThis as Record<string, unknown>).EventSource = class {
+      listeners = new Map<string, (event: Event) => void>();
+      constructor(public url: string) {
+        sources.push(this);
+      }
+      addEventListener(name: string, listener: (event: Event) => void) {
+        this.listeners.set(name, listener);
+      }
+      close() {}
+    };
+    const Recording = (window as unknown as { Notification: { permission: NotificationPermission } }).Notification;
+    try {
+      const { subscribeInboxEvents } = await import('./api');
+      // Opened while the browser had not been asked.
+      Recording.permission = 'default';
+      back();
+      const stop = subscribeInboxEvents(0, { onRecord: () => {}, onStatus: () => {}, onConnect: tabs[0]!.reportWindow }, tabs[0]!.windowReport());
+      expect(sources[0]!.url).toContain('permission=default');
+      // Allowed since; then the stream drops and reconnects (past the grace, or the Inbox restarted).
+      Recording.permission = 'granted';
+      back();
+      posted.length = 0;
+      await act(async () => {
+        sources[0]!.listeners.get('hello')!(new Event('hello'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(posted.map((p) => p.permission)).toEqual(['granted']);
+      expect(posted[0]!.window).toBe(tabs[0]!.windowReport().id);
+      stop();
+    } finally {
+      globalThis.fetch = realFetch;
+      (globalThis as Record<string, unknown>).EventSource = RealEventSource;
+      Recording.permission = 'granted';
+    }
+  });
+
   test('the window report carries this tab: one id per page, its permission and origin', () => {
     const report = tabs[0]!.windowReport();
     expect(report.id.length).toBeGreaterThanOrEqual(8);

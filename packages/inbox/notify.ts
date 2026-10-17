@@ -280,6 +280,8 @@ export interface InboxNotifications {
   setReach: (reach: InboxNotifyReach) => void;
   /** This window as the event stream reports it. */
   windowReport: () => InboxWindowReport;
+  /** Tell the server this window's permission now (the event stream's hello calls it: a reconnect's URL may be stale). */
+  reportWindow: () => void;
   /** The browser put this tab to sleep in the background (see `TabSlept`). */
   slept: TabSlept;
   dismissSlept: () => void;
@@ -374,15 +376,20 @@ export function useInboxNotifications(options: {
     };
   }, []);
 
-  // Tell the server what this window may do, whenever it changes, so
-  // "Notifications reach you" is true across tabs (inbox-windows.ts). An
+  // Tell the server what this window may do, whenever it changes and every
+  // time the event stream (re)connects (`reportWindow`, called on the
+  // stream's hello), so "Notifications reach you" is true across tabs, past
+  // a long disconnect and across an Inbox restart (inbox-windows.ts). An
   // older Inbox answers 404: nothing to tell.
-  useEffect(() => {
+  const reportWindow = useCallback(() => {
     void inboxApi
-      .reportWindow({ window: windowId.current, permission, origin: window.location.origin })
+      .reportWindow({ window: windowId.current, permission: permissionRef.current, origin: window.location.origin })
       .then((answer) => setReach(answer.notify_reach))
       .catch(() => {});
-  }, [permission]);
+  }, []);
+  useEffect(() => {
+    reportWindow();
+  }, [permission, reportWindow]);
 
   // Chrome may freeze a background tab (Energy Saver) and discard one
   // (Memory Saver). A frozen tab runs nothing, so a notice can only come late,
@@ -625,5 +632,5 @@ export function useInboxNotifications(options: {
 
   const ask = options.settings && permission !== 'unsupported' ? askKind(options.settings, permission, window.location.origin, hasThreads) : null;
 
-  return { permission, ask, reach, setReach, windowReport, slept, dismissSlept, sendTest, observe, flush, turnOn, notNow, setEnabled };
+  return { permission, ask, reach, setReach, windowReport, reportWindow, slept, dismissSlept, sendTest, observe, flush, turnOn, notNow, setEnabled };
 }

@@ -230,14 +230,6 @@ export interface InboxServerOptions {
    * tests): `/` answers a one-line page saying so.
    */
   htmlContent?: string;
-  /**
-   * The window's one address when it is not `http://localhost:<port>/`, or
-   * null. Only the fixed-address prototype (proto/inbox-fixed-address, #1945)
-   * is meant to set it, while its name (`http://inbox.plannotator.localhost/`)
-   * is active: a navigation to a loopback spelling of this port then goes
-   * there (inbox-canonical.ts). Unset everywhere else.
-   */
-  canonicalUrl?: () => string | null;
   /** Tests: how long a window's record outlives its last event stream (default `WINDOW_GRACE_MS`). */
   windowGraceMs?: number;
   /**
@@ -1136,8 +1128,6 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     notifications: notificationsState(),
     /** Whether a notification can reach the person now: the windows open and how many may notify. */
     notify_reach: windows.reach(notificationsState().enabled),
-    /** The window's one address on this computer (inbox-canonical.ts). */
-    canonical_url: options.canonicalUrl?.() ?? baseUrl,
     /** The question sound: the Settings row, and whether the one-time dialog was shown. */
     sound: soundState(),
     /** Settings → About: update notices and automatic updates. */
@@ -1203,9 +1193,15 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     // carries the cursor it first opened with. The last id wins, so a tab that
     // slept or lost its connection catches up from where it was (and raises
     // what it missed) instead of replaying everything since it loaded.
-    const raw = req.headers.get("last-event-id") ?? url.searchParams.get("cursor");
-    const parsed = raw === null ? null : Number(raw);
-    const cursor = parsed !== null && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+    // Only a usable id counts (a non-negative whole number): an empty or
+    // malformed header falls back to the URL's cursor, never to a full replay
+    // or to none.
+    const seqOf = (raw: string | null): number | null => {
+      if (raw === null || !/^\d+$/.test(raw.trim())) return null;
+      const value = Number(raw.trim());
+      return Number.isSafeInteger(value) ? value : null;
+    };
+    const cursor = seqOf(req.headers.get("last-event-id")) ?? seqOf(url.searchParams.get("cursor"));
     const encoder = new TextEncoder();
     let cleanup = () => {};
     const stream = new ReadableStream<Uint8Array>({
@@ -1234,9 +1230,10 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
             })
           : () => {};
         // Whether a notification can reach the person: every window's Settings shows it live.
+        // Windows only: the phone's door (contract 7.9) gets hello, record, status and the heartbeat.
         const sendReach = () => send(`event: reach\ndata: ${JSON.stringify(windows.reach(notificationsState().enabled))}\n\n`);
-        const stopReach = windows.subscribe(sendReach);
-        sendReach();
+        const stopReach = windowId ? windows.subscribe(sendReach) : () => {};
+        if (windowId) sendReach();
         const heartbeat = setInterval(() => send(": ping\n\n"), SSE_HEARTBEAT_MS);
         cleanup = () => {
           clearInterval(heartbeat);
@@ -1915,7 +1912,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
 
       if (path === "/" && (req.method === "GET" || req.method === "HEAD")) {
         // One origin: notification permission is per origin (inbox-canonical.ts).
-        const canonical = inboxCanonicalRedirect(req, url, port, via, options.canonicalUrl?.() ?? null);
+        const canonical = inboxCanonicalRedirect(req, url, port, via);
         if (canonical) return canonical;
         const page = options.htmlContent ?? NOT_BUILT_PAGE;
         return new Response(req.method === "HEAD" ? null : page, {
