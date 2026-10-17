@@ -193,6 +193,14 @@ test.skipIf(!hasDom)('a message sent without the wake mark from a session whose 
   expect(el.querySelector('[data-send-now]')).not.toBeNull();
 });
 
+test.skipIf(!hasDom)("pressed, but the session cannot take it now (its own Ask question holds it): Queued, not Sending now", async () => {
+  connection = { busy: true, idle_since: null, send_now: false };
+  const el = await render(thread({ reply: { deliver_now_at: '2026-10-16T17:06:00.000Z' } }));
+  expect(line(el).getAttribute('data-delivery')).toBe('queued');
+  expect(line(el).textContent).toContain('Queued · Claude Code is working');
+  expect(el.querySelector('[data-send-now]')).toBeNull();
+});
+
 test.skipIf(!hasDom)('Send now refused (the connection went away): the reason shows, and the line stays', async () => {
   connection = { busy: true, idle_since: null, send_now: true };
   sendNowAnswer = Response.json({ error: "That session is not connected now; it gets this when it is back.", code: 'send_now_unavailable' }, { status: 409 });

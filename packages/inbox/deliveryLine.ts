@@ -68,10 +68,12 @@ export function deliveryLine(input: DeliveryLineInput): DeliveryLine {
     };
   }
   if (!input.wakes) return { state: 'saved', text: `Saved for ${name}. It sees it when it next reads this thread.` };
-  if (input.sendingNow) return { state: 'sending', text: `Sending to ${name} now…` };
   const connection = input.connection;
+  // Pressed, and the session can take it now. While it cannot (its own Ask this session question holds
+  // it), the reply waits for the turn to end: it reads as queued.
+  if (input.sendingNow && !(connection?.busy === true && !connection.send_now)) return { state: 'sending', text: `Sending to ${name} now…` };
   if (connection?.busy === true) {
-    return { state: 'queued', text: `Queued · ${name} is working; it gets this when its turn ends.`, sendNow: connection.send_now };
+    return { state: 'queued', text: `Queued · ${name} is working; it gets this when its turn ends.`, sendNow: connection.send_now && !input.sendingNow };
   }
   if (connection?.busy === false) return { state: 'sending', text: `Sending to ${name}…` };
   if (connection === null) return { state: 'queued', text: `Queued for ${name}; it gets this when its session is back.` };

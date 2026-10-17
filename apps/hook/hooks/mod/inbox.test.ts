@@ -797,8 +797,20 @@ describe('Claude Code ↔ Plannotator Inbox (real Inbox, real processes)', () =>
     // Queued: the question is in flight, no turn runs yet.
     expect(session.mod.turns.beginAsk('ask-1', 'What does the retry loop do?', sink)).toBe(true)
     const replyId = await personSends(w, asked.message_id, 'Retry with the same key.')
-    await busyKnown(w, asked.thread_id, 'session-ask')
-    await pressSendNow(w, replyId)
+    // The Inbox hears the session busy and unable to take a reply now: no Send now offered, and a press is refused.
+    await waitFor('the busy connection without Send now', async () => {
+      const model = (await (await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/threads/${asked.thread_id}/sessions?asker=session-ask`)).json()) as {
+        asker: { connection: { busy: boolean | null; send_now: boolean } | null }
+      }
+      return model.asker.connection?.busy === true && model.asker.connection.send_now === false
+    })
+    const health = (await (await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/health`)).json()) as { serverSession: string }
+    const refused = await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/messages/${replyId}/send-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: `http://127.0.0.1:${registry(w).port}` },
+      body: JSON.stringify({ serverSession: health.serverSession }),
+    })
+    expect(refused.status).toBe(409)
     await Bun.sleep(3_000)
     expect(session.host.appended).toEqual([])
     expect(session.host.submits).toEqual([])

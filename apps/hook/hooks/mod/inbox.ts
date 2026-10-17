@@ -312,6 +312,8 @@ export class InboxLink {
   private sentNow: { command: InboxReplyCommand; turnId: string; stepped: boolean }[] = []
   /** Whether this engine has `$.session.append` (decided once, `Host.sessionAppendAvailable`). */
   private appendOk: boolean | null = null
+  /** What the Inbox was last told about Send now (`send_now` on the poll and the state events). */
+  private lastSendNow: boolean | null = null
   /** Send now could not go into the running turn (the engine refused the row): these wait for idle, as before. */
   private noSteer = new Set<string>()
   /** The engine refused a row once (an engine without `$.session.append`): stop offering Send now. */
@@ -482,12 +484,15 @@ export class InboxLink {
     const busy = this.options.isBusy()
     this.idleTicks = busy ? 0 : this.idleTicks + 1
     const now = await this.host.now()
-    if (busy !== this.busy) {
+    // Whether a Send now reply could go in right now: never while this session's own Ask question holds it.
+    const sendNow = await this.sendNowNow()
+    if (busy !== this.busy || sendNow !== this.lastSendNow) {
       const known = this.busy !== null
+      if (busy !== this.busy && !busy) this.idleSince = now
       this.busy = busy
-      if (!busy) this.idleSince = now
-      // A turn started or ended: the Inbox's live sessions say so (step 8).
-      if (known && this.leader) void this.bridge(INBOX_BRIDGE_EVENT_PATH, { type: 'state', busy, idle_since: this.idleSince })
+      this.lastSendNow = sendNow
+      // A turn started or ended: the Inbox's live sessions say so (step 8), and whether Send now can go in.
+      if (known && this.leader) void this.bridge(INBOX_BRIDGE_EVENT_PATH, { type: 'state', busy, idle_since: this.idleSince, [INBOX_SEND_NOW_POLL_FIELD]: sendNow })
     }
     if (now - this.leaseCheckedAt >= LEASE_EVERY_MS) {
       await this.holdLease(now)
@@ -585,7 +590,7 @@ export class InboxLink {
       ...(this.startedAt ? { started_at: this.startedAt } : {}),
       ...(this.busy === null ? {} : { busy: this.busy, idle_since: this.idleSince }),
       // Send now: this engine can put a reply into a running turn (`$.session.append`).
-      ...((await this.canAppend()) ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
+      ...((await this.sendNowNow()) ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
     })
     return response && response.status === 200 ? parseInboxBridgeCommands(response.text) : null
   }
@@ -620,6 +625,18 @@ export class InboxLink {
   private settle(id: string): void {
     this.pending.delete(id)
     this.settled.add(id)
+  }
+
+  /**
+   * Whether a Send now reply could go in right now: the engine can, and the
+   * session is idle or runs a turn it may go into (not while this session's
+   * own Ask question holds it, running or queued). What the poll and the
+   * state events say, so the window offers Send now, and reads a pressed one
+   * as "Sending now", only then.
+   */
+  private async sendNowNow(): Promise<boolean> {
+    if (!(await this.canAppend())) return false
+    return this.steerableTurn() !== null || !this.options.isBusy()
   }
 
   /** Whether Send now can work here: the engine has `$.session.append`, it never refused a row, and the session tells its turns apart. */

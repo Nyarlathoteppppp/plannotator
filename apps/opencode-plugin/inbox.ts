@@ -58,8 +58,94 @@ const INBOX_PROMPT_SOURCE = "plannotator-inbox";
  * instead (an idle session may not promote a pending steer row, #1734).
  */
 export const STEER_IDLE_GRACE_MS = 3_000;
-/** The longest a steer row may wait for its run's next step before the wake gives up on it. */
-export const STEER_CONFIRM_MAX_MS = 10 * 60_000;
+/**
+ * The longest the wake waits for a steer row's delivery before it sends the
+ * queued turn (deduplicated, below): short, because the wake delivers one
+ * reply at a time and this holds the others.
+ */
+export const STEER_CONFIRM_MAX_MS = 60_000;
+
+/**
+ * The line a fallback queued turn ends with: the steer row it stands in for
+ * may still be promoted (OpenCode cannot withdraw it), and the plugin drops
+ * the later copy from model requests (`dropInboxDuplicates`); this says so to
+ * the model too, in case a copy gets through.
+ */
+export function inboxRepeatLine(id: string): string {
+  return `If this same reply (${id}) already appears above, it is a repeat; answer it once.`;
+}
+
+/**
+ * The texts of each reply sent twice (the steer row, then its fallback queued
+ * turn), by reply id. Kept for the plugin's life: the conversation holds both
+ * rows for good. Bounded; the oldest pair goes first.
+ */
+const duplicatePairs = new Map<string, readonly [string, string]>();
+const DUPLICATE_PAIRS_MAX = 200;
+
+/** Records a reply whose steer row and fallback queued turn may both reach the model. */
+export function recordInboxDuplicate(id: string, steerText: string, fallbackText: string): void {
+  duplicatePairs.delete(id);
+  duplicatePairs.set(id, [steerText, fallbackText]);
+  while (duplicatePairs.size > DUPLICATE_PAIRS_MAX) duplicatePairs.delete(duplicatePairs.keys().next().value as string);
+}
+
+/** Forgets every recorded pair (tests). */
+export function clearInboxDuplicates(): void {
+  duplicatePairs.clear();
+}
+
+function textParts(message: unknown): { text: string; drop: () => boolean }[] {
+  if (!message || typeof message !== "object") return [];
+  const record = message as { role?: unknown; content?: unknown };
+  if (record.role !== "user") return [];
+  if (typeof record.content === "string") return [{ text: record.content, drop: () => true }];
+  if (!Array.isArray(record.content)) return [];
+  const content = record.content as unknown[];
+  return content.flatMap((part) =>
+    part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string"
+      ? [
+          {
+            text: (part as { text: string }).text,
+            drop: () => {
+              content.splice(content.indexOf(part), 1);
+              return content.length === 0;
+            },
+          },
+        ]
+      : [],
+  );
+}
+
+/**
+ * Keeps one copy of a reply sent twice out of what the model reads: of the
+ * steer row and its fallback queued turn, whichever comes later in the
+ * request is dropped (the `context` hook's array, mutated in place; a message
+ * left with no content goes too). Returns how many copies it dropped.
+ */
+export function dropInboxDuplicates(messages: unknown[]): number {
+  if (duplicatePairs.size === 0) return 0;
+  let dropped = 0;
+  for (const [steerText, fallbackText] of duplicatePairs.values()) {
+    let seen = false;
+    for (let index = 0; index < messages.length; index++) {
+      for (const part of textParts(messages[index])) {
+        if (part.text !== steerText && part.text !== fallbackText) continue;
+        if (!seen) {
+          seen = true;
+          continue;
+        }
+        dropped++;
+        if (part.drop()) {
+          messages.splice(index, 1);
+          index--;
+        }
+        break;
+      }
+    }
+  }
+  return dropped;
+}
 
 /** The Inbox connection for this OpenCode process, or null when the switch is off or no Inbox was found. */
 export async function findInboxConnection(): Promise<InboxAgentConnection | null> {
@@ -207,6 +293,8 @@ class OpenCode2Wakes {
         // Best effort (#44788): without events, busy is read from `session.wait`.
       } finally {
         this.eventsAvailable = false;
+        // No more events: a steer's delivery can no longer be seen, so its fallback goes now (deduplicated).
+        for (const entry of [...this.steering.values()]) entry.settle(false);
       }
     })();
   }
@@ -266,6 +354,8 @@ class OpenCode2Wakes {
     const { type, data } = event as { type?: unknown; data?: Record<string, unknown> };
     // A steer row Send now sent entered the model context: delivered.
     if (type === "session.inbox.delivered" && typeof data?.inboxID === "string") this.steering.get(data.inboxID)?.settle(true);
+    // The steer row turned into a queued row: OpenCode will deliver it, so no fallback is sent.
+    if (type === "session.inbox.delivery.changed" && typeof data?.inboxID === "string" && data.delivery === "queue") this.steering.get(data.inboxID)?.settle(true);
     const sessionID = typeof data?.sessionID === "string" ? data.sessionID : null;
     if (typeof type !== "string" || !sessionID) return;
     const state = this.state(sessionID);
@@ -355,14 +445,18 @@ class OpenCode2Wakes {
       ...(typeof this.v2.session?.prompt === "function"
         ? {
             canSteer: () => this.eventsAvailable,
-            steer: async (text: string) => {
+            steer: async (text: string, command: { id: string }) => {
               const prompt = this.v2.session?.prompt;
               if (typeof prompt !== "function") throw new Error("this OpenCode cannot receive a prompt from a plugin");
               const id = createOpenCodeMessageId();
               const delivered = this.awaitSteer(sessionID, id);
               await prompt({ sessionID, id, text, delivery: "steer", metadata: { source: INBOX_PROMPT_SOURCE } });
               if (await delivered) return;
-              await prompt({ sessionID, id: createOpenCodeMessageId(), text, delivery: "queue", metadata: { source: INBOX_PROMPT_SOURCE } });
+              // Not seen delivered: a queued turn instead. The steer row may still be promoted with it
+              // (#1734; the plugin cannot withdraw it), so the later copy is dropped from model requests.
+              const fallback = `${text}\n\n${inboxRepeatLine(command.id)}`;
+              recordInboxDuplicate(command.id, text, fallback);
+              await prompt({ sessionID, id: createOpenCodeMessageId(), text: fallback, delivery: "queue", metadata: { source: INBOX_PROMPT_SOURCE } });
             },
           }
         : {}),

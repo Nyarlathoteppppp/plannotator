@@ -177,7 +177,7 @@ export function createInboxLiveSessions(options: {
     };
   };
 
-  /** A `state` event: a turn started or ended. */
+  /** A `state` event: a turn started or ended, or whether a Send now reply can go in changed. */
   const stateChanged = (session: string, host: string, body: Record<string, unknown>) => {
     const entry = sessions.get(session);
     if (!entry) return;
@@ -185,6 +185,7 @@ export function createInboxLiveSessions(options: {
     entry.host = host;
     entry.lastSeen = at;
     applyState(entry, body, at);
+    if (typeof body[INBOX_SEND_NOW_POLL_FIELD] === "boolean") entry.sendNow = body[INBOX_SEND_NOW_POLL_FIELD] === true;
   };
 
   const isLive = (entry: SeenSession) => entry.holding > 0 || now() - entry.lastSeen <= INBOX_SESSION_LIVE_MS;

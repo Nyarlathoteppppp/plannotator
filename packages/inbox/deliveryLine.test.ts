@@ -35,6 +35,14 @@ describe('the line under a sent reply', () => {
     });
   });
 
+  test("pressed while the session cannot take it (its own Ask question holds it): queued, no second button", () => {
+    expect(deliveryLine({ ...base, sendingNow: true, connection: { busy: true, idle_since: null, send_now: false } })).toEqual({
+      state: 'queued',
+      text: 'Queued · Claude Code is working; it gets this when its turn ends.',
+      sendNow: false,
+    });
+  });
+
   test('not known yet, a connection that does not say, a session not connected now', () => {
     expect(deliveryLine(base).text).toBe('Queued for Claude Code; it gets this as its next turn.');
     expect(deliveryLine({ ...base, connection: { busy: null, idle_since: null, send_now: false } }).text).toBe('Queued for Claude Code; it gets this as its next turn.');
