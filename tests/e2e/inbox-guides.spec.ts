@@ -443,10 +443,11 @@ test('a long thread name plus the Guided review mark never pushes a row out of s
   const ledger = projects.find((p) => p.name === 'ledger')!;
   for (const [i, name] of names.entries()) {
     // Every project below 900px of list draws the two-line row; one project
-    // keeps the wide row. The chip's line is the wide row's subject cell, or
-    // the two-line row's second line (the subject has the first, with the
-    // time). Below 768px (a phone, packages/inbox/phone.ts) every list draws
-    // the mail row (inbox-mobile.spec.ts), shaped the same way.
+    // keeps the wide row. Both are measured the same way: the subject line is
+    // the wide row's subject cell or the two-line row's second line. Below
+    // 768px (a phone, packages/inbox/phone.ts) every list draws the mail row
+    // (inbox-mobile.spec.ts): its chips line holds the chip and the mark, and
+    // the subject has a line of its own.
     const row = page.locator(`.ib-lbody [data-thread-id="${threads[i]}"]`);
     for (const route of ['', `#project=${ledger.id}`]) {
       await page.setViewportSize({ width: 1440, height: 900 });
@@ -476,16 +477,15 @@ test('a long thread name plus the Guided review mark never pushes a row out of s
           const wideRow = el.querySelector('.ib-subj') !== null;
           const line = (el.querySelector('.ib-subj') ?? el.querySelector('.ib-l2') ?? el.querySelector('.ib-m3'))!.getBoundingClientRect();
           const box = (sel: string) => el.querySelector(sel)!.getBoundingClientRect();
-          // The wide row's subject shares the chip's line; the two-line and mail rows give it the first line.
+          // A mail row's subject is its own line (.ib-m2); the others share the line with the chip.
           const subject = box(el.querySelector('.ib-s') ? '.ib-s' : '.ib-m2');
-          const subjectLine = wideRow ? line : (el.querySelector('.ib-l1') ?? el.querySelector('.ib-m1'))!.getBoundingClientRect();
           const nameEl = el.querySelector<HTMLElement>('.ib-keyt') ?? el.querySelector<HTMLElement>('.ib-key')!;
           return {
             listOverflow: body.scrollWidth - body.clientWidth,
             rowOverflow: el.scrollWidth - el.clientWidth,
             lineRight: line.right,
-            // What the line must end before: the project or time column at the wide row's right, or the row's own edge.
-            limit: wideRow ? (el.querySelector(':scope > .ib-p') ?? el.querySelector(':scope > .ib-t'))!.getBoundingClientRect().left : el.getBoundingClientRect().right,
+            // What the line must end before: the count column, or the row's own edge.
+            limit: wideRow ? box('.ib-c').left : el.getBoundingClientRect().right,
             keyRight: box('.ib-key').right,
             keyWidth: box('.ib-key').width,
             // Cut on one line with "…", or (a phone's row, which wraps the name) clamped at two lines.
@@ -493,7 +493,7 @@ test('a long thread name plus the Guided review mark never pushes a row out of s
             keyLines: Math.round(nameEl.getBoundingClientRect().height / parseFloat(getComputedStyle(nameEl).lineHeight)),
             mailRow: el.classList.contains('ib-mrow'),
             markRight: box('[data-guide-mark]').right,
-            subjectShown: Math.min(subject.right, subjectLine.right) - subject.left,
+            subjectShown: Math.min(subject.right, line.right) - subject.left,
           };
         });
         const where = `(${name.length}-character name, ${route ? 'one project' : 'every project'}, ${width}px)`;
@@ -502,7 +502,7 @@ test('a long thread name plus the Guided review mark never pushes a row out of s
         expect(measured.keyRight, `the thread chip leaves its line ${where}`).toBeLessThanOrEqual(measured.lineRight + 0.5);
         expect(measured.listOverflow, `the list scrolls sideways ${where}`).toBe(0);
         expect(measured.rowOverflow, `the row spills ${where}`).toBe(0);
-        expect(measured.lineRight, `the subject line runs into the project or the time ${where}`).toBeLessThanOrEqual(measured.limit);
+        expect(measured.lineRight, `the subject line runs into the count ${where}`).toBeLessThanOrEqual(measured.limit);
         // The chip is shown with some of its name, or left out: never a bare border.
         expect(measured.keyWidth === 0 || measured.keyWidth >= 24, `the thread chip is squeezed to its border (${measured.keyWidth}px) ${where}`).toBe(true);
         // A row's chip cuts a long name with "…" on one line. A phone's row (the mail row) wraps it instead

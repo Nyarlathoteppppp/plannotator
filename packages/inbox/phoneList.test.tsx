@@ -88,22 +88,16 @@ function render(filtered: boolean, narrow = false): HTMLElement {
   return host;
 }
 
-/**
- * A phone row (the Soft look): the first line is the unread dot, the subject
- * (up to two lines) and the time; the second is the agent's mark, the project
- * (or the agent) and what the thread holds.
- */
-function lines(el: HTMLElement, id: string): { l1: string[]; subject: string; meta: string[] } {
+function lines(el: HTMLElement, id: string): { l1: string[]; subject: string; chips: string[] | null } {
   const r = el.querySelector<HTMLElement>(`.ib-mrow[data-thread-id="${id}"]`);
   expect(r).not.toBeNull();
-  const [m1, m3] = [...r!.children] as HTMLElement[];
+  const [m1, m2, m3] = [...r!.children] as HTMLElement[];
   expect(m1!.className).toBe('ib-m1');
-  expect(m3!.className).toBe('ib-m3');
-  const label = (c: Element) => (c.className === 'ib-mk' ? 'mark' : c.className === 'ib-udot' ? 'dot' : `${c.className}:${c.textContent}`);
+  expect(m2!.className).toBe('ib-m2');
   return {
-    l1: [...m1!.children].map(label),
-    subject: m1!.querySelector('.ib-m2')?.textContent ?? '',
-    meta: [...m3!.children].map(label),
+    l1: [...m1!.children].map((c) => (c.className === 'ib-mk' ? 'mark' : `${c.className}:${c.textContent}`)),
+    subject: m2!.textContent ?? '',
+    chips: m3 ? [...m3.children].map((c) => c.textContent ?? '') : null,
   };
 }
 
@@ -118,26 +112,26 @@ describe.if(hasDom)('the list on a phone', () => {
     }
   });
 
-  test('the subject and the time on the first line, then who and what the thread holds', () => {
+  test('who and when on the first line, the subject on its own line, what the thread holds after it', () => {
     const el = render(false);
     expect(lines(el, 'msg_stop')).toEqual({
-      l1: ['dot', 'ib-m2:Subject msg_stop', expect.stringMatching(/^ib-t:/)],
+      l1: ['mark', 'ib-p:payments-reconciliation-service-v2', expect.stringMatching(/^ib-t:/)],
       subject: 'Subject msg_stop',
-      meta: ['mark', 'ib-p:payments-reconciliation-service-v2', 'ib-badge ib-b-stop:Stopped', 'ib-c:2 questions'],
+      chips: ['Stopped', '2 questions'],
     });
-    // The long thread name and the guided review mark ride the second line, which wraps; nothing shares the subject's line but the time.
-    expect(lines(el, 'msg_wait').meta.slice(2)).toEqual(['ib-key:refund-webhooks-and-the-long-running-reconciliation-job', 'ib-c:2 questions', expect.stringMatching(/^ib-att:Guided review/)]);
-    // A Sent row says where the reply is, and has nothing to list after the project.
+    // The long thread name and the guided review mark ride the third line, which wraps; nothing shares the subject's line.
+    expect(lines(el, 'msg_wait').chips).toEqual(['refund-webhooks-and-the-long-running-reconciliation-job', '2 questions', 'Guided review']);
+    // A Sent row says where the reply is, and has nothing to list after it.
     expect(lines(el, 'msg_sent')).toEqual({
-      l1: ['dot', 'ib-m2:Saved for Pi. It sees it when it checks.', expect.stringMatching(/^ib-t:/)],
+      l1: ['mark', 'ib-p:payments-reconciliation-service-v2', expect.stringMatching(/^ib-t:/)],
       subject: 'Saved for Pi. It sees it when it checks.',
-      meta: ['mark', 'ib-p:payments-reconciliation-service-v2'],
+      chips: null,
     });
   });
 
   test("one project's list names the agent where the project was", () => {
     const el = render(true);
-    expect(lines(el, 'msg_stop').meta[1]).toBe('ib-p:Claude Code');
-    expect(lines(el, 'msg_sent').meta[1]).toBe('ib-p:Pi');
+    expect(lines(el, 'msg_stop').l1[1]).toBe('ib-p:Claude Code');
+    expect(lines(el, 'msg_sent').l1[1]).toBe('ib-p:Pi');
   });
 });

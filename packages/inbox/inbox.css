@@ -322,86 +322,68 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-listedge .ib-handle-hit { left: calc(var(--ib-gutter) / -2); right: -8px; }
 /* Its focus track stays centred on the line, but only draws: it never takes the pointer from the scrollbar. */
 .ib-listedge .ib-handle-track { pointer-events: none; }
-/* The list's header (Soft): 54 px with a hairline under it, the height and rule the thread's header shares,
-   so the two panes' tops line up across the gutter. */
-.ib-lhead { height: 54px; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 14px; flex: none; border-bottom: 1px solid var(--ib-fill); }
-/* One line each: a long project name and its folder are cut with "…" (the full text is their hover text), the folder first; neither wraps out of the header. */
-.ib-lhead h1 { font-size: 18px; font-weight: 650; margin: 0 0 0 4px; letter-spacing: -0.01em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ib-lhead .ib-path { font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground); min-width: 0; flex: 0 1000 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 6px; }
-.ib-lbody { padding: 6px 8px 14px; overflow-y: auto; flex: 1; min-height: 0; position: relative; }
+.ib-lhead { height: 60px; display: flex; align-items: center; gap: 12px; padding: 0 22px; flex: none; }
+/* One line each: a long project name and its folder are cut with "…" (the full text is their hover text), the folder first; neither wraps out of the 60 px header. */
+.ib-lhead h1 { font-size: 20px; font-weight: 650; margin: 0; letter-spacing: -0.01em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ib-lhead .ib-path { font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground); min-width: 0; flex: 0 1000 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ib-lbody { padding: 0 10px 10px; overflow-y: auto; flex: 1; min-height: 0; position: relative; }
 /* A row that left the rows on screen when the list settled (settle.ts): a copy drawn where it was, fading
    out under the rows sliding past it (they are opaque and sit above it while they move). */
 .ib-lbody > .ib-settle-ghost { position: absolute; margin: 0; z-index: 0; pointer-events: none; background: var(--card); }
 .ib-lbody > .ib-group > .ib-rw { background: var(--card); }
-/* A section is a quiet text header and space (Soft; audit 1): no filled band. Quiet's fold is the same line, a button. */
-.ib-band { position: relative; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 10px; font-size: 12.5px; font-weight: 600; color: var(--ib-quiet-fg); width: 100%; text-align: left; }
-button.ib-band { margin-top: 4px; transition: background-color 140ms ease-out, color 140ms ease-out; }
-button.ib-band:hover { background: var(--ib-hover); color: var(--foreground); }
-.ib-group + .ib-group { margin-top: 10px; }
-.ib-band .ib-n { font-weight: 450; }
-.ib-band .ib-ic { margin-left: auto; }
-/* The unread dot: a row's news is the dot and the subject's weight, not the weight alone (audit 5). */
-.ib-udot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-:is(.ib-row, .ib-nrow, .ib-mrow).ib-u .ib-udot { background: var(--primary); }
-/* The wide row (Soft): the dot, the agent's mark and the subject line (subject, thread chip, badge, count),
-   then the project and the time at the right. No column sits empty: the subject starts at one x on every row. */
-.ib-row { display: grid; grid-template-columns: 7px minmax(0, 1fr) minmax(0, 120px) 72px; align-items: center; gap: 0 10px; height: 48px; padding: 0 14px 0 12px; font-size: 14px; width: 100%; text-align: left; }
-/* One project's list: no project column (InboxList's WideRow). */
-.ib-noproj .ib-row { grid-template-columns: 7px minmax(0, 1fr) 72px; }
-.ib-row .ib-p { font-weight: 400; font-size: 12.5px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
-.ib-row .ib-s { font-weight: 500; }
+.ib-band { position: relative; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 8px; background: var(--ib-band); font-size: 13px; font-weight: 600; width: 100%; text-align: left; }
+.ib-group + .ib-group { margin-top: 12px; }
+.ib-band .ib-n { font-weight: 500; color: var(--muted-foreground); }
+.ib-band .ib-ic { margin-left: auto; color: var(--muted-foreground); }
+/* The count column is 96px unless its text is wider ("Answered, not sent"): then it grows, so it never runs into the time. */
+.ib-row { display: grid; grid-template-columns: 130px 104px minmax(0, 1fr) minmax(96px, max-content) 76px; align-items: center; gap: 0 10px; height: 50px; padding: 0 12px; border-bottom: 1px solid var(--ib-hair); font-size: 14px; width: 100%; text-align: left; }
+/* One project's list: no project or badge column (InboxList's WideRow); a badge leads the subject cell. */
+.ib-noproj .ib-row { grid-template-columns: minmax(0, 1fr) minmax(96px, max-content) 76px; }
+.ib-row .ib-p { font-weight: 400; font-size: 13px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ib-row.ib-u .ib-s { font-weight: 600; }
-/* The thread chip: a quiet pill in the window's own face (a name, not code; audit 4). It can shrink to its
-   padding (flex), and its name keeps its own 166px cap and ellipsis (the inner span). */
-.ib-key { font-size: 11.5px; font-weight: 500; color: var(--ib-quiet-fg); background: color-mix(in oklch, var(--muted) 75%, transparent); border-radius: 999px; padding: 2px 9px; white-space: nowrap; display: inline-flex; flex: 0 1 auto; min-width: 0; }
+/* The thread chip: it can shrink to its border (flex), and its name keeps its
+   own 166px cap and ellipsis (the inner span), so the chip is as wide as before
+   until the line runs short. */
+.ib-key { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; white-space: nowrap; display: inline-flex; flex: 0 1 auto; min-width: 0; }
 .ib-key > .ib-keyt { min-width: 0; max-width: 166px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A wide row's subject line never spills: when it runs short the subject gives way first, but only down to
-   min(45%, 220px) or its own width, whichever is less (its width sets the floor through the automatic minimum
-   while flex-basis: content keeps its natural size); then the chip shrinks; the line clips the rest. The
-   guided review mark keeps only its icon when the cell is narrow (under 300px). */
-.ib-row .ib-subj { display: flex; align-items: center; gap: 10px; min-width: 0; overflow: hidden; container-type: inline-size; }
-.ib-row .ib-s { flex: 0 1000 content; width: min(45%, 220px); white-space: nowrap; }
-.ib-row .ib-s > .ib-st, .ib-nrow .ib-l1 .ib-s > .ib-st { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A subject line (a wide row's subject cell, a two-line row's second line)
+   never spills: when it runs short the subject gives way first, but only down
+   to min(45%, 220px) or its own width, whichever is less (its width sets the
+   floor through the automatic minimum while flex-basis: content keeps its
+   natural size); then the chip shrinks; the line clips the rest. The guided
+   review mark keeps only its icon when the cell is narrow (under 300px). */
+.ib-row .ib-subj { display: flex; align-items: center; gap: 9px; min-width: 0; overflow: hidden; container-type: inline-size; }
+.ib-row .ib-s, .ib-nrow .ib-l2 .ib-s { flex: 0 1000 content; width: min(45%, 220px); white-space: nowrap; }
+.ib-row .ib-s > .ib-st, .ib-nrow .ib-l2 .ib-s > .ib-st { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @container (max-width: 300px) { .ib-row .ib-att .ib-att-l { display: none; } }
-/* Where the chip would be squeezed to its bare padding it is left out: a cell under 160px (after the
-   subject's floor, the marks and the gaps nothing is left for it), or under 300px when a badge follows it. */
+/* Where the chip would be squeezed to its bare border it is left out: a cell
+   under 160px (after the subject's floor, the marks and the gaps nothing is
+   left for it), or under 300px when a badge leads the cell. */
 @container (max-width: 160px) { .ib-row .ib-key { display: none; } }
-@container (max-width: 300px) { .ib-row .ib-key:has(~ .ib-badge) { display: none; } }
+@container (max-width: 300px) { .ib-row .ib-badge ~ .ib-key { display: none; } }
 .ib-nrow .ib-att .ib-att-l { display: none; }
-.ib-row .ib-c { color: var(--muted-foreground); font-size: 12.5px; white-space: nowrap; flex: none; }
-.ib-row .ib-t { color: var(--muted-foreground); font-size: 12.5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-/* Rows that wait on nobody (Sent, Quiet): the subject steps back. */
-:is(.ib-row, .ib-nrow):is(.ib-sent, [data-section="quiet"]) .ib-s,
-.ib-mrow:is(.ib-sent, [data-section="quiet"]) .ib-m2 { color: var(--muted-foreground); font-weight: 450; }
-/* The status badges (audit 3): tinted pills that carry the most important state in the list, never outlined like a button. */
-.ib-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; justify-self: start; flex: none; background: color-mix(in oklch, var(--muted) 80%, transparent); color: var(--foreground); }
-.ib-badge.ib-b-stop { background: color-mix(in oklch, var(--destructive) 13%, transparent); color: color-mix(in oklab, var(--destructive) 70%, var(--foreground)); }
-.ib-badge.ib-b-hold { background: color-mix(in oklch, var(--warning) 17%, transparent); color: color-mix(in oklab, var(--warning) 50%, var(--foreground)); }
-/* Where relative colours are there, the badge's words step toward black on a light card and white on a dark
-   one rather than toward the text colour, so a palette's red or amber reads on its own tint. */
-@supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
-  .ib-badge.ib-b-stop { color: color-mix(in oklab, var(--destructive) 50%, var(--ib-card-ink)); }
-  .ib-badge.ib-b-hold { color: color-mix(in oklab, var(--warning) 45%, var(--ib-card-ink)); }
-}
-/* The two-line row (beside a thread): the dot, the subject and the time; then, under the subject, the mark,
-   the project (or the agent, in one project's list) and what the thread holds. */
-.ib-nrow { padding: 11px 14px 11px 12px; display: flex; flex-direction: column; gap: 6px; width: 100%; text-align: left; }
-.ib-nrow .ib-l1 { display: flex; align-items: center; gap: 10px; font-size: 14px; min-width: 0; }
-.ib-nrow .ib-l1 .ib-s { flex: 1; min-width: 0; font-weight: 500; }
-.ib-nrow.ib-u .ib-l1 .ib-s { font-weight: 600; }
-.ib-nrow .ib-l1 .ib-t { margin-left: auto; color: var(--muted-foreground); font-size: 12.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.ib-nrow .ib-l2 { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 17px; font-size: 12.5px; overflow: hidden; }
-.ib-nrow .ib-l2 .ib-p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted-foreground); flex: 0 1 auto; min-width: 0; }
-.ib-nrow .ib-l2 .ib-mk { margin-right: 2px; }
-.ib-nrow .ib-l2 .ib-c { color: var(--muted-foreground); white-space: nowrap; flex: none; }
-/* Hover and the selected row (design record "inbox-polish", item 1, the inset pill, at Soft's radius): a pill
-   1 px inside the row (its ::before, radius 12), so neighbouring pills keep a gap. The selection is a neutral
-   fill, not the accent (audit 6). The Decisions page's rows take the same rule (.ib-drow, below). Keyboard
-   focus is a 2 px ring on the same pill (item 4). */
-.ib-row, .ib-nrow, button.ib-drow { position: relative; isolation: isolate; border-radius: 12px; }
-:is(.ib-row, .ib-nrow, button.ib-drow)::before { content: ""; position: absolute; inset: 1px 0; border-radius: 12px; z-index: -1; pointer-events: none; }
+.ib-row .ib-c { color: var(--muted-foreground); font-size: 13px; text-align: right; white-space: nowrap; }
+.ib-row .ib-t { color: var(--muted-foreground); font-size: 13px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ib-row.ib-sent .ib-p, .ib-row.ib-sent .ib-s { color: var(--muted-foreground); font-weight: 400; }
+.ib-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 7px; border-radius: 6px; border: 1px solid color-mix(in oklch, var(--foreground) 35%, transparent); font-size: 12.5px; font-weight: 550; white-space: nowrap; justify-self: start; flex: none; }
+.ib-nrow { padding: 10px 12px; border-bottom: 1px solid var(--ib-hair); display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; }
+.ib-nrow .ib-l1 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.ib-nrow .ib-l1 .ib-p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--muted-foreground); }
+.ib-nrow .ib-l1 .ib-c, .ib-nrow .ib-l1 .ib-t { color: var(--muted-foreground); font-size: 12.5px; white-space: nowrap; }
+.ib-nrow .ib-l1 .ib-c { margin-left: auto; }
+.ib-nrow .ib-l1 .ib-t { margin-left: 8px; }
+.ib-nrow .ib-l1 .ib-t.ib-alone { margin-left: auto; }
+.ib-nrow .ib-l2 { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13.5px; overflow: hidden; }
+.ib-nrow .ib-l2 .ib-s { color: var(--muted-foreground); }
+.ib-nrow.ib-u .ib-l2 .ib-s { color: var(--foreground); font-weight: 600; }
+/* Hover and the selected row (design record "inbox-polish", item 1, variant A · Inset): a pill 3 px inside
+   the row (its ::before, radius 8, no border), so the separators run on unbroken and never touch it, and the
+   first row under a band keeps a gap, as the sidebar's active row sits inside its column. The Decisions page's
+   rows take the same rule (.ib-drow, below). Keyboard focus is a 2 px ring on the same pill (item 4). */
+.ib-row, .ib-nrow, button.ib-drow { position: relative; isolation: isolate; }
+:is(.ib-row, .ib-nrow, button.ib-drow)::before { content: ""; position: absolute; inset: 3px 0; border-radius: 8px; z-index: -1; pointer-events: none; }
 /* !important: they win over Show's light (below), an animation, which would otherwise paint over them. */
-:is(.ib-row, .ib-nrow, button.ib-drow):hover::before { background: var(--ib-hover) !important; }
+:is(.ib-row, .ib-nrow, button.ib-drow):hover::before { background: color-mix(in oklch, var(--muted) 45%, transparent) !important; }
 :is(.ib-row, .ib-nrow, .ib-drow).ib-sel::before { background: var(--ib-sel) !important; }
 :is(.ib-row, .ib-nrow, .ib-drow).ib-sel:hover::before { background: var(--ib-sel-hover) !important; }
 /* The ring is the pill's inset shadow; a transparent outline stays for forced colours (Windows High Contrast
@@ -414,6 +396,33 @@ button.ib-band:hover { background: var(--ib-hover); color: var(--foreground); }
    focus ring stays on top. Only a colour fades, so reduced motion keeps it. */
 @keyframes ib-lit { 0%, 40% { background-color: var(--ib-lit); } 100% { background-color: transparent; } }
 :is(.ib-row, .ib-nrow)[data-lit]::before { animation: ib-lit 1500ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+.ib-nrow.ib-sent .ib-p, .ib-nrow.ib-sent .ib-l2 .ib-s { color: var(--muted-foreground); font-weight: 400; }
+/* The Soft paint on the list (owner, 2026-10-16: Soft modernizes today's Inbox, it does not relayout it). Every
+   rule here changes colour, surface, radius or face only: rows, bands, chips and badges keep today's sizes,
+   columns and places. A border that goes keeps its width in a transparent colour, so no box moves. */
+.ib-band { background: transparent; color: var(--ib-quiet-fg); border-radius: 10px; }
+.ib-band .ib-n, .ib-band .ib-ic { color: inherit; }
+.ib-band .ib-n { font-weight: 450; }
+button.ib-band { transition: background-color 140ms ease-out, color 140ms ease-out; }
+button.ib-band:hover { background: var(--ib-hover); color: var(--foreground); }
+/* Rows part by space, not rules. */
+.ib-row, .ib-nrow { border-bottom-color: transparent; }
+:is(.ib-row, .ib-nrow, button.ib-drow)::before { border-radius: 10px; }
+:is(.ib-row, .ib-nrow, button.ib-drow):hover::before { background: var(--ib-hover) !important; }
+/* Rows that wait on nobody (Sent, Quiet): the subject steps back. */
+:is(.ib-row, .ib-nrow)[data-section="quiet"] :is(.ib-s, .ib-l2 .ib-s) { color: var(--muted-foreground); }
+/* The thread chip: a quiet pill in the window's own face (a name, not code; audit 4). */
+.ib-key { font-family: inherit; font-weight: 500; color: var(--ib-quiet-fg); background: color-mix(in oklch, var(--muted) 75%, transparent); border-color: transparent; border-radius: 999px; }
+/* The status badges (audit 3): tinted pills, never outlined like a button. */
+.ib-badge { border-color: transparent; border-radius: 999px; font-weight: 600; background: color-mix(in oklch, var(--muted) 80%, transparent); color: var(--foreground); }
+.ib-badge.ib-b-stop { background: color-mix(in oklch, var(--destructive) 13%, transparent); color: color-mix(in oklab, var(--destructive) 70%, var(--foreground)); }
+.ib-badge.ib-b-hold { background: color-mix(in oklch, var(--warning) 17%, transparent); color: color-mix(in oklab, var(--warning) 50%, var(--foreground)); }
+/* Where relative colours are there, the badge's words step toward black on a light card and white on a dark
+   one rather than toward the text colour, so a palette's red or amber reads on its own tint. */
+@supports (color: oklch(from red calc(0.5 - sign(l - 0.6) * 0.5) 0 h)) {
+  .ib-badge.ib-b-stop { color: color-mix(in oklab, var(--destructive) 50%, var(--ib-card-ink)); }
+  .ib-badge.ib-b-hold { color: color-mix(in oklab, var(--warning) 45%, var(--ib-card-ink)); }
+}
 .ib-att { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 13px; white-space: nowrap; flex: none; }
 .ib-notice { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 8px; background: color-mix(in oklch, var(--primary) 10%, var(--card)); border: 1px solid color-mix(in oklch, var(--primary) 25%, transparent); font-size: 13.5px; margin-bottom: 12px; width: 100%; text-align: left; }
 .ib-notice b { margin-left: auto; color: var(--primary); font-weight: 550; }
@@ -1569,12 +1578,12 @@ button.ib-vtime:hover { background: color-mix(in oklch, var(--primary) 22%, tran
 /* The list: a quiet hover action on rows that wait on the person, shown on hover or KEYBOARD focus (`:focus-visible`):
    focus the window puts on a row after a mouse action (a close, a settle) must not raise it. */
 .ib-rw { position: relative; }
-.pn-inbox .ib-ract { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: none; align-items: center; gap: 6px; height: 30px; padding: 0 11px 0 9px; border-radius: 999px; background: var(--card); font-size: 12.5px; font-weight: 550; color: var(--foreground); box-shadow: var(--ib-float-shadow); }
+.pn-inbox .ib-ract { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: none; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 8px; border-radius: 999px; border: 1px solid transparent; background: var(--card); font-size: 12.5px; font-weight: 550; color: var(--foreground); box-shadow: var(--ib-float-shadow); }
 .pn-inbox .ib-ract:hover { background: color-mix(in oklch, var(--muted) 40%, var(--card)); }
 .ib-rw:hover .ib-ract, .ib-rw:has(:focus-visible) .ib-ract { display: inline-flex; }
-.ib-rw:hover:has(.ib-ract) .ib-row :is(.ib-p, .ib-t), .ib-rw:has(:focus-visible):has(.ib-ract) .ib-row :is(.ib-p, .ib-t) { visibility: hidden; }
-/* Beside a thread the action sits on the row's second line, at its right, where the subject and the time stay readable above it. */
-.pn-inbox .ib-rw .ib-nrow + .ib-ract { top: auto; bottom: 7px; transform: none; height: 28px; }
+.ib-rw:hover:has(.ib-ract) .ib-row .ib-t, .ib-rw:has(:focus-visible):has(.ib-ract) .ib-row .ib-t, .ib-rw:hover:has(.ib-ract) .ib-row .ib-c, .ib-rw:has(:focus-visible):has(.ib-ract) .ib-row .ib-c { visibility: hidden; }
+.ib-rw:hover:has(.ib-ract) .ib-nrow .ib-l1 .ib-t, .ib-rw:has(:focus-visible):has(.ib-ract) .ib-nrow .ib-l1 .ib-t, .ib-rw:hover:has(.ib-ract) .ib-nrow .ib-l1 .ib-c, .ib-rw:has(:focus-visible):has(.ib-ract) .ib-nrow .ib-l1 .ib-c { visibility: hidden; }
+.pn-inbox .ib-rw .ib-nrow + .ib-ract { top: 8px; transform: none; height: 26px; }
 /* Quiet rows say why they are there: Read, Archived. */
 .ib-c.ib-qlabel { color: var(--muted-foreground); }
 /* The toast (design record "inbox-toast"): one 40 px line in the look of Plannotator's other (Sonner) toasts.
@@ -1666,24 +1675,23 @@ button.ib-vtime:hover { background: color-mix(in oklch, var(--primary) 22%, tran
   .ib-lhead .ib-path { display: none; }
   .pn-inbox .ib-sb-trigger { width: 44px; height: 44px; }
   .ib-lbody { padding: 0 0 calc(24px + env(safe-area-inset-bottom)); }
-  /* The section headers stay on screen while their rows scroll under them: the card's colour behind the words. */
-  .ib-lbody .ib-band { position: sticky; top: 0; z-index: 2; height: 36px; padding: 0 16px; border-radius: 0; font-size: 13px; background: var(--card); }
+  .ib-lbody .ib-band { position: sticky; top: 0; z-index: 2; height: 34px; padding: 0 16px; border-radius: 0; font-size: 13px; }
   .ib-lbody button.ib-band { height: 44px; }
   .ib-group + .ib-group { margin-top: 0; }
   .ib-notice { height: auto; min-height: 44px; margin: 10px 12px; width: calc(100% - 24px); }
   .ib-askline { margin: 10px 12px; flex-wrap: wrap; }
   .ib-portline { margin: 10px 12px; }
-  /* A phone's row (Soft): the dot, the subject on up to two lines and the time; under it the mark, the project
-     and what the thread holds. Rows part by space, not rules. */
-  .ib-mrow { display: flex; flex-direction: column; gap: 6px; width: 100%; min-height: 64px; padding: 12px 16px 12px 14px; text-align: left; }
-  .ib-mrow:active { background: var(--ib-hover); }
-  .ib-m1 { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
-  .ib-m1 .ib-udot { margin-top: 7px; }
-  .ib-m1 .ib-t { flex: none; margin-left: auto; margin-top: 1px; font-size: 13px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
-  .ib-m2 { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 15px; font-weight: 500; line-height: 1.35; color: var(--foreground); }
+  .ib-mrow { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 64px; padding: 11px 16px 12px; border-bottom: 1px solid var(--ib-hair); text-align: left; }
+  .ib-mrow:active { background: color-mix(in oklch, var(--muted) 50%, transparent); }
+  .ib-m1 { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13.5px; color: var(--muted-foreground); }
+  .ib-m1 .ib-p { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ib-m1 .ib-t { flex: none; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .ib-m2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 15px; line-height: 1.35; color: var(--foreground); }
+  .ib-mrow.ib-u .ib-m1 .ib-p { color: var(--foreground); font-weight: 550; }
+  .ib-mrow.ib-u .ib-m1 .ib-t { color: var(--primary); font-weight: 550; }
   .ib-mrow.ib-u .ib-m2 { font-weight: 600; }
-  .ib-m3 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; padding-left: 17px; font-size: 13.5px; }
-  .ib-m3 .ib-p { min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted-foreground); }
+  .ib-mrow.ib-sent .ib-m2 { color: var(--muted-foreground); }
+  .ib-m3 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; margin-top: 3px; }
   .ib-m3 .ib-key { max-width: 100%; }
   /* No hover on a phone, so no tooltip: the thread's name wraps to two lines instead of being cut on one. */
   .ib-m3 .ib-key > .ib-keyt { max-width: none; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
@@ -2111,8 +2119,6 @@ label.ib-anote-r:hover { background: color-mix(in oklch, var(--muted) 40%, trans
 /* Right-to-left text. The names and subjects the window draws carry dir="auto", and a cell in a row starts at its
    text's own start (a row is a button, which aligns left), so an Arabic subject is cut at its end, not its start. */
 .ib-row [dir="auto"], .ib-nrow [dir="auto"], .ib-mrow [dir="auto"], .ib-arcsub [dir="auto"], .ib-fline [dir="auto"], .ib-proj [dir="auto"] { text-align: start; }
-/* The wide row's project column reads against the time beside it, at its right edge, whatever the name's direction. */
-.ib-row > .ib-p[dir="auto"] { text-align: right; }
 /* A message paragraph takes its direction from its own text: Arabic reads right to left, English as before (text-align is
    left at its default, start, which follows that direction; an `align` attribute in a message's HTML still wins). */
 .ib-body :is(p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th) { unicode-bidi: plaintext; }
@@ -2531,3 +2537,10 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-ackchip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--success) 50%, transparent); background: color-mix(in srgb, var(--success) 12%, var(--card)); color: var(--foreground); font-weight: 500; white-space: nowrap; }
 .ib-ackwhen { min-width: 0; }
 .ib-toast > .ib-temoji { flex: none; font-size: 15px; line-height: 1; }
+
+/* The Soft paint on a phone's list: today's rows and sticky section headers, rows parted by space. */
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
+  .ib-lbody .ib-band { background: var(--card); }
+  .ib-mrow { border-bottom-color: transparent; }
+  .ib-mrow:active { background: var(--ib-hover); }
+}
