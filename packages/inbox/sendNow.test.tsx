@@ -210,3 +210,37 @@ test.skipIf(!hasDom)('Send now refused (the connection went away): the reason sh
   expect(el.querySelector('[data-send-now-error]')?.textContent).toBe('That session is not connected now; it gets this when it is back.');
   expect(line(el).getAttribute('data-delivery')).toBe('queued');
 });
+
+/** A thread whose last word is the agent's, marked 👍 and sent through to its waking session (`note_id`), not taken yet. */
+function ackedThread(): InboxThread {
+  const value = thread();
+  const asked = value.messages[0]!;
+  return { ...value, messages: [{ ...asked, ack: { label: 'Looks good', at: '2026-10-16T17:06:00.000Z', read_seq: 4, settled_seq: 5, note_id: 'msg_note' } }] };
+}
+
+const pill = (el: HTMLElement) => el.querySelector('[data-ack-pill]') as HTMLElement;
+
+test.skipIf(!hasDom)('a 👍 sent through reads the same honest words as a reply: "Queued · … is working" while the session works, with no Send now', async () => {
+  connection = { busy: true, idle_since: null, send_now: true };
+  const el = await render(ackedThread(), null);
+  await settle();
+  expect(pill(el).getAttribute('data-ack-pill')).toBe('queued');
+  expect(pill(el).textContent).toContain('Queued · Claude Code is working; it gets this when its turn ends.');
+  // A 👍 asks nothing of the agent: it never goes into the running turn.
+  expect([...el.querySelectorAll('button')].some((button) => /send now/i.test(button.textContent ?? ''))).toBe(false);
+  expect(posted.some((entry) => entry.path.endsWith('/send-now'))).toBe(false);
+});
+
+test.skipIf(!hasDom)('a 👍 sent through to an idle session reads "Sending to …"; to a session that does not poll now, "when its session is back"', async () => {
+  connection = { busy: false, idle_since: '2026-10-16T17:06:00.000Z', send_now: true };
+  const idle = await render(ackedThread(), null);
+  await settle();
+  expect(pill(idle).getAttribute('data-ack-pill')).toBe('sending');
+  expect(pill(idle).textContent).toContain('Sending to Claude Code…');
+  act(() => root?.unmount());
+  host?.remove();
+  connection = null;
+  const away = await render(ackedThread(), null);
+  await settle();
+  expect(pill(away).textContent).toContain('Queued for Claude Code; it gets this when its session is back.');
+});

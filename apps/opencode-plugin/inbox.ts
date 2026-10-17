@@ -41,7 +41,7 @@ import {
   type InboxWakeTarget,
 } from "@plannotator/shared/inbox/agent-link";
 import { INBOX_REMINDER_TEXT_NO_WAKE, INBOX_TOOL_NAME, inboxAgentTool } from "@plannotator/shared/inbox/connection";
-import { createOpenCodeMessageId } from "./opencode-session-bridge";
+import { createOpenCodeMessageId, isAskTurnActive } from "./opencode-session-bridge";
 import type { V2ContextLike } from "./v2-client";
 
 export const OPENCODE_INBOX_HOST = "opencode";
@@ -59,11 +59,15 @@ const INBOX_PROMPT_SOURCE = "plannotator-inbox";
  */
 export const STEER_IDLE_GRACE_MS = 3_000;
 /**
- * The longest the wake waits for a steer row's delivery before it sends the
- * queued turn (deduplicated, below): short, because the wake delivers one
- * reply at a time and this holds the others.
+ * How often a steer row still waiting is looked at: a run whose end event was
+ * lost (no event for `RUNNING_CROSS_CHECK_MS`), and a session whose event
+ * stream ended, are checked against OpenCode (`session.wait`). There is no
+ * cap while the run goes on: OpenCode promotes a pending steer row at the
+ * run's next step however long a tool call takes, and a fallback sent then
+ * would reach the model as a second copy. Holding the reply while the
+ * session is busy costs nothing (a queued turn would wait for idle too).
  */
-export const STEER_CONFIRM_MAX_MS = 60_000;
+export const STEER_WATCH_MS = 2_000;
 
 /**
  * The line a fallback queued turn ends with: the steer row it stands in for
@@ -73,6 +77,15 @@ export const STEER_CONFIRM_MAX_MS = 60_000;
  */
 export function inboxRepeatLine(id: string): string {
   return `If this same reply (${id}) already appears above, it is a repeat; answer it once.`;
+}
+
+/**
+ * What a later copy that is a user message's whole content reads instead:
+ * removing it could leave the request ending on an assistant message (a
+ * wasted turn, or a provider error), so the message stays, as a pointer.
+ */
+export function inboxRepeatPointer(id: string): string {
+  return `(A repeat of the Plannotator Inbox reply ${id}, which appears above: answer that reply once, and not again if you already have.)`;
 }
 
 /**
@@ -95,11 +108,21 @@ export function clearInboxDuplicates(): void {
   duplicatePairs.clear();
 }
 
-function textParts(message: unknown): { text: string; drop: () => boolean }[] {
+interface TextPart {
+  text: string;
+  /** The message holds nothing else. */
+  only: boolean;
+  drop: () => void;
+  replace: (text: string) => void;
+}
+
+function textParts(message: unknown): TextPart[] {
   if (!message || typeof message !== "object") return [];
   const record = message as { role?: unknown; content?: unknown };
   if (record.role !== "user") return [];
-  if (typeof record.content === "string") return [{ text: record.content, drop: () => true }];
+  if (typeof record.content === "string") {
+    return [{ text: record.content, only: true, drop: () => undefined, replace: (text) => void (record.content = text) }];
+  }
   if (!Array.isArray(record.content)) return [];
   const content = record.content as unknown[];
   return content.flatMap((part) =>
@@ -107,10 +130,9 @@ function textParts(message: unknown): { text: string; drop: () => boolean }[] {
       ? [
           {
             text: (part as { text: string }).text,
-            drop: () => {
-              content.splice(content.indexOf(part), 1);
-              return content.length === 0;
-            },
+            only: content.length === 1,
+            drop: () => void content.splice(content.indexOf(part), 1),
+            replace: (text: string) => void ((part as { text: string }).text = text),
           },
         ]
       : [],
@@ -120,26 +142,27 @@ function textParts(message: unknown): { text: string; drop: () => boolean }[] {
 /**
  * Keeps one copy of a reply sent twice out of what the model reads: of the
  * steer row and its fallback queued turn, whichever comes later in the
- * request is dropped (the `context` hook's array, mutated in place; a message
- * left with no content goes too). Returns how many copies it dropped.
+ * request goes (the `context` hook's array, mutated in place). A later copy
+ * that is its message's whole content is never removed (the request could
+ * then end on an assistant message): its text becomes `inboxRepeatPointer`,
+ * the same in every request, so the prompt prefix stays stable. Returns how
+ * many copies it dropped or replaced.
  */
 export function dropInboxDuplicates(messages: unknown[]): number {
   if (duplicatePairs.size === 0) return 0;
   let dropped = 0;
-  for (const [steerText, fallbackText] of duplicatePairs.values()) {
+  for (const [id, [steerText, fallbackText]] of duplicatePairs) {
     let seen = false;
-    for (let index = 0; index < messages.length; index++) {
-      for (const part of textParts(messages[index])) {
+    for (const message of messages) {
+      for (const part of textParts(message)) {
         if (part.text !== steerText && part.text !== fallbackText) continue;
         if (!seen) {
           seen = true;
           continue;
         }
         dropped++;
-        if (part.drop()) {
-          messages.splice(index, 1);
-          index--;
-        }
+        if (part.only) part.replace(inboxRepeatPointer(id));
+        else part.drop();
         break;
       }
     }
@@ -267,6 +290,18 @@ interface SessionState {
   lastEventAt: number;
 }
 
+/** A steer row Send now sent, waiting to be seen delivered. */
+interface SteerEntry {
+  sessionID: string;
+  /** The row's message id. */
+  id: string;
+  text: string;
+  grace: ReturnType<typeof setTimeout> | null;
+  watch: ReturnType<typeof setInterval> | null;
+  checking: boolean;
+  settle: (delivered: boolean) => void;
+}
+
 /** The wakes of the sessions this OpenCode 2 process has seen, and what its events say about them. */
 class OpenCode2Wakes {
   private readonly wakes = new Map<string, InboxWake>();
@@ -276,7 +311,7 @@ class OpenCode2Wakes {
   private readonly controller = new AbortController();
   private eventsAvailable = false;
   /** Send now: steer rows waiting for `session.inbox.delivered`, by row id. */
-  private readonly steering = new Map<string, { sessionID: string; settle: (delivered: boolean) => void; grace: ReturnType<typeof setTimeout> | null }>();
+  private readonly steering = new Map<string, SteerEntry>();
 
   constructor(
     private readonly v2: V2ContextLike,
@@ -292,32 +327,91 @@ class OpenCode2Wakes {
       } catch {
         // Best effort (#44788): without events, busy is read from `session.wait`.
       } finally {
+        // No more events: a steer still waiting can no longer be seen delivered. It is not given up
+        // while the run goes on (OpenCode still promotes it at the next step); its watch asks
+        // OpenCode when the session is idle, and reads the session's context then (`watchSteer`).
         this.eventsAvailable = false;
-        // No more events: a steer's delivery can no longer be seen, so its fallback goes now (deduplicated).
-        for (const entry of [...this.steering.values()]) entry.settle(false);
       }
     })();
   }
 
-  /** Resolves true when the steer row `id` is delivered, false when its run ended without it (after the grace) or after the cap. */
-  private awaitSteer(sessionID: string, id: string): Promise<boolean> {
+  /**
+   * Resolves true when the steer row `id` is delivered, false when its run
+   * ended without it: after the grace that follows the run's end event, or,
+   * once the event stream has ended, when OpenCode says the session is idle
+   * and the row is not in its context. Never while the run goes on.
+   */
+  private awaitSteer(sessionID: string, id: string, text: string): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
-      const cap = setTimeout(() => entry.settle(false), STEER_CONFIRM_MAX_MS);
-      const entry = {
+      const entry: SteerEntry = {
         sessionID,
-        grace: null as ReturnType<typeof setTimeout> | null,
+        id,
+        text,
+        grace: null,
+        watch: null,
+        checking: false,
         settle: (delivered: boolean) => {
           if (this.steering.get(id) !== entry) return;
           this.steering.delete(id);
-          clearTimeout(cap);
+          if (entry.watch) clearInterval(entry.watch);
           if (entry.grace) clearTimeout(entry.grace);
           resolve(delivered);
         },
       };
       this.steering.set(id, entry);
+      entry.watch = setInterval(() => void this.watchSteer(entry), STEER_WATCH_MS);
       // Not running any more (the run ended between the busy check and now): the grace starts at once.
-      if (!this.state(sessionID).running) entry.grace = setTimeout(() => entry.settle(false), STEER_IDLE_GRACE_MS);
+      if (!this.state(sessionID).running) this.startGrace(entry);
     });
+  }
+
+  /** The run a steer row went into ended: OpenCode may still promote the row; past the grace, the queued turn goes. */
+  private startGrace(entry: SteerEntry): void {
+    if (!entry.grace) entry.grace = setTimeout(() => entry.settle(false), STEER_IDLE_GRACE_MS);
+  }
+
+  /** One look at a steer row still waiting (see `STEER_WATCH_MS`). */
+  private async watchSteer(entry: SteerEntry): Promise<void> {
+    if (entry.grace || entry.checking || this.steering.get(entry.id) !== entry) return;
+    entry.checking = true;
+    try {
+      const state = this.state(entry.sessionID);
+      if (this.eventsAvailable) {
+        // A lost end event: no event for a while, and OpenCode says the session is idle.
+        if (!state.running || Date.now() - state.lastEventAt < RUNNING_CROSS_CHECK_MS) return;
+        state.lastEventAt = Date.now();
+        if (!(await this.idleProbe(entry.sessionID))) return;
+        state.running = false;
+        this.startGrace(entry);
+        return;
+      }
+      // The event stream ended: wait for idle, then read the session's context for the row.
+      if (!(await this.idleProbe(entry.sessionID))) return;
+      state.running = false;
+      entry.settle(await this.steerInContext(entry));
+    } finally {
+      entry.checking = false;
+    }
+  }
+
+  /** Whether the session's context holds the steer row (by its id, or a user message with its text); false when it cannot say. */
+  private async steerInContext(entry: SteerEntry): Promise<boolean> {
+    const context = this.v2.session?.context;
+    if (typeof context !== "function") return false;
+    try {
+      const messages = await context({ sessionID: entry.sessionID });
+      if (!Array.isArray(messages)) return false;
+      return messages.some((message) => {
+        if (!message || typeof message !== "object") return false;
+        const record = message as { id?: unknown; type?: unknown; role?: unknown; content?: unknown };
+        if (record.id === entry.id) return true;
+        if (record.type !== "user" && record.role !== "user") return false;
+        if (typeof record.content === "string") return record.content === entry.text;
+        return Array.isArray(record.content) && record.content.some((part) => !!part && typeof part === "object" && (part as { text?: unknown }).text === entry.text);
+      });
+    } catch {
+      return false;
+    }
   }
 
   dispose(): void {
@@ -370,9 +464,7 @@ class OpenCode2Wakes {
       case "session.execution.interrupted":
         state.running = false;
         // A steer row of this session not delivered yet: OpenCode may still promote it; past the grace, it is sent queued.
-        for (const entry of this.steering.values()) {
-          if (entry.sessionID === sessionID && !entry.grace) entry.grace = setTimeout(() => entry.settle(false), STEER_IDLE_GRACE_MS);
-        }
+        for (const entry of this.steering.values()) if (entry.sessionID === sessionID) this.startGrace(entry);
         return;
       case "session.inbox.enqueued":
         // A prompt is entering the session (the person, another plugin, or
@@ -444,12 +536,13 @@ class OpenCode2Wakes {
       // is how the delivery is seen.
       ...(typeof this.v2.session?.prompt === "function"
         ? {
-            canSteer: () => this.eventsAvailable,
+            // Never into this session's own "Ask this session" question (the Claude Code mod's rule).
+            canSteer: () => this.eventsAvailable && !isAskTurnActive(sessionID),
             steer: async (text: string, command: { id: string }) => {
               const prompt = this.v2.session?.prompt;
               if (typeof prompt !== "function") throw new Error("this OpenCode cannot receive a prompt from a plugin");
               const id = createOpenCodeMessageId();
-              const delivered = this.awaitSteer(sessionID, id);
+              const delivered = this.awaitSteer(sessionID, id, text);
               await prompt({ sessionID, id, text, delivery: "steer", metadata: { source: INBOX_PROMPT_SOURCE } });
               if (await delivered) return;
               // Not seen delivered: a queued turn instead. The steer row may still be promoted with it

@@ -868,6 +868,39 @@ describe('Claude Code ↔ Plannotator Inbox (real Inbox, real processes)', () =>
     expect(session.host.submits).toHaveLength(1)
   }, 120_000)
 
+  // The failure this catches: a claim held while the reply waits (here, the session's own Ask question took
+  // the turn after the claim) whose `alive` goes stale, so another process reports a reply this one still holds.
+  test("Send now claimed, then this session's own Ask question holds the turn: the claim is kept alive while it waits, and the reply goes in once, as a turn", async () => {
+    const w = world('16b-send-now-held-claim-alive')
+    startInbox(w)
+    const session = await open(w, 'session-held')
+    const asked = await send(session, w, QUESTION)
+    await session.startTurn('Refactor the handler.')
+    const replyId = await personSends(w, asked.message_id, 'Retry with the same key.')
+    await busyKnown(w, asked.thread_id, 'session-held')
+    const sink = { delta: () => {}, tool: () => {}, done: () => {}, error: () => {} }
+    // At the claim, the person's turn ends and an Ask question is queued: busy, and no turn to go into.
+    session.host.onRun = (argv) => {
+      if (!argv.includes('plannotator-inbox-claim')) return
+      session.host.onRun = () => undefined
+      session.endTurn()
+      expect(session.mod.turns.beginAsk('ask-held', 'What does the retry loop do?', sink)).toBe(true)
+    }
+    await pressSendNow(w, replyId)
+    const alive = join(w.dataDir, 'claude-code-mod', 'session-held', 'inbox', 'claims', replyId, 'alive')
+    await waitFor('the claim', () => existsSync(alive))
+    const first = Number(readFileSync(alive, 'utf8'))
+    await waitFor('the claim kept alive', () => Number(readFileSync(alive, 'utf8')) > first, 15_000)
+    expect(session.host.appended).toEqual([])
+    expect(session.host.submits).toEqual([])
+    // The Ask question runs and ends: the reply goes in as a turn, once.
+    await session.startTurn('Plannotator asks: What does the retry loop do?')
+    session.endTurn('It retries three times.')
+    await waitFor('the wake turn', () => session.turns.find((t) => t.text.includes(replyId)))
+    expect(session.host.appended).toEqual([])
+    expect(session.host.submits).toHaveLength(1)
+  }, 120_000)
+
   test('Send now with an older reply waiting for the same session: both go into the running turn, oldest first', async () => {
     const w = world('17-send-now-keeps-the-order')
     startInbox(w)

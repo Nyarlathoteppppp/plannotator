@@ -361,8 +361,11 @@ export interface InboxWakeTarget {
   steer?(text: string, command: InboxReplyCommand): Promise<void>;
   /**
    * Whether `steer` can work right now (OpenCode 2: only while its event
-   * stream runs, which is how a steer's delivery is confirmed). Absent: as
-   * long as `steer` exists.
+   * stream runs, which is how a steer's delivery is confirmed). False while
+   * the running turn is this session's own "Ask this session" question (its
+   * answer streams to Plannotator, so a reply steered in would be answered
+   * there): the reply then waits for idle, and the poll stops offering Send
+   * now. Absent: as long as `steer` exists.
    */
   canSteer?(): boolean;
   /** A line for the person, outside the model's context (a toast, a notice). */
@@ -412,6 +415,8 @@ export class InboxWake {
   private busy: boolean | null = null;
   private idleSince: number | null = null;
   private stateCheckedAt = Number.NEGATIVE_INFINITY;
+  /** Whether Send now could go in, as last told to the Inbox. */
+  private lastSteerable: boolean | null = null;
 
   constructor(
     private readonly connection: InboxAgentConnection,
@@ -503,7 +508,11 @@ export class InboxWake {
     if (!this.polling && now >= this.retryAt) void this.poll();
     // Send now: once the person asked for one, the waiting replies go in without waiting for two idle
     // ticks, oldest first (an urgent reply never overtakes an older one to the same session).
-    const urgent = [...this.pending.values()].some((command) => command.now === true && !this.noSteer.has(command.id));
+    // Only when there is a turn it may go into, or the session is idle: never into a turn the target
+    // refuses (`canSteer`: this session's own "Ask this session" question, as the Claude Code mod rules).
+    const urgent =
+      [...this.pending.values()].some((command) => command.now === true && !this.noSteer.has(command.id)) &&
+      (this.steerable || busy === false);
     if (!this.delivering && this.pending.size > 0 && (this.idleTicks >= 2 || urgent)) {
       this.delivering = true;
       try {
@@ -519,14 +528,23 @@ export class InboxWake {
     return typeof this.target.steer === "function" && (this.target.canSteer?.() ?? true);
   }
 
-  /** A turn started or ended: the Inbox's live sessions say so (a `state` event, as the Claude Code mod posts). */
+  /**
+   * A turn started or ended, or whether Send now can go in changed (an Ask
+   * question began or ended): the Inbox's live sessions say so (a `state`
+   * event, as the Claude Code mod posts), so the window offers Send now only
+   * when it can work.
+   */
   private noteBusy(busy: boolean, now: number): void {
-    if (busy === this.busy) return;
+    const steerable = this.steerable;
+    if (busy === this.busy && steerable === this.lastSteerable) return;
     const known = this.busy !== null;
+    if (busy !== this.busy && !busy) this.idleSince = now;
     this.busy = busy;
-    if (!busy) this.idleSince = now;
+    this.lastSteerable = steerable;
     if (known && this.leader && !this.disposed) {
-      void this.connection.bridge(INBOX_BRIDGE_EVENT_PATH, this.sessionId, { type: "state", busy, idle_since: this.idleSince }).catch(() => null);
+      void this.connection
+        .bridge(INBOX_BRIDGE_EVENT_PATH, this.sessionId, { type: "state", busy, idle_since: this.idleSince, [INBOX_SEND_NOW_POLL_FIELD]: steerable })
+        .catch(() => null);
     }
   }
 

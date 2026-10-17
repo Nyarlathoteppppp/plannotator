@@ -10,7 +10,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { setupPiInbox } from "./inbox.ts";
+import { editorWithout, setupPiInbox } from "./inbox.ts";
 import {
 	createInboxWorld,
 	destroyInboxWorld,
@@ -127,4 +127,56 @@ describe.skipIf(process.platform === "win32")("Pi: Send now", () => {
 		await Bun.sleep(1_500);
 		expect(fake.sent).toHaveLength(1);
 	}, 60_000);
+
+	test("never into this session's own Ask question: Send now stops being offered while it runs, and the reply waits for idle", async () => {
+		const w = createInboxWorld("plannotator-inbox-pi-now-ask-", "pi-send-now-ask", "pi");
+		worlds.push(w);
+		startInbox(w);
+		mkdirSync(w.dataDir, { recursive: true });
+		writeFileSync(join(w.dataDir, "config.json"), JSON.stringify({ inboxTool: { pi: true } }));
+		process.env.PLANNOTATOR_DATA_DIR = w.dataDir;
+		process.env.PLANNOTATOR_BIN = join(w.bin, "plannotator");
+
+		let asking = false;
+		const fake = fakePi(w.project);
+		await setupPiInbox(fake.pi as never, { isAskActive: () => asking });
+		fake.emit("session_start", {});
+		ends.push(() => fake.emit("session_shutdown", {}));
+		fake.emit("agent_start", {});
+		const result = await fake.tool().execute("call-1", { action: "send_message", body: QUESTION }, undefined, undefined, fake.ctx);
+		const text = result.content[0]!.text;
+		const asked = JSON.parse(text.slice(text.indexOf("{"))) as { message_id: string; thread_id: string };
+		const replyId = await personSends(w, asked.message_id, "Retry with the same key.");
+		await sendNowOffered(w, asked.thread_id, "pi-session-now");
+		// An "Ask this session" question starts: its turn's answer streams to Plannotator.
+		asking = true;
+		await waitFor("Send now no longer offered", async () => {
+			const model = (await (await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/threads/${asked.thread_id}/sessions?asker=pi-session-now`)).json()) as {
+				asker: { connection: { send_now: boolean } | null };
+			};
+			return model.asker.connection?.send_now === false;
+		});
+		await expect(pressSendNow(w, replyId)).rejects.toThrow(/send_now_unavailable/);
+		await Bun.sleep(2_000);
+		expect(fake.sent).toEqual([]);
+		// The Ask ends and the session goes idle: the reply goes in as its own turn.
+		asking = false;
+		fake.setIdle(true);
+		const followUp = await waitFor("the follow-up", () => fake.sent[0]);
+		expect(followUp.deliverAs).toBe("followUp");
+		fake.emit("message_start", { message: { role: "user", content: followUp.text } });
+		expect(fake.sent).toHaveLength(1);
+	}, 60_000);
+});
+
+describe("Pi: a steer Esc moved into the editor (editorWithout)", () => {
+	test("takes the reply out and closes the joint, keeping the person's words and other queued messages", () => {
+		const reply = "Plannotator Inbox: Deploy (msg_r)\nThe person answered.\n\nRetry.";
+		expect(editorWithout(reply, reply)).toBe("");
+		expect(editorWithout(`${reply}\n\nmy draft`, reply)).toBe("my draft");
+		expect(editorWithout(`queued first\n\n${reply}\n\nmy draft`, reply)).toBe("queued first\n\nmy draft");
+		expect(editorWithout(`queued first\n\n${reply}`, reply)).toBe("queued first");
+		// The person edited it: nothing is taken out.
+		expect(editorWithout(reply.replace("Retry.", "Retry twice."), reply)).toBeNull();
+	});
 });

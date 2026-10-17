@@ -298,6 +298,14 @@ export class InboxLink {
   private elsewhere = new Map<string, { command: InboxReplyCommand; since: number }>()
   /** The reply whose turn this process is submitting, kept alive in its claim. */
   private submitting: string | null = null
+  /**
+   * Every claim this process won and has neither delivered nor reported: the
+   * one it is submitting, and any it keeps while it waits (this session's own
+   * Ask question holds the turn, or Send now was refused and it waits for
+   * idle). Each one's `alive` is refreshed with the lease, so another process
+   * never reports a reply this one still holds.
+   */
+  private readonly held = new Set<string>()
   private delivering = false
   /** When this link started (the session, near enough), and the turn state last told the Inbox (step 8). */
   private startedAt = 0
@@ -496,7 +504,7 @@ export class InboxLink {
     }
     if (now - this.leaseCheckedAt >= LEASE_EVERY_MS) {
       await this.holdLease(now)
-      if (this.submitting) await this.host.writeFile(`${this.claimDir(this.submitting)}/alive`, String(now)).catch(() => undefined)
+      for (const id of this.held) await this.host.writeFile(`${this.claimDir(id)}/alive`, String(now)).catch(() => undefined)
       for (const id of [...this.elsewhere.keys()]) await this.watchElsewhere(id, now)
     }
     for (const id of [...this.unacked]) await this.acknowledge(id)
@@ -625,6 +633,7 @@ export class InboxLink {
   private settle(id: string): void {
     this.pending.delete(id)
     this.settled.add(id)
+    this.held.delete(id)
   }
 
   /**
@@ -672,6 +681,7 @@ export class InboxLink {
     }
     if (claim?.exitCode !== INBOX_CLAIM_EXIT.won) return
     this.submitting = command.id
+    this.held.add(command.id)
     await this.host.writeFile(`${dir}/alive`, String(await this.host.now())).catch(() => undefined)
     // Decided HERE, after every await above: the turn may have ended (or one started) meanwhile. Into the
     // running turn only when the person asked, one runs that may take it, and the engine can; else as a

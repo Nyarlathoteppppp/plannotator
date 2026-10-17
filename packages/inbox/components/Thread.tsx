@@ -29,7 +29,7 @@ import { inboxMessageImageBase, inlineImageRefFromSrc, markTallImage } from '../
 import { reportUnsentReply } from '../unsent';
 import { canToggleRead } from '../markRead';
 import { NewMessageButton, NewMessageComposer, NewMessagePopover, hostName, useLiveSessions, type NewMessageMode } from './NewMessage';
-import { deliveryLine, type DeliveryLine } from '../deliveryLine';
+import { deliveryLine, type DeliveryLine, type RecipientConnection } from '../deliveryLine';
 import { SendToAnotherSession } from '../compose/SendToAnotherSession';
 import { ComposeFileTiles, attachedAnnouncement, useComposeFiles } from '../compose/ComposeFiles';
 import {
@@ -628,16 +628,25 @@ function useThreadAttachments(threadId: string, revision: unknown) {
 const SHOW_NEW_MESSAGE_BUTTON = false;
 
 /** Where a 👍 Looks good is on its way to the agent (amended 2026-10-16: it is sent through). */
-export type AckPillState = 'pending' | 'queued' | 'saved' | 'delivered' | 'not-sent';
+export type AckPillState = 'pending' | 'queued' | 'sending' | 'saved' | 'delivered' | 'not-sent';
 
 /**
  * The line under a 👍: the toast's Undo window still runs (`pending`), the
- * Inbox sent it and a connection wakes the agent with it (`queued`, the
- * message came through a waking connection), it waits for an agent that only
- * reads the thread (`saved`), or it reached the agent (`delivered`: its turn
- * was delivered, or the agent read it). Pure, for the tests.
+ * Inbox sent it and a connection wakes the agent with it (`queued`, or
+ * `sending` while that session is idle: the same honest words as a reply's
+ * line, from the session's connection now, `deliveryLine`), it waits for an
+ * agent that only reads the thread (`saved`), or it reached the agent
+ * (`delivered`: its turn was delivered, or the agent read it). No Send now: a
+ * 👍 asks nothing of the agent, so it never goes into a running turn; it
+ * waits for the turn to end. Pure, for the tests.
  */
-export function ackPillLine(ack: NonNullable<InboxMessageWire['ack']>, agent: string, wakes: boolean, time: (iso: string) => string = whenTime): { state: AckPillState; text: string } {
+export function ackPillLine(
+  ack: NonNullable<InboxMessageWire['ack']>,
+  agent: string,
+  wakes: boolean,
+  time: (iso: string) => string = whenTime,
+  connection?: RecipientConnection | null,
+): { state: AckPillState; text: string } {
   if (ack.delivered_at) return { state: 'delivered', text: `Delivered to ${agent}, ${time(ack.delivered_at)}` };
   // The window ended after the person replied, or the agent wrote again: it was not sent.
   if (ack.not_sent === 'replied') return { state: 'not-sent', text: 'not sent: you replied' };
@@ -645,13 +654,27 @@ export function ackPillLine(ack: NonNullable<InboxMessageWire['ack']>, agent: st
   const you = `You, ${time(ack.at)} · `;
   if (ack.settled_seq == null) return { state: 'pending', text: `${you}goes to ${agent} in a few seconds` };
   // A 👍 settled before it was sent through (no note) never reaches a wake: it waits for a read.
-  if (wakes && ack.note_id) return { state: 'queued', text: `${you}Queued for ${agent}; it gets this as its next turn.` };
+  if (wakes && ack.note_id) {
+    const line = deliveryLine({ name: agent, deliveredAt: null, time, wakes: true, sendingNow: false, connection });
+    return { state: line.state === 'sending' ? 'sending' : 'queued', text: `${you}${line.text}` };
+  }
   return { state: 'saved', text: `${you}Saved for ${agent}. It sees it when it next reads this thread.` };
 }
 
 /** Under a message the person marked 👍 Looks good: when, and where it is on its way to the agent. */
-export function AckPill({ ack, agent, wakes = false }: { ack: NonNullable<InboxMessageWire['ack']>; agent: string; wakes?: boolean }) {
-  const line = ackPillLine(ack, agent, wakes);
+export function AckPill({
+  ack,
+  agent,
+  wakes = false,
+  connection,
+}: {
+  ack: NonNullable<InboxMessageWire['ack']>;
+  agent: string;
+  wakes?: boolean;
+  /** How the agent's session is connected now (the sessions route's `asker.connection`); undefined while unknown. */
+  connection?: RecipientConnection | null;
+}) {
+  const line = ackPillLine(ack, agent, wakes, whenTime, connection);
   return (
     <p className="ib-ackpill" data-ack-pill={line.state}>
       <span className="ib-ackchip">
@@ -1703,13 +1726,20 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   // Its connection wakes it when the asking message came through one (`wakes`), or, for a message sent
   // another way from such a session (the stdio shim run inside Claude Code), when that session polls now.
   const wakingSession = askedSession && repliedTo?.wakes === true ? askedSession : null;
-  const recipientSession = lastTo?.session ?? askedSession;
-  const waitingOnWake = !!recipientSession && !last.delivery && !(lastTo === null && sent?.checked_at);
+  const replySession = lastTo?.session ?? askedSession;
+  const replyWaiting = !!replySession && !last.delivery && !(lastTo === null && sent?.checked_at);
+  // A 👍 the Inbox sent through to a waking session and that session has not taken yet (the person's reply
+  // is not the last message then: the 👍 is offered only before it): its line reads the same connection.
+  const ackSession = ackTarget?.author.kind === 'agent' && ackTarget.author.session ? ackTarget.author.session : null;
+  const ackWaiting = ackSession && ackTarget?.ack?.note_id && !ackTarget.ack.delivered_at && ackTarget.wakes === true ? ackTarget : null;
+  const recipientSession = replySession ?? (ackWaiting ? ackSession : null);
+  const waitingOnWake = replyWaiting || (!replySession && ackWaiting !== null);
   // How that session is connected now ("Queued", "Sending", Send now), and, for compose, whether it
   // stopped before it took it (after the asker grace). Read every few seconds while the reply waits.
   const { model: pendingLive, load: loadPendingLive } = useLiveSessions(thread.thread_id, recipientSession, waitingOnWake, 3_000);
   const undelivered = !!lastTo && !last.delivery && pendingLive?.asker?.session === lastTo.session && pendingLive.asker.live === false;
   const recipientConnection = pendingLive?.asker?.session === recipientSession ? pendingLive?.asker?.connection : undefined;
+  const ackConnection = ackWaiting && !replySession && pendingLive?.asker?.session === ackSession ? pendingLive.asker.connection : undefined;
   const delivered: DeliveryLine | null =
     last.author.kind !== 'person'
       ? null
@@ -2240,7 +2270,9 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                   />
                 )}
                 {message.guide && <GuideCard guide={message.guide} onOpen={() => onOpenGuide(message.id)} />}
-                {isAgent && message.ack && <AckPill ack={message.ack} agent={name} wakes={message.wakes === true} />}
+                {isAgent && message.ack && (
+                  <AckPill ack={message.ack} agent={name} wakes={message.wakes === true} connection={message.id === ackWaiting?.id ? ackConnection : undefined} />
+                )}
                 {message === lastAgent && liveMessage(lastAgent) && waitingHoldsUp.length > 0 && (
                   <div className="ib-waitfoot">
                     <b>Waiting on this answer</b>

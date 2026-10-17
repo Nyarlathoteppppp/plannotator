@@ -15,7 +15,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { clearInboxDuplicates, dropInboxDuplicates, findInboxConnection, inboxRepeatLine, recordInboxDuplicate, registerInboxOpenCode2, type InboxToolDomainLike } from "./inbox";
+import { clearInboxDuplicates, dropInboxDuplicates, findInboxConnection, inboxRepeatLine, inboxRepeatPointer, recordInboxDuplicate, registerInboxOpenCode2, type InboxToolDomainLike } from "./inbox";
 import {
   createInboxWorld,
   destroyInboxWorld,
@@ -295,15 +295,18 @@ describe.skipIf(process.platform === "win32")("OpenCode 2's Send now (a steer, c
     const steer = prompts.find((prompt) => prompt.delivery === "steer")!;
     // The fallback is the steer's text plus the repeat line.
     expect(queued.text).toBe(`${steer.text}\n\n${inboxRepeatLine(replyId)}`);
-    // OpenCode then promotes the steer row with the queued turn (#1734): the model reads one copy, the earlier.
+    // OpenCode then promotes the steer row with the queued turn (#1734): the model reads one copy, the
+    // earlier; the later, the last message's whole content, stays as a pointer, so the request still ends
+    // on a user message.
     const request: unknown[] = [
       { role: "assistant", content: "Working on it." },
       { role: "user", content: [{ type: "text", text: steer.text }] },
       { role: "user", content: queued.text },
     ];
     expect(dropInboxDuplicates(request)).toBe(1);
-    expect(request).toHaveLength(2);
+    expect(request).toHaveLength(3);
     expect((request[1] as { content: { text: string }[] }).content[0]!.text).toBe(steer.text);
+    expect(request[2]).toEqual({ role: "user", content: inboxRepeatPointer(replyId) });
     const delivery = await waitFor("the delivery record", async () =>
       ((await (await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/threads/${asked.thread_id}`)).json()) as { thread: { messages: { id: string; delivery?: unknown }[] } }).thread.messages.find((m) => m.id === replyId)?.delivery,
     );
@@ -327,10 +330,46 @@ describe("Send now duplicates in OpenCode 2's model requests (dropInboxDuplicate
     const other: unknown[] = [{ role: "assistant", content: "WAKE" }, { role: "user", content: "WAKE" }, { role: "user", content: "OTHER" }];
     expect(dropInboxDuplicates(other)).toBe(0);
   });
+
+  test("a later copy that is its message's whole content becomes a pointer, never removed: the request never ends on the assistant", () => {
+    recordInboxDuplicate("msg_r", "WAKE", "WAKE\n\nrepeat");
+    // The steer row went into the run (answered there), then the fallback came as a turn of its own.
+    const request: unknown[] = [
+      { role: "user", content: [{ type: "text", text: "WAKE" }] },
+      { role: "assistant", content: "Done, retried." },
+      { role: "user", content: [{ type: "text", text: "WAKE\n\nrepeat" }] },
+    ];
+    expect(dropInboxDuplicates(request)).toBe(1);
+    expect(request).toHaveLength(3);
+    expect((request.at(-1) as { role: string }).role).toBe("user");
+    expect((request[2] as { content: { text: string }[] }).content).toEqual([{ type: "text", text: inboxRepeatPointer("msg_r") }]);
+    // The same in every later request (a stable prompt prefix): the pointer is not a copy, so it stays.
+    const later = structuredClone(request);
+    later.push({ role: "assistant", content: "Already answered." }, { role: "user", content: "next" });
+    expect(dropInboxDuplicates(later)).toBe(0);
+    expect(later.slice(0, 3)).toEqual(request);
+    // A string message too.
+    const asString: unknown[] = [{ role: "user", content: "WAKE" }, { role: "assistant", content: "ok" }, { role: "user", content: "WAKE\n\nrepeat" }];
+    dropInboxDuplicates(asString);
+    expect(asString[2]).toEqual({ role: "user", content: inboxRepeatPointer("msg_r") });
+  });
 });
 
 describe.skipIf(process.platform === "win32")("OpenCode 2's Send now: the steer becomes queued, or the event stream ends", () => {
-  async function world(name: string) {
+  /** `session.wait`: pending while the run goes on, answered once the test ends it. */
+  function runGate() {
+    let running = true;
+    const waiters: (() => void)[] = [];
+    return {
+      wait: () => (running ? new Promise<void>((resolve) => waiters.push(resolve)) : Promise.resolve()),
+      end() {
+        running = false;
+        for (const resolve of waiters.splice(0)) resolve();
+      },
+    };
+  }
+
+  async function world(name: string, options: { wait?: () => Promise<unknown>; context?: () => Promise<unknown> } = {}) {
     const w = createInboxWorld("plannotator-inbox-oc2-steer2-", name, "opencode2");
     worlds.push(w);
     startInbox(w);
@@ -346,7 +385,8 @@ describe.skipIf(process.platform === "win32")("OpenCode 2's Send now: the steer 
       event: { subscribe: events.subscribe },
       session: {
         get: async () => ({ location: { directory: w.project } }),
-        wait: async () => undefined,
+        wait: options.wait ?? (async () => undefined),
+        ...(options.context ? { context: options.context } : {}),
         prompt: async (input: { id: string; text: string; delivery: string }) => {
           prompts.push({ id: input.id, text: input.text, delivery: input.delivery });
         },
@@ -380,16 +420,66 @@ describe.skipIf(process.platform === "win32")("OpenCode 2's Send now: the steer 
     expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
   }, 60_000);
 
-  test("the event stream ends while the steer waits: the fallback goes at once (not after the cap), and duplicates are dropped", async () => {
-    const { w, events, prompts, sessionID, asked } = await world("11-opencode2-steer-stream-ends");
+  const deliveryOf = async (w: ReturnType<typeof createInboxWorld>, threadId: string, replyId: string) =>
+    ((await (await fetch(`http://127.0.0.1:${registry(w).port}/api/inbox/threads/${threadId}`)).json()) as { thread: { messages: { id: string; delivery?: unknown }[] } }).thread.messages.find((m) => m.id === replyId)?.delivery;
+
+  test("a long tool call: the run goes on with no event for longer than the old 60 s cap would allow; no fallback, and the steer counts once delivered", async () => {
+    const gate = runGate();
+    const { w, events, prompts, sessionID, asked } = await world("12-opencode2-steer-long-tool-call", { wait: gate.wait });
+    const replyId = await personSends(w, asked.message_id, "Retry with the same key.");
+    await sendNowOffered(w, asked.thread_id, sessionID);
+    await pressSendNow(w, replyId);
+    const steer = await waitFor("the steer row", () => prompts.find((prompt) => prompt.delivery === "steer"));
+    // No event for longer than the 60 s cap this used to have, and past RUNNING_CROSS_CHECK_MS (20 s): the
+    // cross-check asks OpenCode, which says the run goes on.
+    await Bun.sleep(65_000);
+    expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
+    expect(await deliveryOf(w, asked.thread_id, replyId)).toBeUndefined();
+    // The tool call returns; the run's next step promotes the row.
+    events.emit({ type: "session.inbox.delivered", data: { sessionID, inboxID: steer.id } });
+    expect(await waitFor("the delivery record", () => deliveryOf(w, asked.thread_id, replyId))).toMatchObject({ host: "opencode", session: sessionID });
+    gate.end();
+    events.emit({ type: "session.execution.succeeded", data: { sessionID } });
+    await Bun.sleep(4_000);
+    expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
+  }, 120_000);
+
+  test("the event stream ends mid-run: no fallback while the run goes on; once idle, a row the context holds counts as delivered", async () => {
+    const gate = runGate();
+    let context: unknown[] = [];
+    const { w, events, prompts, sessionID, asked } = await world("11-opencode2-steer-stream-ends", { wait: gate.wait, context: async () => context });
+    const replyId = await personSends(w, asked.message_id, "Fail the job and alert.");
+    await sendNowOffered(w, asked.thread_id, sessionID);
+    await pressSendNow(w, replyId);
+    const steer = await waitFor("the steer row", () => prompts.find((prompt) => prompt.delivery === "steer"));
+    events.close();
+    await Bun.sleep(8_000);
+    expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
+    // The run promoted the row at its next step (the plugin could not see it), then ended.
+    context = [
+      { id: "msg_a", type: "user", content: [{ type: "text", text: "Start the job." }] },
+      { id: steer.id, type: "user", content: [{ type: "text", text: steer.text }] },
+      { id: "msg_b", type: "assistant", content: [{ type: "text", text: "Failing it and alerting." }] },
+    ];
+    gate.end();
+    expect(await waitFor("the delivery record", () => deliveryOf(w, asked.thread_id, replyId), 15_000)).toMatchObject({ host: "opencode" });
+    await Bun.sleep(3_000);
+    expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
+  }, 60_000);
+
+  test("the event stream ends mid-run and the row never entered: once idle, the fallback goes queued (its copy deduplicated)", async () => {
+    const gate = runGate();
+    const { w, events, prompts, sessionID, asked } = await world("13-opencode2-steer-stream-ends-undelivered", { wait: gate.wait, context: async () => [] });
     const replyId = await personSends(w, asked.message_id, "Fail the job and alert.");
     await sendNowOffered(w, asked.thread_id, sessionID);
     await pressSendNow(w, replyId);
     await waitFor("the steer row", () => prompts.find((prompt) => prompt.delivery === "steer"));
-    const started = Date.now();
     events.close();
-    const queued = await waitFor("the queued turn", () => prompts.find((prompt) => prompt.delivery === "queue"), 10_000);
-    expect(Date.now() - started).toBeLessThan(8_000);
+    await Bun.sleep(6_000);
+    expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
+    gate.end();
+    const queued = await waitFor("the queued turn", () => prompts.find((prompt) => prompt.delivery === "queue"), 15_000);
     expect(queued.text.endsWith(inboxRepeatLine(replyId))).toBe(true);
+    expect(await waitFor("the delivery record", () => deliveryOf(w, asked.thread_id, replyId))).toMatchObject({ host: "opencode" });
   }, 60_000);
 });

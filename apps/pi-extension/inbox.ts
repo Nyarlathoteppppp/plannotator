@@ -74,6 +74,33 @@ export interface PiInboxOptions {
 }
 
 /**
+ * The editor without `text` (Pi joins restored queued messages and the draft
+ * with a blank line): the joint closes up, the person's own words stay.
+ */
+export function editorWithout(editor: string, text: string): string | null {
+	const at = text ? editor.indexOf(text) : -1;
+	if (at < 0) return null;
+	let before = editor.slice(0, at);
+	let after = editor.slice(at + text.length);
+	if (before.endsWith("\n\n")) before = before.slice(0, -2);
+	if (after.startsWith("\n\n")) after = after.slice(2);
+	return before && after ? `${before}\n\n${after}` : before + after;
+}
+
+/** Takes `text` out of the session's editor, where Pi puts queued messages when a run is aborted. Best effort. */
+function takeOutOfEditor(current: ExtensionContext, text: string): void {
+	try {
+		const ui = current.ui as { getEditorText?: () => string; setEditorText?: (text: string) => void };
+		const editor = ui.getEditorText?.();
+		if (typeof editor !== "string") return;
+		const rest = editorWithout(editor, text);
+		if (rest !== null) ui.setEditorText?.(rest);
+	} catch {
+		// No editor (a session without UI): nothing was moved there.
+	}
+}
+
+/**
  * Called once at extension load. Returns the discovery to await when the
  * Inbox connection applies to this Pi; undefined (and nothing done) otherwise.
  */
@@ -192,6 +219,10 @@ function registerPiInbox(pi: InboxPi, connection: InboxAgentConnection, options:
 					waiting.timer = setTimeout(watchdog, DELIVERY_WATCHDOG_MS);
 					return;
 				}
+				// A steer that never started: the person pressed Esc during the run, and Pi moved its
+				// queued messages into the editor. Take ours back out, so the reply, which now waits for
+				// idle and arrives as a follow-up, is not also sent a second time from the editor.
+				if (deliverAs === "steer" && current && isCtxAlive(current)) takeOutOfEditor(current, text);
 				endWaiting(new Error("the message did not reach the session"));
 			};
 			waiting = { id: command.id, resolve, reject, timer: setTimeout(watchdog, DELIVERY_WATCHDOG_MS) };
@@ -203,6 +234,9 @@ function registerPiInbox(pi: InboxPi, connection: InboxAgentConnection, options:
 		});
 
 	const target = {
+		// Never steer into this session's own "Ask this session" question (its answer streams to
+		// Plannotator; the Claude Code mod's rule): the reply waits for idle, and the poll stops offering Send now.
+		canSteer: () => !options.isAskActive(),
 		isBusy: () => {
 			const current = ctx;
 			if (!current || !isCtxAlive(current) || !idleNow(current)) return true;
