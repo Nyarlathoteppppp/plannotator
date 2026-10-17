@@ -1,10 +1,11 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { Menu } from '@base-ui/react/menu';
 import type { ProjectFolder } from '../api';
 import { formatCount } from '../format';
 import { Icon } from '../icons';
 import type { ProjectAction } from '../projectMenu';
+import { ProjectTipText, Tip } from './Tip';
 
 export interface ProjectRowProps {
   project: ProjectFolder;
@@ -66,16 +67,17 @@ export function ProjectRow(props: ProjectRowProps) {
   );
   const content = (
     <>
-      <button
-        type="button"
-        className={`ib-proj${props.count === 0 ? ' ib-proj-quiet' : ''}${props.on ? ' ib-on' : ''}`}
-        onClick={props.onOpen}
-        aria-current={props.on ? 'page' : undefined}
-        title={project.root}
-      >
-        <span className="ib-name" dir="auto">{project.name}</span>
-        {props.count > 0 && <span className="ib-n">{formatCount(props.count)}</span>}
-      </button>
+      <ProjectTip name={project.name} root={project.root}>
+        <button
+          type="button"
+          className={`ib-proj${props.count === 0 ? ' ib-proj-quiet' : ''}${props.on ? ' ib-on' : ''}`}
+          onClick={props.onOpen}
+          aria-current={props.on ? 'page' : undefined}
+        >
+          <span className="ib-name" dir="auto">{project.name}</span>
+          {props.count > 0 && <span className="ib-n">{formatCount(props.count)}</span>}
+        </button>
+      </ProjectTip>
       <Menu.Root open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
         <Menu.Trigger ref={more} className="ib-pmore" aria-label={`${project.name} options`} data-pmore={project.id}>
           <Icon name="dots" size={16} />
@@ -124,5 +126,21 @@ function ProjectMenuItems({ name, readable, onAction }: { name: string; readable
         Archive all
       </Menu.Item>
     </>
+  );
+}
+
+/**
+ * A sidebar project's tooltip, on hover or keyboard focus: its whole name
+ * (the row cuts a long one) over the folder it is, which the row never
+ * shows. Always opens, since the folder is never on screen.
+ */
+export function ProjectTip({ name, root, children }: { name: string; root: string; children: ReactElement }) {
+  return (
+    <Tip
+      side="right"
+      content={<ProjectTipText name={name} root={root} />}
+    >
+      {children}
+    </Tip>
   );
 }

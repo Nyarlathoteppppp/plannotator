@@ -2315,6 +2315,8 @@ For the Plannotator Inbox's one viewer (approval "inbox-image-viewer", 2026-10-1
 
 **`Tooltip`** (`components/Tooltip`) gains **`shouldOpen?: (trigger: Element) => boolean`**, asked each time the tooltip would open; `false` keeps it closed that time (Base UI's `onOpenChange` with `cancel()`). Unset, it always opens, as before. The Inbox passes a check that the trigger's text is cut (`scrollWidth > clientWidth`), so a list row's thread label and subject show their whole text only while they are cut.
 
+**`Tooltip`** also gains **`container?: HTMLElement | null`**, where the popup is portaled (Base UI's `Portal` `container`). Unset or null: the document body, as before. The Inbox passes the open native `<dialog>` a trigger sits in (its search palette, compose and its modal dialogs), since a popup in the body is drawn under the dialog's top layer. And **`escapePassesThrough?: boolean`**: Escape closes the tooltip without using the key up (the close is canceled, so Base UI neither prevents nor stops it, and the tooltip closes through its own state), so a page's Escape still works while a tooltip is open. Unset: Base UI's default, unchanged.
+
 ## The law (guardrails for anyone editing `@plannotator/ui`)
 
 These are enforced socially and, where possible, by CI. They exist because a prior from-scratch reimplementation of this UI broke the app and was reverted.

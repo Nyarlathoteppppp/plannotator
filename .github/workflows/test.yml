@@ -168,6 +168,7 @@ jobs:
           packages/inbox/openStaysPut.test.tsx
           packages/inbox/phoneList.test.tsx
           packages/inbox/listLabels.test.tsx
+          packages/inbox/componentTooltips.test.tsx
           packages/inbox/toast.test.tsx
           packages/inbox/attachmentsHeader.test.tsx
           packages/inbox/sentQuestionLocked.test.tsx

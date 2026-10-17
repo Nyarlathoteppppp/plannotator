@@ -12,6 +12,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ThemeProvider } from '@plannotator/ui/components/ThemeProvider';
+import { TooltipProvider } from '@plannotator/ui/components/Tooltip';
+import { TIP_DELAY_MS } from './components/Tip';
 import { configurePlannotatorUI } from '@plannotator/ui/configure';
 import { storage } from '@plannotator/ui/utils/storage';
 import type { SkillCatalogEntry } from '@plannotator/ui/utils/skillReferences';
@@ -2310,7 +2312,10 @@ function Inbox() {
 export function InboxApp() {
   return (
     <ThemeProvider defaultTheme="system">
-      <Inbox />
+      {/* Every tooltip in the window (Tip): 150 ms to open, and the next one at once within 400 ms. */}
+      <TooltipProvider delayDuration={TIP_DELAY_MS} skipDelayDuration={400} disableHoverableContent>
+        <Inbox />
+      </TooltipProvider>
     </ThemeProvider>
   );
 }
