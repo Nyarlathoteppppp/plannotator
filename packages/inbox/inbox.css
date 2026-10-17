@@ -67,7 +67,7 @@
   --ib-pane-shadow-s: var(--ib-soft-panes) var(--ib-pane-shadow-soft);
   --ib-pane-shadow: var(--ib-pane-shadow-s, none);
   --ib-main-bg-s: var(--ib-soft-panes) transparent;
-  --ib-view-bg-s: var(--ib-soft-panes) var(--card);
+  --ib-pane-bg-s: var(--ib-soft-panes) var(--card);
   --ib-clip-s: var(--ib-soft-panes) hidden;
   --ib-main-bg: var(--ib-main-bg-s, var(--card));
   --ib-pane-line-s: var(--ib-soft-panes) transparent;
@@ -472,9 +472,11 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 /* main list */
 .ib-main { background: var(--ib-main-bg); display: flex; flex: 1; min-width: 0; height: 100%; padding: var(--ib-gutter); gap: var(--ib-gutter); }
 /* Each pane is a card on the ground: the list, a thread or a decision, a file beside its thread, Settings, What's new. */
-.ib-main > :is(.ib-listcol, .ib-pane, .ib-view, .ib-spage, .ib-dpage, .ib-wn) { background: var(--card); border-radius: var(--ib-pane-r); box-shadow: var(--ib-pane-shadow); min-height: 0; }
-/* A file keeps today's background (the window's) while the panes switch is off. */
-.ib-main > .ib-view { background: var(--ib-view-bg-s, var(--background)); }
+.ib-main > :is(.ib-listcol, .ib-pane, .ib-view, .ib-spage, .ib-dpage, .ib-wn) { border-radius: var(--ib-pane-r); box-shadow: var(--ib-pane-shadow); min-height: 0; }
+/* Each takes the card's colour under the panes switch. Off, today's: the thread pane its own card, a file the
+   window's background, and the rest none of their own (an opaque scroller draws its text differently). */
+.ib-main > :is(.ib-listcol, .ib-spage, .ib-dpage, .ib-wn) { background: var(--ib-pane-bg-s, transparent); }
+.ib-main > .ib-view { background: var(--ib-pane-bg-s, var(--background)); }
 /* The list keeps its resize edge in the gutter beside it (never clipped); its scroll box follows the card's corners instead.
    Settings, Decisions and What's new scroll themselves, which clips them to their corners already. */
 .ib-main > :is(.ib-pane, .ib-view:not(.ib-full)) { overflow: var(--ib-clip-s, visible); }
