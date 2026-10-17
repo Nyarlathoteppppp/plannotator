@@ -28,7 +28,7 @@ import {
   type UpdateDetails,
   type WhatsNewModel,
 } from './api';
-import { filterSections, heldNotice, markHeldRowArchived, refreshHeldRows, settleOwn, settleThread, showBroughtIn, waitingCount, type OpenThread } from './held';
+import { addOwnThreads, filterSections, heldNotice, markHeldRowArchived, refreshHeldRows, settleOwn, settleThread, showBroughtIn, waitingCount, type OpenThread } from './held';
 import {
   captureSettle,
   COVERED_LIST_SETTLES,
@@ -58,7 +58,7 @@ import { cardReport, noteQuestionRows } from './agents';
 import type { InboxAgentRow, InboxAgentsModel, InboxConnectReport } from '@plannotator/core/inbox-types';
 import { SettingsPage } from './components/Settings';
 import { ArchivedBlock } from './components/Archived';
-import { NotificationAsk } from './components/NotificationAsk';
+import { NotificationAsk, TabSleptLine } from './components/NotificationAsk';
 import { useInboxNotifications } from './notify';
 import { useInboxSound } from './sound';
 import { notificationLine, SoundIntroDialog } from './components/SoundIntro';
@@ -472,7 +472,7 @@ function Inbox() {
       void refreshList(true);
     },
   });
-  const { observe: observeEvent, flush: flushNotifications } = notifications;
+  const { observe: observeEvent, flush: flushNotifications, setReach: setNotifyReach, windowReport, reportWindow } = notifications;
 
   useEffect(() => {
     const onHash = () => {
@@ -777,14 +777,18 @@ function Inbox() {
           setUpdate(next);
           if (nextUpdated !== undefined) setUpdated(nextUpdated);
         },
-      });
+        // Whether any open Inbox tab can show a notification (Settings → General).
+        onReach: setNotifyReach,
+        // Every (re)connect: the permission now, since a reconnect's URL may be stale.
+        onConnect: reportWindow,
+      }, windowReport());
     })();
     return () => {
       cancelled = true;
       unsubscribe();
       if (timer) clearTimeout(timer);
     };
-  }, [refreshList, refreshSettings, refreshThread, observeEvent, flushNotifications, refreshDecisions, decisionsProjectOf]);
+  }, [refreshList, refreshSettings, refreshThread, observeEvent, flushNotifications, refreshDecisions, decisionsProjectOf, setNotifyReach, windowReport, reportWindow]);
 
   // Opening a thread: read it, record the look, and update its row in place.
   // While any thread is open the list holds still (settle.ts): the look
@@ -1079,8 +1083,16 @@ function Inbox() {
     const next = sent.draftId ? draftNeighbour(sent.draftId) : null;
     if (sent.draftId) setDrafts((current) => (current ?? []).filter((d) => d.id !== sent.draftId));
     closeCompose(next);
-    // While a thread is open its list holds still; with none, the new row shows at once.
-    void refreshList(!routeRef.current.thread, true);
+    // With no thread open the list adopts what it reads, the new row with it.
+    // While one is open the list holds still, but the thread the person just
+    // started is their own action: it goes into Sent now (held.ts
+    // addOwnThreads), the other rows sliding to make room, never behind "N new".
+    const adopt = !routeRef.current.thread;
+    void refreshList(adopt, true).then((next) => {
+      if (!next || adopt) return;
+      armSlide();
+      setShown((current) => (current === null ? next.sections : addOwnThreads(current, next.sections, [sent.threadId])));
+    });
     if (sent.draftId) void refreshDrafts();
     showToast(
       {
@@ -1930,6 +1942,8 @@ function Inbox() {
         tailscaleBusy={tailscaleBusy}
         permission={notifications.permission}
         onToggleNotifications={(next) => void notifications.setEnabled(next)}
+        notifyReach={notifications.reach}
+        onTestNotification={notifications.sendTest}
         onDeleteThread={deleteThread}
         onDeleteProject={deleteProject}
         sound={settings?.sound ? sound : undefined}
@@ -2052,9 +2066,13 @@ function Inbox() {
               <NotificationAsk
                 kind={notifications.ask}
                 soundOn={sound.settings.enabled}
+                movedFrom={settings?.notifications.allowed_origin ?? null}
                 onTurnOn={() => void notifications.turnOn()}
                 onNotNow={notifications.notNow}
+                onSettings={() => go({ page: 'settings', project: null, thread: null, section: 'general' })}
               />
+            ) : notifications.slept && notifications.permission === 'granted' && soundDialog === 'none' && agentNote === 'none' ? (
+              <TabSleptLine slept={notifications.slept} onDismiss={notifications.dismissSlept} />
             ) : null
           }
           onShowNew={() => {
