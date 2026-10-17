@@ -870,7 +870,7 @@ describe('Claude Code ↔ Plannotator Inbox (real Inbox, real processes)', () =>
 
   // The failure this catches: a claim held while the reply waits (here, the session's own Ask question took
   // the turn after the claim) whose `alive` goes stale, so another process reports a reply this one still holds.
-  test("Send now claimed, then this session's own Ask question holds the turn: the claim is kept alive while it waits, and the reply goes in once, as a turn", async () => {
+  test("Send now claimed, then this session's own Ask question holds the turn: the claim is given back while it waits, and the reply goes in once, as a turn", async () => {
     const w = world('16b-send-now-held-claim-alive')
     startInbox(w)
     const session = await open(w, 'session-held')
@@ -880,17 +880,22 @@ describe('Claude Code ↔ Plannotator Inbox (real Inbox, real processes)', () =>
     await busyKnown(w, asked.thread_id, 'session-held')
     const sink = { delta: () => {}, tool: () => {}, done: () => {}, error: () => {} }
     // At the claim, the person's turn ends and an Ask question is queued: busy, and no turn to go into.
+    let claimed = false
+    let released = false
     session.host.onRun = (argv) => {
-      if (!argv.includes('plannotator-inbox-claim')) return
-      session.host.onRun = () => undefined
+      if (argv.includes('plannotator-inbox-release')) released = true
+      if (!argv.includes('plannotator-inbox-claim') || claimed) return
+      claimed = true
       session.endTurn()
       expect(session.mod.turns.beginAsk('ask-held', 'What does the retry loop do?', sink)).toBe(true)
     }
     await pressSendNow(w, replyId)
-    const alive = join(w.dataDir, 'claude-code-mod', 'session-held', 'inbox', 'claims', replyId, 'alive')
-    await waitFor('the claim', () => existsSync(alive))
-    const first = Number(readFileSync(alive, 'utf8'))
-    await waitFor('the claim kept alive', () => Number(readFileSync(alive, 'utf8')) > first, 15_000)
+    const claim = join(w.dataDir, 'claude-code-mod', 'session-held', 'inbox', 'claims', replyId)
+    await waitFor('the claim, then its release', () => released)
+    // Nothing went in under it, so the claim is given back (any process may deliver it), not held.
+    await waitFor('the claim given back', () => !existsSync(claim))
+    await Bun.sleep(6_000)
+    expect(existsSync(claim)).toBe(false)
     expect(session.host.appended).toEqual([])
     expect(session.host.submits).toEqual([])
     // The Ask question runs and ends: the reply goes in as a turn, once.
@@ -900,6 +905,33 @@ describe('Claude Code ↔ Plannotator Inbox (real Inbox, real processes)', () =>
     expect(session.host.appended).toEqual([])
     expect(session.host.submits).toHaveLength(1)
   }, 120_000)
+
+  test('two processes on one session: the claimant\'s turn starts right after its claim and the person moves to the other process; that process delivers the reply once', async () => {
+    const w = world('16c-claim-then-lease-moves')
+    startInbox(w)
+    const first = await open(w, 'session-moves')
+    const second = await open(w, 'session-moves')
+    // The tool call in `first` makes it the person's process, so it claims the reply.
+    const asked = await send(first, w, QUESTION)
+    // Right after its claim, a turn starts in `first` (busy: the reply cannot go in there now).
+    first.host.onRun = (argv) => {
+      if (!argv.includes('plannotator-inbox-claim')) return
+      first.host.onRun = () => undefined
+      void first.startTurn('Keep refactoring the handler.')
+    }
+    const replyId = await personSends(w, asked.message_id, 'Retry with the same key.')
+    await waitFor('the turn in the claimant', () => first.turns.some((t) => t.text === 'Keep refactoring the handler.'))
+    // The person moves to the second process while that turn runs: the lease follows them.
+    await second.type('Over here now.')
+    second.endTurn()
+    await waitFor('the delivery in the second process', () => second.host.submits.some((text) => text.includes(`(${replyId})`)), 40_000)
+    expect(first.host.submits).toEqual([])
+    // The claimant's turn ends: still exactly one delivery.
+    first.endTurn()
+    await Bun.sleep(6_000)
+    expect([...first.host.submits, ...second.host.submits].filter((text) => text.includes(`(${replyId})`))).toHaveLength(1)
+    w.proof(`reply ${replyId}: claimed in the first process, delivered once in the second`)
+  }, 90_000)
 
   test('Send now with an older reply waiting for the same session: both go into the running turn, oldest first', async () => {
     const w = world('17-send-now-keeps-the-order')

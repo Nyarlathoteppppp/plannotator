@@ -402,7 +402,7 @@ describe.skipIf(process.platform === "win32")("OpenCode 2's Send now: the steer 
     events.emit({ type: "session.execution.started", data: { sessionID } });
     const sent = await tool!.execute({ action: "send_message", body: QUESTION }, { sessionID });
     const asked = JSON.parse(sent.content.slice(sent.content.indexOf("{"))) as { message_id: string; thread_id: string };
-    return { w, events, prompts, sessionID, asked };
+    return { w, events, prompts, sessionID, asked, stop };
   }
 
   test("OpenCode turns the steer row into a queued row: it will be delivered, so no fallback is sent", async () => {
@@ -481,5 +481,39 @@ describe.skipIf(process.platform === "win32")("OpenCode 2's Send now: the steer 
     const queued = await waitFor("the queued turn", () => prompts.find((prompt) => prompt.delivery === "queue"), 15_000);
     expect(queued.text.endsWith(inboxRepeatLine(replyId))).toBe(true);
     expect(await waitFor("the delivery record", () => deliveryOf(w, asked.thread_id, replyId))).toMatchObject({ host: "opencode" });
+  }, 60_000);
+
+  test("the session is deleted while its steer row waits: the row is given up, its watch stops, and no fallback goes into the deleted session", async () => {
+    let contextCalls = 0;
+    const { w, events, prompts, sessionID, asked } = await world("14-opencode2-steer-session-deleted", {
+      context: async () => {
+        contextCalls++;
+        return [];
+      },
+    });
+    const replyId = await personSends(w, asked.message_id, "Retry with the same key.");
+    await sendNowOffered(w, asked.thread_id, sessionID);
+    await pressSendNow(w, replyId);
+    await waitFor("the steer row", () => prompts.find((prompt) => prompt.delivery === "steer"));
+    events.emit({ type: "session.deleted", data: { sessionID } });
+    await Bun.sleep(200);
+    // Were the steer still watched, the stream ending would have it read the context once idle, then send the fallback.
+    events.close();
+    await Bun.sleep(6_000);
+    expect(contextCalls).toBe(0);
+    expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
+    expect(await deliveryOf(w, asked.thread_id, replyId)).toBeUndefined();
+  }, 60_000);
+
+  test("OpenCode shuts down while a steer row waits: no fallback is sent during shutdown, and the reply stays undelivered for the next start", async () => {
+    const { w, prompts, sessionID, asked, stop } = await world("15-opencode2-steer-dispose");
+    const replyId = await personSends(w, asked.message_id, "Fail the job and alert.");
+    await sendNowOffered(w, asked.thread_id, sessionID);
+    await pressSendNow(w, replyId);
+    await waitFor("the steer row", () => prompts.find((prompt) => prompt.delivery === "steer"));
+    stop.abort();
+    await Bun.sleep(4_000);
+    expect(prompts.map((prompt) => prompt.delivery)).toEqual(["steer"]);
+    expect(await deliveryOf(w, asked.thread_id, replyId)).toBeUndefined();
   }, 60_000);
 });

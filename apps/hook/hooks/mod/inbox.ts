@@ -174,6 +174,24 @@ export function inboxClaimArgv(dir: string, claimant: string): string[] {
 }
 
 /**
+ * Gives back a claim nothing was submitted under (the turn it was to go into
+ * is busy, or Send now's row was refused): removes `$1` only while it is
+ * still `$2`'s and neither delivered nor reported, so whichever process the
+ * person works in can claim it again (exactly once still holds: mkdir has one
+ * winner, and nothing went in under the claim given back).
+ */
+export const INBOX_RELEASE_SCRIPT = [
+  'd=$1; me=$2',
+  '[ "$(cat "$d/by" 2>/dev/null)" = "$me" ] || exit 0',
+  '[ -e "$d/delivered" ] || [ -e "$d/reported" ] && exit 0',
+  'rm -rf "$d"',
+].join('\n')
+
+export function inboxReleaseArgv(dir: string, claimant: string): string[] {
+  return ['/bin/sh', '-c', INBOX_RELEASE_SCRIPT, 'plannotator-inbox-release', dir, claimant]
+}
+
+/**
  * An agent's `project_path` as an existing folder: `$2` as given when
  * absolute, else under the working folder `$1` (never through CDPATH, and
  * `./` first so a name starting with `-` is a name). Prints the physical
@@ -299,13 +317,14 @@ export class InboxLink {
   /** The reply whose turn this process is submitting, kept alive in its claim. */
   private submitting: string | null = null
   /**
-   * Every claim this process won and has neither delivered nor reported: the
-   * one it is submitting, and any it keeps while it waits (this session's own
-   * Ask question holds the turn, or Send now was refused and it waits for
-   * idle). Each one's `alive` is refreshed with the lease, so another process
-   * never reports a reply this one still holds.
+   * Every claim this process won and is submitting under (never one it waits
+   * on: a claim it cannot use at once is given back, `release`). Each one's
+   * `alive` is refreshed with the lease, so another process never reports a
+   * reply this one is still delivering.
    */
   private readonly held = new Set<string>()
+  /** The `alive` refresh in flight, which `release` waits for so no write lands in a claim it removed. */
+  private aliveRefresh: Promise<void> = Promise.resolve()
   private delivering = false
   /** When this link started (the session, near enough), and the turn state last told the Inbox (step 8). */
   private startedAt = 0
@@ -504,7 +523,10 @@ export class InboxLink {
     }
     if (now - this.leaseCheckedAt >= LEASE_EVERY_MS) {
       await this.holdLease(now)
-      for (const id of this.held) await this.host.writeFile(`${this.claimDir(id)}/alive`, String(now)).catch(() => undefined)
+      this.aliveRefresh = (async () => {
+        for (const id of this.held) await this.host.writeFile(`${this.claimDir(id)}/alive`, String(now)).catch(() => undefined)
+      })()
+      await this.aliveRefresh
       for (const id of [...this.elsewhere.keys()]) await this.watchElsewhere(id, now)
     }
     for (const id of [...this.unacked]) await this.acknowledge(id)
@@ -685,10 +707,13 @@ export class InboxLink {
     await this.host.writeFile(`${dir}/alive`, String(await this.host.now())).catch(() => undefined)
     // Decided HERE, after every await above: the turn may have ended (or one started) meanwhile. Into the
     // running turn only when the person asked, one runs that may take it, and the engine can; else as a
-    // turn when idle; else (this session's own Ask question holds it) it waits, its claim kept.
+    // turn when idle; else (this session's own Ask question holds it) it waits, its claim given back.
     const turn = urgent && (await this.canAppend()) ? this.steerableTurn() : null
     if (!turn && this.options.isBusy()) {
+      // Nothing went in: give the claim back, so the process the person works in delivers it (this one
+      // may lose the lease while the turn runs, and a claim it kept would leave the reply with nobody).
       this.submitting = null
+      await this.release(command.id)
       return
     }
     this.host.debug(`inbox: delivering ${command.type} ${command.id}${turn ? ` into the running turn ${turn}` : ''}`)
@@ -698,9 +723,11 @@ export class InboxLink {
         try {
           await this.host.appendUserRow!(inboxWakeText(command))
         } catch (error) {
-          // Refused: nothing entered, so it is delivered when the session is idle (the claim is this instance's,
-          // so it wins again), the window reads it as queued again, and Send now is no longer offered here.
+          // Refused: nothing entered, so the claim is given back and it is delivered when the session is idle
+          // (here or in the process the person moves to), the window reads it as queued again, and Send now
+          // is no longer offered here.
           this.submitting = null
+          await this.release(command.id)
           this.noSteer.add(command.id)
           this.steerRefused = true
           void this.bridge(INBOX_BRIDGE_EVENT_PATH, { type: 'send_now_failed', id: command.id })
@@ -734,6 +761,13 @@ export class InboxLink {
     await this.acknowledge(command.id)
   }
 
+  /** Give back a claim nothing was submitted under; it stays pending here, for a later claim. */
+  private async release(id: string): Promise<void> {
+    this.held.delete(id)
+    await this.aliveRefresh
+    await this.host.run(inboxReleaseArgv(this.claimDir(id), this.options.instanceId), { timeoutMs: 5_000 }).catch(() => null)
+  }
+
   /** Tell the Inbox a reply was delivered (retried every tick until it answers). */
   private async acknowledge(id: string): Promise<void> {
     const response = await this.bridge(INBOX_BRIDGE_EVENT_PATH, { type: 'delivered', id })
@@ -751,6 +785,12 @@ export class InboxLink {
     const entry = this.elsewhere.get(id)
     if (!entry) return
     const dir = this.claimDir(id)
+    if (!(await this.host.exists(dir))) {
+      // Its claimant gave it back without delivering it (`release`): it is pending here again.
+      this.elsewhere.delete(id)
+      if (!this.settled.has(id)) this.pending.set(id, entry.command)
+      return
+    }
     if (await this.host.exists(`${dir}/delivered`)) {
       this.elsewhere.delete(id)
       this.settled.add(id)

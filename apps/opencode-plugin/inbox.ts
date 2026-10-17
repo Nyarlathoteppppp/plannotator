@@ -299,8 +299,11 @@ interface SteerEntry {
   grace: ReturnType<typeof setTimeout> | null;
   watch: ReturnType<typeof setInterval> | null;
   checking: boolean;
-  settle: (delivered: boolean) => void;
+  /** true: delivered; false: the run ended without it (the queued fallback goes); "abandoned": the session was deleted or the plugin is shutting down (no fallback). */
+  settle: (outcome: SteerOutcome) => void;
 }
+
+type SteerOutcome = boolean | "abandoned";
 
 /** The wakes of the sessions this OpenCode 2 process has seen, and what its events say about them. */
 class OpenCode2Wakes {
@@ -341,8 +344,8 @@ class OpenCode2Wakes {
    * once the event stream has ended, when OpenCode says the session is idle
    * and the row is not in its context. Never while the run goes on.
    */
-  private awaitSteer(sessionID: string, id: string, text: string): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
+  private awaitSteer(sessionID: string, id: string, text: string): Promise<SteerOutcome> {
+    return new Promise<SteerOutcome>((resolve) => {
       const entry: SteerEntry = {
         sessionID,
         id,
@@ -350,12 +353,12 @@ class OpenCode2Wakes {
         grace: null,
         watch: null,
         checking: false,
-        settle: (delivered: boolean) => {
+        settle: (outcome: SteerOutcome) => {
           if (this.steering.get(id) !== entry) return;
           this.steering.delete(id);
           if (entry.watch) clearInterval(entry.watch);
           if (entry.grace) clearTimeout(entry.grace);
-          resolve(delivered);
+          resolve(outcome);
         },
       };
       this.steering.set(id, entry);
@@ -415,7 +418,8 @@ class OpenCode2Wakes {
   }
 
   dispose(): void {
-    for (const entry of [...this.steering.values()]) entry.settle(false);
+    // Shutting down: no fallback is sent; the reply stays undelivered and is picked up at the next start.
+    for (const entry of [...this.steering.values()]) entry.settle("abandoned");
     this.controller.abort();
     for (const wake of this.wakes.values()) wake.dispose();
     this.wakes.clear();
@@ -476,6 +480,8 @@ class OpenCode2Wakes {
         }
         return;
       case "session.deleted":
+        // Its steer rows are given up (their watches stop); a deleted session gets no fallback.
+        for (const entry of [...this.steering.values()]) if (entry.sessionID === sessionID) entry.settle("abandoned");
         this.wakes.get(sessionID)?.dispose();
         this.wakes.delete(sessionID);
         return;
@@ -544,7 +550,11 @@ class OpenCode2Wakes {
               const id = createOpenCodeMessageId();
               const delivered = this.awaitSteer(sessionID, id, text);
               await prompt({ sessionID, id, text, delivery: "steer", metadata: { source: INBOX_PROMPT_SOURCE } });
-              if (await delivered) return;
+              const outcome = await delivered;
+              if (outcome === true) return;
+              // Never a fallback into a deleted session or during shutdown: the reply is not delivered (the
+              // wake gives its claim back), and the next start picks it up.
+              if (outcome === "abandoned") throw new Error("the session was deleted or OpenCode is shutting down");
               // Not seen delivered: a queued turn instead. The steer row may still be promoted with it
               // (#1734; the plugin cannot withdraw it), so the later copy is dropped from model requests.
               const fallback = `${text}\n\n${inboxRepeatLine(command.id)}`;
