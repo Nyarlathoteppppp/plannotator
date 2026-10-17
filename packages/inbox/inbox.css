@@ -2823,12 +2823,14 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   .pn-inbox .ib-readline > button { color: var(--ib-raise-primary); }
   .pn-inbox fieldset.question-block { --primary: var(--ib-raise-primary); }
 }
-.pn-inbox .ib-body fieldset.question-block { border-color: var(--ib-qc-border-s, revert-layer); border-radius: var(--ib-qc-r-s, revert-layer); background: var(--ib-qc-bg-s, revert-layer); }
-.pn-inbox .ib-body fieldset.question-block[data-question-status="answered"] { box-shadow: var(--ib-qc-answered-s, revert-layer); }
+/* Off, the values are ui's own (QuestionBlock: radius 10, border/85 or primary/45 once answered, the
+   background 35% into the card). */
+.pn-inbox .ib-body fieldset.question-block { border-color: var(--ib-qc-border-s, color-mix(in oklab, var(--border) 85%, transparent)); border-radius: var(--ib-qc-r-s, 10px); background: var(--ib-qc-bg-s, color-mix(in oklab, var(--background) 35%, var(--card))); }
+.pn-inbox .ib-body fieldset.question-block[data-question-status="answered"] { border-color: var(--ib-qc-border-s, color-mix(in oklab, var(--primary) 45%, transparent)); box-shadow: var(--ib-qc-answered-s, none); }
 .pn-inbox .question-block > div:first-child > span:first-child { font-weight: 500; letter-spacing: 0; text-transform: none; }
 .pn-inbox .question-block > div:first-child > span:last-child > :is(span, button) { border-radius: 999px; border-color: transparent; background: var(--card); color: var(--muted-foreground); letter-spacing: 0; }
 .pn-inbox .question-block > div:first-child > span:last-child > :is(span, button)[aria-pressed="true"],
-.pn-inbox .question-block > div:first-child > span:last-child > [data-question-decision-tag] { color: var(--ib-calm-s, revert-layer); }
+.pn-inbox .question-block > div:first-child > span:last-child > [data-question-decision-tag] { color: var(--ib-calm-s, var(--primary)); }
 .pn-inbox .question-block > div:first-child svg { color: var(--primary); }
 /* The owner's decision (2026-10-16): no "Answering this records a decision" row in the Inbox; the "Records a
    decision" tag at the card's top right says it and switches it. A recorded decision's own row (its
