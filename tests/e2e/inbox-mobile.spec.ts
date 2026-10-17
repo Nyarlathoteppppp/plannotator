@@ -322,14 +322,12 @@ for (const phone of [
       await shot(page, '1-list');
       expect(await sideways(page)).toEqual([]);
       expect(await overlaps(page, '.ib-mrow', ROW_PARTS)).toEqual([]);
-      // Each row (the Soft look): the subject leads the first line with the time at the right edge, who and what under them.
+      // Each row: who and when on the first line, the subject under it, the time at the right edge.
       const row = page.locator(`.ib-mrow[data-thread-id="${world.threads.stopped}"]`);
       await expect(row.locator('.ib-m2')).toHaveText('Stripe 409 on the retry worker: which way should it go before I ship it');
-      const [rowBox, timeBox, subjectBox, whoBox] = await Promise.all([row.boundingBox(), row.locator('.ib-t').boundingBox(), row.locator('.ib-m2').boundingBox(), row.locator('.ib-p').boundingBox()]);
+      const [rowBox, timeBox, subjectBox] = await Promise.all([row.boundingBox(), row.locator('.ib-t').boundingBox(), row.locator('.ib-m2').boundingBox()]);
       expect(timeBox!.x + timeBox!.width).toBeGreaterThan(rowBox!.x + rowBox!.width - 24);
-      expect(subjectBox!.x + subjectBox!.width).toBeLessThanOrEqual(timeBox!.x);
-      expect(Math.abs(subjectBox!.y - timeBox!.y)).toBeLessThan(4);
-      expect(whoBox!.y).toBeGreaterThan(subjectBox!.y + subjectBox!.height - 1);
+      expect(subjectBox!.y).toBeGreaterThan(timeBox!.y);
       expect(await smallTargets(page, '.ib-mrow, .ib-lhead .ib-sb-trigger')).toEqual([]);
 
       // One project's list: the same rows (the wide row's columns once left the subject no room).

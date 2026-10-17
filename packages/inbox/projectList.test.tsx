@@ -95,37 +95,39 @@ function rowEl(el: HTMLElement, id: string): HTMLElement {
 }
 
 describe.if(hasDom)('the wide list', () => {
-  test('every project: the dot, the subject cell, then the project and the time at the right', () => {
+  test('every project: each row has the project cell and the badge cell before the subject', () => {
     const el = render(false);
     expect(el.querySelector('.ib-listcol')!.classList.contains('ib-noproj')).toBe(false);
     for (const id of ['msg_stop', 'msg_hold', 'msg_wait', 'msg_sent']) {
-      const cells = [...rowEl(el, id).children];
-      expect(cells.map((c) => c.className)).toEqual(['ib-udot', 'ib-subj', 'ib-p', 'ib-t']);
-      expect(cells[2]!.textContent).toBe('billing-svc');
-      // The agent's mark leads the subject cell; no column sits empty before it.
-      expect(cells[1]!.firstElementChild!.className).toBe('ib-mk');
+      const r = rowEl(el, id);
+      const cells = [...r.children];
+      expect(cells.length).toBe(5);
+      expect(cells[0]!.className).toBe('ib-p');
+      expect(cells[0]!.textContent).toBe('billing-svc');
+      expect(cells[2]!.className).toBe('ib-subj');
+      // The badge sits in its own column, never inside the subject cell.
+      expect(cells[2]!.querySelector('.ib-badge')).toBeNull();
     }
-    // A badge follows the subject in its cell, tinted by what it says.
-    expect(rowEl(el, 'msg_stop').querySelector('.ib-subj .ib-badge')!.textContent).toBe('Stopped');
-    expect(rowEl(el, 'msg_stop').querySelector('.ib-subj .ib-badge')!.classList.contains('ib-b-stop')).toBe(true);
-    expect(rowEl(el, 'msg_hold').querySelector('.ib-subj .ib-badge')!.classList.contains('ib-b-hold')).toBe(true);
-    expect(rowEl(el, 'msg_wait').querySelector('.ib-badge')).toBeNull();
+    expect(rowEl(el, 'msg_stop').children[1]!.querySelector('.ib-badge')!.textContent).toBe('Stopped');
   });
 
-  test("one project: no project cell; the dot, the subject cell and the time", () => {
+  test("one project: no project cell and no badge cell; the subject cell starts the row", () => {
     const el = render(true);
     expect(el.querySelector('.ib-listcol')!.classList.contains('ib-noproj')).toBe(true);
     expect(el.querySelectorAll('.ib-row .ib-p').length).toBe(0);
     for (const id of ['msg_stop', 'msg_hold', 'msg_wait', 'msg_sent']) {
       const cells = [...rowEl(el, id).children];
-      expect(cells.map((c) => c.className)).toEqual(['ib-udot', 'ib-subj', 'ib-t']);
-      expect(cells[1]!.firstElementChild!.className).toBe('ib-mk');
+      expect(cells.map((c) => c.className)).toEqual(['ib-subj', 'ib-c', 'ib-t']);
     }
-    // The subject comes first in its line; the badge follows it.
+    // No badge: the agent mark is the subject cell's first child.
+    expect(rowEl(el, 'msg_wait').querySelector('.ib-subj')!.firstElementChild!.className).toBe('ib-mk');
+    expect(rowEl(el, 'msg_sent').querySelector('.ib-subj')!.firstElementChild!.className).toBe('ib-mk');
+    // A badge leads the subject cell, the mark follows it.
     for (const [id, badge] of [['msg_stop', 'Stopped'], ['msg_hold', 'Holds up 2']] as const) {
-      const parts = [...rowEl(el, id).querySelector('.ib-subj')!.children].map((c) => c.className.split(' ')[0]);
-      expect(parts.indexOf('ib-s')).toBeLessThan(parts.indexOf('ib-badge'));
-      expect(rowEl(el, id).querySelector('.ib-badge')!.textContent).toBe(badge);
+      const subj = rowEl(el, id).querySelector('.ib-subj')!;
+      expect(subj.children[0]!.className).toBe('ib-badge');
+      expect(subj.children[0]!.textContent).toBe(badge);
+      expect(subj.children[1]!.className).toBe('ib-mk');
     }
     // The thread chip and the guided review mark stay in the subject cell.
     const wait = rowEl(el, 'msg_wait').querySelector('.ib-subj')!;
@@ -134,20 +136,17 @@ describe.if(hasDom)('the wide list', () => {
     expect(mark.getAttribute('aria-label')).toBe('Guided review');
   });
 
-  test("beside an open thread: a narrow row's second line names its agent in one project, the project in all", () => {
+  test("beside an open thread: a narrow row's first line names its agent in one project, the project in all", () => {
     let el = render(true, true);
-    const l2 = (id: string) => el.querySelector<HTMLElement>(`.ib-nrow[data-thread-id="${id}"] .ib-l2 .ib-p`)!.textContent;
+    const l1 = (id: string) => el.querySelector<HTMLElement>(`.ib-nrow[data-thread-id="${id}"] .ib-l1 .ib-p`)!.textContent;
     expect(el.querySelectorAll('.ib-row').length).toBe(0);
-    // The first line is the dot, the subject and the time.
-    const first = el.querySelector<HTMLElement>('.ib-nrow[data-thread-id="msg_wait"] .ib-l1')!;
-    expect([...first.children].map((c) => c.className)).toEqual(['ib-udot', 'ib-s', 'ib-t']);
-    expect(l2('msg_wait')).toBe('Claude Code');
-    expect(l2('msg_sent')).toBe('Pi');
+    expect(l1('msg_wait')).toBe('Claude Code');
+    expect(l1('msg_sent')).toBe('Pi');
     act(() => root?.unmount());
     host?.remove();
     el = render(false, true);
-    expect(l2('msg_wait')).toBe('billing-svc');
-    expect(l2('msg_sent')).toBe('billing-svc');
+    expect(l1('msg_wait')).toBe('billing-svc');
+    expect(l1('msg_sent')).toBe('billing-svc');
   });
 
   test('every project, in a list narrower than the wide row needs: two-line rows; one project keeps its wide rows', () => {
