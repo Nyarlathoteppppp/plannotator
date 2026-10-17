@@ -95,13 +95,29 @@ const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(pre
  * not yet seen on sight (`data-arrival`, design record
  * "inbox-new-in-open-thread": the pill counts only unseen arrivals below);
  * only when none waits there, the messages that were new when the thread
- * opened (`data-new`). An arrival already seen (`data-sighted`) never counts.
+ * opened (`data-new`). An arrival already seen (`data-sighted`) never counts,
+ * and neither does a message the person has had on screen this visit
+ * (`passed`): once its top was in the view, or the view went past it, it is
+ * read as far as the pill is concerned, so scrolling back up never brings it
+ * back. `mark` (the tab visible and nothing over the thread) adds what is on
+ * screen now to `passed`; scrolled to the end, everything is on screen.
  */
-function newBelow(body: HTMLElement): HTMLElement[] {
+function newBelow(body: HTMLElement, passed: Set<string>, mark: boolean): HTMLElement[] {
   const bottom = body.getBoundingClientRect().bottom - PILL_BAND_PX;
-  const below = (selector: string) => [...body.querySelectorAll<HTMLElement>(selector)].filter((a) => a.getBoundingClientRect().top > bottom);
+  const end = mark && body.scrollHeight > 0 && atEnd(body);
+  const below = (selector: string) =>
+    [...body.querySelectorAll<HTMLElement>(selector)].filter((a) => {
+      const id = a.getAttribute('data-message-article') ?? '';
+      if (passed.has(id)) return false;
+      if (end || a.getBoundingClientRect().top <= bottom) {
+        if (mark) passed.add(id);
+        return false;
+      }
+      return true;
+    });
   const arrivals = below('[data-message-article][data-arrival]:not([data-sighted])');
-  return arrivals.length > 0 ? arrivals : below('[data-message-article][data-new]:not([data-arrival]):not([data-sighted])');
+  const atOpen = below('[data-message-article][data-new]:not([data-arrival]):not([data-sighted])');
+  return arrivals.length > 0 ? arrivals : atOpen;
 }
 
 /** A folded line's snippet: the message's first words, or the person's answers. */
@@ -626,26 +642,38 @@ function useThreadAttachments(threadId: string, revision: unknown) {
  */
 const SHOW_NEW_MESSAGE_BUTTON = false;
 
+/** Where a 👍 Looks good is on its way to the agent (amended 2026-10-16: it is sent through). */
+export type AckPillState = 'pending' | 'queued' | 'saved' | 'delivered' | 'not-sent';
+
 /**
- * Under a message the person marked 👍 Looks good: when, that nothing was
- * sent, and later that the agent saw it (it read the thread, or its wait
- * returned the ack). Never "Delivered": nothing was delivered.
+ * The line under a 👍: the toast's Undo window still runs (`pending`), the
+ * Inbox sent it and a connection wakes the agent with it (`queued`, the
+ * message came through a waking connection), it waits for an agent that only
+ * reads the thread (`saved`), or it reached the agent (`delivered`: its turn
+ * was delivered, or the agent read it). Pure, for the tests.
  */
-export function AckPill({ ack, agent }: { ack: NonNullable<InboxMessageWire['ack']>; agent: string }) {
+export function ackPillLine(ack: NonNullable<InboxMessageWire['ack']>, agent: string, wakes: boolean, time: (iso: string) => string = whenTime): { state: AckPillState; text: string } {
+  if (ack.delivered_at) return { state: 'delivered', text: `Delivered to ${agent}, ${time(ack.delivered_at)}` };
+  // The window ended after the person replied, or the agent wrote again: it was not sent.
+  if (ack.not_sent === 'replied') return { state: 'not-sent', text: 'not sent: you replied' };
+  if (ack.not_sent === 'wrote_again') return { state: 'not-sent', text: `not sent: ${agent} wrote again` };
+  const you = `You, ${time(ack.at)} · `;
+  if (ack.settled_seq == null) return { state: 'pending', text: `${you}goes to ${agent} in a few seconds` };
+  // A 👍 settled before it was sent through (no note) never reaches a wake: it waits for a read.
+  if (wakes && ack.note_id) return { state: 'queued', text: `${you}Queued for ${agent}; it gets this as its next turn.` };
+  return { state: 'saved', text: `${you}Saved for ${agent}. It sees it when it next reads this thread.` };
+}
+
+/** Under a message the person marked 👍 Looks good: when, and where it is on its way to the agent. */
+export function AckPill({ ack, agent, wakes = false }: { ack: NonNullable<InboxMessageWire['ack']>; agent: string; wakes?: boolean }) {
+  const line = ackPillLine(ack, agent, wakes);
   return (
-    <p className="ib-ackpill" data-ack-pill={ack.seen_at ? 'seen' : 'not-sent'}>
+    <p className="ib-ackpill" data-ack-pill={line.state}>
       <span className="ib-ackchip">
         <span aria-hidden="true">👍</span> {ack.label}
       </span>
-      <span className="ib-ackwhen" title={fullTime(ack.at)}>
-        You, {whenTime(ack.at)} ·{' '}
-        {ack.seen_at ? (
-          <span title={fullTime(ack.seen_at)}>
-            {agent} saw it, {whenTime(ack.seen_at)}
-          </span>
-        ) : (
-          <>not sent; {agent} sees it when it next reads this thread</>
-        )}
+      <span className="ib-ackwhen" title={line.state === 'delivered' && ack.delivered_at ? `You marked it ${fullTime(ack.at)}; delivered ${fullTime(ack.delivered_at)}` : fullTime(ack.at)}>
+        {line.text}
       </span>
     </p>
   );
@@ -1152,17 +1180,26 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   // while new messages the person has not seen are below the view (its count:
   // those messages, never everything new this visit).
   const [chrome, setChrome] = useState({ subject: false, pill: 0 });
+  /** The new messages the person has had on screen this visit (newBelow): the pill never counts them again. */
+  const passed = useRef<{ threadId: string; ids: Set<string> }>({ threadId: thread.thread_id, ids: new Set() });
+  const passedIds = useCallback((): Set<string> => {
+    if (passed.current.threadId !== thread.thread_id) passed.current = { threadId: thread.thread_id, ids: new Set() };
+    return passed.current.ids;
+  }, [thread.thread_id]);
+  /** Whether what is on screen now counts as shown: the tab visible and nothing over the thread. */
+  const showingRef = useRef(true);
   const updateChrome = useCallback(() => {
     const body = bodyRef.current;
     if (!body) return;
     const box = body.getBoundingClientRect();
     const subject = body.querySelector<HTMLElement>('.ib-subject');
+    const shown = showingRef.current && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
     const next = {
       subject: subject !== null && subject.getBoundingClientRect().bottom < box.top + 4,
-      pill: newBelow(body).length,
+      pill: newBelow(body, passedIds(), shown).length,
     };
     setChrome((current) => (current.subject === next.subject && current.pill === next.pill ? current : next));
-  }, []);
+  }, [passedIds]);
 
   // ── Seen on sight (design record "inbox-new-in-open-thread", variant A) ──
   // An agent message that arrives while the thread is open counts as seen once
@@ -1199,6 +1236,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   const screenRef = useRef(onScreenChange);
   screenRef.current = onScreenChange;
   const paneCovered = covered || fileCovers;
+  showingRef.current = !paneCovered;
   useEffect(() => {
     screenRef.current?.({ threadId: thread.thread_id, covered: paneCovered });
   }, [thread.thread_id, paneCovered]);
@@ -1244,6 +1282,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
     body.addEventListener('scroll', trackEnd, { passive: true });
     body.addEventListener('scroll', updateChrome, { passive: true });
     window.addEventListener('resize', updateChrome);
+    document.addEventListener('visibilitychange', updateChrome);
     // The thread's own box changes without a scroll or a window resize when
     // the foot grows (the reply box, the stale guard, the New-message
     // composer) or a file opens beside it.
@@ -1253,6 +1292,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       body.removeEventListener('scroll', trackEnd);
       body.removeEventListener('scroll', updateChrome);
       window.removeEventListener('resize', updateChrome);
+      document.removeEventListener('visibilitychange', updateChrome);
       resized?.disconnect();
     };
   }, [updateChrome]);
@@ -1293,7 +1333,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       }
     }
     updateChrome();
-  }, [foldState, thread, file?.id, updateChrome, sighted]);
+  }, [foldState, thread, file?.id, updateChrome, sighted, paneCovered]);
 
   /**
    * n goes to the first new message (at the divider); the pill to what it
@@ -1305,11 +1345,11 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
     const body = bodyRef.current;
     const first = body?.querySelector<HTMLElement>('[data-message-article][data-new]');
     if (!body || !first) return;
-    const target = below ? (newBelow(body)[0] ?? first) : first;
+    const target = below ? (newBelow(body, passedIds(), false)[0] ?? first) : first;
     const divider = target === first ? body.querySelector<HTMLElement>('[data-new-divider]') : null;
     (divider ?? target).scrollIntoView?.({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
     target.querySelector<HTMLElement>('[data-fold-head]')?.focus({ preventScroll: true });
-  }, []);
+  }, [passedIds]);
 
   // j / k move between messages (and the middle fold), n goes to the first
   // new one; Enter and Space are the buttons' own. Never while typing.
@@ -2194,7 +2234,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                   />
                 )}
                 {message.guide && <GuideCard guide={message.guide} onOpen={() => onOpenGuide(message.id)} />}
-                {isAgent && message.ack && <AckPill ack={message.ack} agent={name} />}
+                {isAgent && message.ack && <AckPill ack={message.ack} agent={name} wakes={message.wakes === true} />}
                 {message === lastAgent && liveMessage(lastAgent) && waitingHoldsUp.length > 0 && (
                   <div className="ib-waitfoot">
                     <b>Waiting on this answer</b>
@@ -2395,7 +2435,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
               <Icon name="reply" size={15} />
               {waiting ? 'Edit the reply' : 'Reply'}
             </button>
-            {/* 👍 Looks good beside Reply: silent, nothing sent; hidden while a question waits. */}
+            {/* 👍 Looks good beside Reply: sent to the agent after the Undo window; hidden while a question waits. */}
             {ackOffered && !waiting && (
               <button
                 type="button"
@@ -2406,7 +2446,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                 title={
                   ackOn
                     ? 'Take back Looks good'
-                    : `Not sent to ${agentName(ackTarget!.author)}: it sees it when it next reads this thread. Moves to Quiet until it writes again.`
+                    : `Tells ${agentName(ackTarget!.author)} you read it and need nothing more. Moves to Quiet until it writes again.`
                 }
               >
                 <span className="ib-ack-emoji" aria-hidden="true">
