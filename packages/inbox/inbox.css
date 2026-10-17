@@ -48,9 +48,9 @@
   --ib-soft-foot: initial;       /* the thread's foot: Reply, Looks good and Send as filled pills, the reply box's soft glow and pill chips (today's: outlined buttons, a 3 px ring) */
   --ib-soft-accept: initial;     /* Accept recommended: a filled pill (today's: ui's outlined button) */
   --ib-soft-surfaces: initial;   /* raised surfaces in the thread: attachment tiles (Open shown on hover), the read line, the route chooser, the fold (today's: outlined cards) */
-  --ib-soft-buttons: ;           /* buttons: a quiet fill with no outline (today's: outlined on the card) */
-  --ib-soft-segmented: ;         /* Settings' Light / Dark / System control: a faint well, quiet options (today's: the muted well with a border) */
-  --ib-soft-groups: ;            /* Settings' groups, What's new's skipped releases and a dialog's command box as raised cards (today's: outlined cards) */
+  --ib-soft-buttons: initial;    /* buttons: a quiet fill with no outline (today's: outlined on the card) */
+  --ib-soft-segmented: initial;  /* Settings' Light / Dark / System control: a faint well, quiet options (today's: the muted well with a border) */
+  --ib-soft-groups: initial;     /* Settings' groups, What's new's skipped releases and a dialog's command box as raised cards (today's: outlined cards) */
 }
 :root.light .pn-inbox {
   --ib-soft-nav: initial;
