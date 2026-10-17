@@ -43,7 +43,7 @@
   --ib-soft-shape: ;             /* Soft's rounder corners on rows, controls, menus and surfaces (today's radii) */
   --ib-soft-float: ;             /* floating surfaces (menus, dialogs, popovers, the toast, a row's action): Soft's shadow and no outline (today's: an outline and a drop shadow) */
   --ib-soft-hover: ;             /* hover fills where today has none, Soft's hover colours, and 140 ms fades (today's hovers) */
-  --ib-soft-chip: ;              /* the thread chip: a grey pill in the window's face (today's: an outlined monospace tag; the face changes how a phone's chip wraps) */
+  --ib-soft-chip: ;              /* chips: the thread chip and the search field's key hint as grey pills (today's: an outlined monospace tag, an outlined key; the chip's face changes how a phone's chip wraps) */
   --ib-soft-hbtns: ;             /* the thread header's buttons: borderless, the label in the text colour (today's: outlined, the pressed one in the accent) */
   --ib-soft-foot: ;              /* the thread's foot: Reply, Looks good and Send as filled pills, the reply box's soft glow and pill chips (today's: outlined buttons, a 3 px ring) */
   --ib-soft-accept: ;            /* Accept recommended: a filled pill (today's: ui's outlined button) */
@@ -81,7 +81,9 @@
   --ib-sidectl-ring-s: var(--ib-soft-panes) 0 0 0 1px color-mix(in oklch, var(--border) 45%, transparent);
   --ib-sidectl-border-s: var(--ib-soft-panes) transparent;
   --ib-sidectl-hover-s: var(--ib-soft-panes) var(--card);
-  --ib-kbd-bg-s: var(--ib-soft-panes) color-mix(in oklch, var(--muted) 80%, transparent);
+  /* The search field's key hint (--ib-soft-chip). */
+  --ib-kbd-bg-s: var(--ib-soft-chip) color-mix(in oklch, var(--muted) 80%, transparent);
+  --ib-kbd-line-s: var(--ib-soft-chip) transparent;
   --ib-side-hover-s: var(--ib-soft-panes) color-mix(in oklch, var(--card) 55%, transparent);
   --ib-side-menu-s: var(--ib-soft-panes) color-mix(in oklch, var(--card) 70%, transparent);
   --ib-side-hover: var(--ib-side-hover-s, color-mix(in oklch, var(--muted) 45%, transparent));
@@ -2458,7 +2460,7 @@ details.ib-wn-skipped[open] > summary { margin-bottom: 6px; }
 /* The sidebar's Search entry: field-shaped, under the Tater mark, above Inbox. No key hint (no key opens it). */
 .pn-inbox .ib-sp-entry { display: flex; align-items: center; gap: 8px; height: 32px; margin: 0 0 8px; padding: 0 9px; width: 100%; flex: none; border-radius: var(--ib-r10-s, 7px); border: 1px solid var(--ib-sidectl-border-s, var(--ib-line)); background: var(--ib-sidectl-bg-s, var(--ib-band)); box-shadow: var(--ib-sidectl-ring-s, none); color: var(--muted-foreground); font-size: 13.5px; text-align: left; }
 .pn-inbox .ib-sp-entry:hover { color: var(--foreground); background: var(--ib-sidectl-hover-s, var(--ib-band)); border-color: var(--ib-sidectl-border-s, var(--border)); }
-.pn-inbox .ib-sp-entry .ib-kbd { border-color: var(--ib-sidectl-border-s, var(--border)); background: var(--ib-kbd-bg-s, transparent); border-radius: var(--ib-r5-s, 4px); }
+.pn-inbox .ib-sp-entry .ib-kbd { border-color: var(--ib-kbd-line-s, var(--border)); background: var(--ib-kbd-bg-s, transparent); border-radius: var(--ib-r5-s, 4px); }
 .pn-inbox .ib-sp-entry svg.ib-ic { width: 15px; height: 15px; }
 /* ⌘K / Ctrl K, the one Inbox shortcut, at the entry's end. */
 .pn-inbox .ib-sp-entry .ib-sp-hint { margin-left: auto; }
