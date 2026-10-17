@@ -176,6 +176,29 @@ test('no chip loses a fraction of a pixel to the subject, and a chip cut by a fr
   }
 });
 
+test("a tooltip floats like the window's other floating surfaces: no outline with Soft's float on, ui's border with it off", async ({ browser }) => {
+  const { context, page } = await openPage(browser);
+  try {
+    const borderOf = async () => {
+      await page.locator('.ib-side .ib-proj', { hasText: LONG }).hover();
+      await expect(tooltip(page)).toBeVisible({ timeout: 1000 });
+      const found = await tooltip(page).evaluate((el) => ({ inRoot: el.closest('[data-pn-tooltip-root]') !== null, border: getComputedStyle(el).borderTopColor }));
+      await page.mouse.move(700, 880);
+      await expect(tooltip(page)).toHaveCount(0);
+      return found;
+    };
+    // Portaled into the window's root, so the window's tokens reach it.
+    const on = await borderOf();
+    expect(on.inRoot).toBe(true);
+    expect(on.border).toBe('rgba(0, 0, 0, 0)');
+    await page.addStyleTag({ content: '.pn-inbox, :root.light .pn-inbox { --ib-soft-float: initial !important; }' });
+    const off = await borderOf();
+    expect(off.border).not.toBe('rgba(0, 0, 0, 0)');
+  } finally {
+    await context.close();
+  }
+});
+
 test('Escape with a tooltip open still closes the thread (the tooltip does not swallow the key)', async ({ browser }) => {
   const { context, page } = await openPage(browser);
   try {

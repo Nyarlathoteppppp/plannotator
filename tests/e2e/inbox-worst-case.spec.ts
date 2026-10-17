@@ -235,8 +235,8 @@ test('the names: real folder names, a parent folder for two "api", days and year
       if (project && cutIndex < 0) continue;
       expect(cutIndex, 'a cut subject or label').toBeGreaterThanOrEqual(0);
       await page.locator('.ib-lbody :is(.ib-st, .ib-keyt, .ib-p)').nth(cutIndex).hover();
-      // The tooltip is portaled out of the window's root.
-      await expect(page.locator('body > :not(#root)').getByText(items[cutIndex]!.text!, { exact: true })).toBeVisible();
+      // ui's tooltip (portaled into the window's root, out of the row) holds the whole text.
+      await expect(page.locator('[data-pn-tooltip]').getByText(items[cutIndex]!.text!, { exact: true })).toBeVisible();
       await page.mouse.move(1, 1);
     }
     // A long project name and its folder stay in the 60 px header (row 25).
@@ -394,7 +394,8 @@ async function openFile(page: Page, thread: string, name: string): Promise<void>
   await page.waitForTimeout(500);
 }
 
-for (const width of [920, 1024, 1180, 1280]) {
+// 944: the narrowest window with a file beside its thread (a 440 px thread, a 480 px file and the panes' three 8 px gutters).
+for (const width of [944, 1024, 1180, 1280]) {
   test(`${width}: a file beside the thread keeps a readable column; the comments fold into a button below 1280 (rows 45 to 47, 50)`, async ({ browser }) => {
     const { context, page } = await open(browser, { name: String(width), width, height: 800 });
     try {

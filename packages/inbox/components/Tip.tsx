@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
 import { Tooltip } from '@plannotator/ui/components/Tooltip';
 import { isTextCut as isTextCutIn, noHover } from '@plannotator/ui/utils/textCut';
+import { tooltipContainerOf } from '@plannotator/ui/components/HostTitle';
 
 /**
  * ui's cut check (a whole pixel, or the text's Range wider than its box). A
@@ -27,9 +28,10 @@ export const TIP_DELAY_MS = 150;
  * The trigger keeps its own accessible name (an `aria-label`, or its text):
  * the tooltip adds nothing a screen reader needs, and a trigger that is not
  * focusable stays out of the tab order. Nothing opens on a touch screen
- * (`hover: none`): a hover there is a first tap. A trigger inside a native
- * modal `<dialog>` portals the popup into that dialog, so the top layer does
- * not cover it. Escape closes an open tooltip and still reaches the window
+ * (`hover: none`): a hover there is a first tap. The popup is portaled into
+ * the open native `<dialog>` the trigger sits in (so the top layer does not
+ * cover it), else into the window's root (`data-pn-tooltip-root`), so the
+ * Soft switches' tokens reach it. Escape closes an open tooltip and still reaches the window
  * (`escapePassesThrough`), so Escape closes a thread whatever holds focus.
  */
 export function Tip({
@@ -56,7 +58,7 @@ export function Tip({
       if (noHover()) return false;
       if (cut && !isTextCut(trigger)) return false;
       if (when && !when(trigger)) return false;
-      setContainer(trigger.closest<HTMLElement>('dialog[open]'));
+      setContainer(tooltipContainerOf(trigger));
       return true;
     },
     [content, cut, when],

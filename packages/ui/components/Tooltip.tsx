@@ -108,6 +108,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
         {/* Above the annotation toolbar (z-[100]), so a tooltip that flips toward it is never tucked under it. */}
         <BaseTooltip.Positioner side={side} align={align} sideOffset={sideOffset} className="isolate z-[110]">
           <BaseTooltip.Popup
+            data-pn-tooltip=""
             className={`z-[110] px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md origin-[var(--transform-origin)] transition-[opacity,scale] duration-150 ease-out data-[starting-style]:opacity-0 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[ending-style]:scale-95 ${
               wide
                 ? 'max-w-[min(260px,calc(100vw-1rem))] leading-snug whitespace-normal [overflow-wrap:anywhere]'

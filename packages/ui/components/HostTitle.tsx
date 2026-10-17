@@ -36,6 +36,16 @@ export function getComponentTooltips(): boolean {
 /** How long the pointer rests before a component tooltip opens. */
 const HOST_TITLE_DELAY_MS = 150;
 
+/**
+ * Where a tooltip for `trigger` is portaled: the open native `<dialog>` it
+ * sits in (a popup in the body is drawn under the dialog's top layer), else
+ * the nearest host root marked `data-pn-tooltip-root` (its styles and theme
+ * tokens then reach the popup), else the body.
+ */
+export function tooltipContainerOf(trigger: Element): HTMLElement | null {
+  return trigger.closest<HTMLElement>('dialog[open], [data-pn-tooltip-root]');
+}
+
 export function HostTitle({
   title,
   children,
@@ -50,6 +60,7 @@ export function HostTitle({
   side?: 'top' | 'right' | 'bottom' | 'left';
 }) {
   const descriptionId = React.useId();
+  const [container, setContainer] = React.useState<HTMLElement | null>(null);
   if (title === undefined || title === null) return children;
   // Off: the native title, byte for byte as before (an empty title included).
   if (!componentTooltips) return React.cloneElement(children as React.ReactElement<{ title?: string }>, { title });
@@ -74,7 +85,12 @@ export function HostTitle({
       wide
       delayDuration={HOST_TITLE_DELAY_MS}
       escapePassesThrough
-      shouldOpen={(trigger) => !noHover() && (!cut || isTextCut(trigger))}
+      shouldOpen={(trigger) => {
+        if (noHover() || (cut && !isTextCut(trigger))) return false;
+        setContainer(tooltipContainerOf(trigger));
+        return true;
+      }}
+      container={container}
     >
       {child}
     </Tooltip>
