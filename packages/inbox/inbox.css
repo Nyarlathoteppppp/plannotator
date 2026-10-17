@@ -219,7 +219,8 @@
     --ib-quiet-fg-soft: color-mix(in oklch, var(--muted-foreground) 82%, var(--ib-card-ink));
     --ib-raise-fg-soft: color-mix(in oklch, var(--foreground) 84%, var(--ib-card-ink));
     --ib-raise-mfg-soft: color-mix(in oklch, var(--muted-foreground) 68%, var(--ib-card-ink));
-    --ib-raise-mfg-keep: color-mix(in oklch, var(--muted-foreground) 92%, var(--ib-card-ink));
+    --ib-raise-fg-keep: color-mix(in oklch, var(--foreground) 90%, var(--ib-card-ink));
+    --ib-raise-mfg-keep: color-mix(in oklch, var(--muted-foreground) 82%, var(--ib-card-ink));
     /* The badge's words step toward the card's ink rather than the text colour, so a palette's red or amber
        reads on its own tint. */
     --ib-badge-stop-fg-soft: color-mix(in oklab, var(--destructive) 50%, var(--ib-card-ink));
@@ -2910,7 +2911,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
   --ib-hb-on-fg-s: var(--ib-soft-hbtns) var(--foreground);
   --ib-hb-on-icon-s: var(--ib-soft-hbtns) var(--primary);
   --ib-hb-kbd-bg-s: var(--ib-soft-hbtns) transparent;
-  --ib-hb-kbd-fg-s: var(--ib-soft-hbtns) color-mix(in oklch, var(--ib-raise-mfg) 50%, var(--foreground));
+  --ib-hb-kbd-fg-s: var(--ib-soft-hbtns) color-mix(in oklch, var(--ib-raise-mfg) 35%, var(--foreground));
   --ib-hb-fg-s: var(--ib-soft-hbtns) var(--foreground);
   /* The foot (switch --ib-soft-foot): pill buttons, the reply box's glow, its chips. */
   --ib-ft-line-s: var(--ib-soft-foot) transparent;
