@@ -2778,7 +2778,7 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-snav a[aria-current="page"] { background: var(--ib-fill); color: var(--foreground); }
 .ib-snav a[aria-current="page"] svg.ib-ic { color: var(--primary); }
 .ib-eyebrow { font-size: 12px; font-weight: 550; letter-spacing: 0; text-transform: none; }
-.ib-card { border-color: transparent; border-radius: 14px; background: var(--ib-raise); }
+.ib-card { border-color: transparent; border-radius: 14px; background: var(--ib-raise); --foreground: var(--ib-raise-fg); --muted-foreground: var(--ib-raise-mfg); color: var(--foreground); }
 .ib-prow, .ib-card .ib-arcrow, .ib-sframe .ib-stbl td { border-bottom-color: var(--ib-fill); }
 .ib-callout { border-radius: 12px; }
 .ib-flow, .ib-way { border-radius: 14px; }
