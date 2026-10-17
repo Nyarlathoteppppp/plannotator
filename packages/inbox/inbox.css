@@ -38,12 +38,12 @@
   --ib-soft-card: ;              /* the question card: a raised, borderless surface (today's: ui's card) */
   --ib-soft-nav: ;               /* the sidebar's current page: a lifted card (today's: the accent's tint and text) */
   --ib-soft-quiet: ;             /* quiet text stepped for its surface, on the ground and on raised surfaces (today's: the palette's muted text) */
-  /* Not ruled yet (owner, 2026-10-17): each is Soft until he decides, and `initial` gives today's back. */
-  --ib-soft-labels: ;            /* small labels in sentence case at 12 px (today's: 11 px capitals, spaced out) */
-  --ib-soft-shape: ;             /* Soft's rounder corners on rows, controls, menus and surfaces (today's radii) */
-  --ib-soft-float: ;             /* floating surfaces (menus, dialogs, popovers, the toast, a row's action): Soft's shadow and no outline (today's: an outline and a drop shadow) */
-  --ib-soft-hover: ;             /* hover fills where today has none, Soft's hover colours, and 140 ms fades (today's hovers) */
-  --ib-soft-chip: ;              /* chips: the thread chip and the search field's key hint as grey pills (today's: an outlined monospace tag, an outlined key; the chip's face changes how a phone's chip wraps) */
+  /* Not ruled yet (owner, 2026-10-17): each is today's (`initial`) until he decides; a space turns it to Soft. */
+  --ib-soft-labels: initial;     /* small labels in sentence case at 12 px (today's: 11 px capitals, spaced out) */
+  --ib-soft-shape: initial;      /* Soft's rounder corners on rows, controls, menus and surfaces (today's radii) */
+  --ib-soft-float: initial;      /* floating surfaces (menus, dialogs, popovers, the toast, a row's action): Soft's shadow and no outline (today's: an outline and a drop shadow) */
+  --ib-soft-hover: initial;      /* hover fills where today has none, Soft's hover colours, and 140 ms fades (today's hovers) */
+  --ib-soft-chip: initial;       /* chips: the thread chip and the search field's key hint as grey pills (today's: an outlined monospace tag, an outlined key; the chip's face changes how a phone's chip wraps) */
 }
 :root.light .pn-inbox {
   --ib-soft-nav: initial;
