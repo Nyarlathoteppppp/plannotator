@@ -229,7 +229,7 @@ function GeneralSection({
                 Desktop notifications
               </span>
               <span className="ib-desc" data-notify-status={status} aria-live="polite">
-                {notifyStatusText(status, browser)} ({address}) · for questions and stops
+                {notifyStatusText(status, browser)} ({address}) · new threads and questions
               </span>
             </span>
             <span className="ib-ctl">

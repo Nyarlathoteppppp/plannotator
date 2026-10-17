@@ -253,7 +253,7 @@ test('the ask appears when the first thread arrives, never on first paint, and s
   await expect(page.locator(`[data-thread-id="${sent.thread_id}"]`)).toBeVisible();
   const ask = page.locator('[data-notification-ask="ask"]');
   await expect(ask).toBeVisible();
-  await expect(ask).toContainText('Get a desktop notice when an agent stops on you.');
+  await expect(ask).toContainText('Get a desktop notice when an agent needs you.');
   await expect(ask.getByRole('button', { name: 'Turn on' })).toBeVisible();
   // Nothing was raised: the browser has not been asked.
   expect(await calls()).toEqual([]);

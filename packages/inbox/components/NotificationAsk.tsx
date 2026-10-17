@@ -60,16 +60,16 @@ export function NotificationAsk({
       <span className="ib-grow">
         {kind === 'ask' ? (
           <>
-            <b>Get a desktop notice when an agent stops on you.</b>{' '}
+            <b>Get a desktop notice when an agent needs you.</b>{' '}
             <span className="ib-mut">
-              Only for questions and stops, never for news. Your browser asks once.{soundOn && ' Sound is on.'}
+              When an agent starts a thread or asks you something. Your browser asks once.{soundOn && ' Sound is on.'}
             </span>
           </>
         ) : (
           <>
             <b>Notifications are off at this address.</b>{' '}
             <span className="ib-mut">
-              You allowed them at {movedFrom ? addressOf(movedFrom) : 'another address'}; the Inbox is now at {window.location.host}. Allow them again.
+              You allowed them at {movedFrom ? addressOf(movedFrom) : 'another address'}; the Inbox is now at {window.location.host}. Allow them again. Reload or close any tab still open on the old address, so notices don't arrive twice.
             </span>
           </>
         )}
