@@ -453,6 +453,13 @@ export interface InboxAck {
    * acks settled before the amendment (they were never sent).
    */
   note_id?: string | null;
+  /**
+   * Set when the Undo window ended but the 👍 could no longer go: the person
+   * wrote back after the message (`replied`) or the agent wrote again
+   * (`wrote_again`) inside the window. No note is written and no agent sees
+   * it; the window says it was not sent. Absent on every other ack.
+   */
+  not_sent?: "replied" | "wrote_again" | null;
   /** When an agent read it (read_thread, or wait_for_reply returned it). Null until then. */
   seen_at?: string | null;
   /**

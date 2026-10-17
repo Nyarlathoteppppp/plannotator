@@ -156,3 +156,39 @@ describe("a 👍 sent through", () => {
     expect(reopened.windowThread(sent.id)!.messages[0]!.ack!.delivered_at).toBeNull();
   });
 });
+
+describe("a 👍 that can no longer go when its window ends", () => {
+  test("the person replied inside the window: settled as not sent (replied), no note; the agent gets the reply alone", () => {
+    const { store, clock, sent } = setup();
+    store.ackMessage(sent.id, true);
+    clock.now += 2_000;
+    const reply = store.sendReply(sent.id, { idempotency_key: "r1", words: "Actually, one more thing: bump the version too." }).reply!;
+    clock.now += WINDOW;
+    const before = store.cursor();
+    const [settled] = store.settleAcks(WINDOW);
+    expect(store.cursor()).toBe(before + 1);
+    expect(settled!.ack).toMatchObject({ not_sent: "replied", note_id: null, settled_seq: before + 1 });
+    expect(store.pendingReplies("ses_a").map((m) => m.id)).toEqual([reply.id]);
+    expect(store.ackNote(sent.id)).toBeNull();
+    // No agent ever sees it, and reading the thread never marks it seen.
+    expect(store.agentThread(sent.id)!.messages[0]!.ack).toBeNull();
+    store.markAcksSeen(sent.id);
+    expect(store.message(sent.id)!.ack!.seen_at ?? null).toBeNull();
+    expect(store.windowThread(sent.id)!.messages[0]!.ack).toMatchObject({ not_sent: "replied", delivered_at: null });
+  });
+
+  test("the agent wrote again inside the window: settled as not sent (wrote_again), no note", () => {
+    const { store, clock, sent } = setup();
+    store.ackMessage(sent.id, true);
+    clock.now += 2_000;
+    store.sendMessage({ project_id: sent.project_id, author: AGENT, body: "One more question: tag it 0.29?", reply_to: sent.id });
+    clock.now += WINDOW;
+    const [settled] = store.settleAcks(WINDOW);
+    expect(settled!.ack).toMatchObject({ not_sent: "wrote_again", note_id: null });
+    expect(store.pendingReplies("ses_a")).toEqual([]);
+    expect(store.agentThread(sent.id)!.messages[0]!.ack).toBeNull();
+    // A replay reads the same.
+    expect(store.settleAcks(WINDOW)).toEqual([]);
+  });
+
+});

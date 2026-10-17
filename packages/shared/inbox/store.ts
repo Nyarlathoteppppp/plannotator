@@ -1296,7 +1296,10 @@ export class InboxStore {
    * body is `inboxAckLine` (`ack_of`), delivered like any reply (the wake,
    * wait_for_reply's `acknowledged`). The note's line is the one a held
    * bridge poll wakes on. From then on agents see it in read_thread too.
-   * Returns the messages settled.
+   * `ackMessage`'s conditions are checked again here: when the person wrote
+   * back after the message inside the window, or the agent wrote again, the
+   * ack settles with `not_sent` (`replied` / `wrote_again`) and no note, and
+   * no agent ever sees it. Returns the messages settled.
    */
   settleAcks(afterMs: number): InboxMessage[] {
     const now = this.now().getTime();
@@ -1304,6 +1307,14 @@ export class InboxStore {
     for (const message of [...this.messages.values()]) {
       const ack = message.ack;
       if (!ack || ack.settled_seq != null || Date.parse(ack.at) + afterMs > now) continue;
+      const notSent = this.ackNotSentReason(message);
+      if (notSent) {
+        const at = this.stamp();
+        const settled: InboxMessage = { ...message, ack: { ...ack, settled_seq: this.seq + 1, settled_at: at, note_id: null, not_sent: notSent } };
+        this.appendMessage(settled, at);
+        out.push(settled);
+        continue;
+      }
       const noteId = inboxId("msg");
       const at = this.stamp();
       const settled: InboxMessage = { ...message, ack: { ...ack, settled_seq: this.seq + 1, settled_at: at, note_id: noteId } };
@@ -1326,6 +1337,21 @@ export class InboxStore {
       out.push(settled);
     }
     return out;
+  }
+
+  /**
+   * Why a 👍 can no longer go to the agent when its Undo window ends
+   * (`ackMessage`'s rules, again): the agent wrote again after the message
+   * (the 👍 would read as the answer to the newer one), or the person wrote
+   * back after it (their reply is the answer). The Inbox's own notes do not
+   * count. Null when it can go.
+   */
+  private ackNotSentReason(message: InboxMessage): "replied" | "wrote_again" | null {
+    const members = this.threadMessages(message.thread_id);
+    const after = members.slice(members.findIndex((m) => m.id === message.id) + 1);
+    if (after.some((m) => m.author.kind === "agent")) return "wrote_again";
+    if (after.some((m) => m.author.kind === "person" && !isInboxNote(m))) return "replied";
+    return null;
   }
 
   /**
@@ -1370,28 +1396,29 @@ export class InboxStore {
       messages: thread.messages.map((message) => {
         if (message.ack === undefined) return message;
         const { ack, ...rest } = message;
-        return { ...rest, ack: ack && ack.settled_seq != null ? { label: ack.label, at: ack.at } : null } as InboxMessageWire;
+        return { ...rest, ack: ack && ack.settled_seq != null && !ack.not_sent ? { label: ack.label, at: ack.at } : null } as InboxMessageWire;
       }),
     };
+  }
+
+  /** One message's settled ack was seen by its agent (its note delivered). No write when already seen. */
+  private markAckSeen(messageId: string, at: string): void {
+    const message = this.messages.get(messageId);
+    const ack = message?.ack;
+    if (!message || !ack || ack.settled_seq == null || ack.not_sent || ack.seen_at) return;
+    this.appendMessage({ ...message, ack: { ...ack, seen_at: at } }, at);
   }
 
   /**
    * An agent read the thread's settled acks (read_thread, or wait_for_reply's
    * `acknowledged`): each gets `seen_at`, so the window's pill says "<agent>
-   * saw it". `upToSeq` limits it to acks settled at or before that seq.
+   * saw it". `upToSeq` limits it to acks settled at or before that seq. An
+   * ack that was not sent (`not_sent`) is never seen.
    */
-  /** One message's settled ack was seen by its agent (its note delivered). No write when already seen. */
-  private markAckSeen(messageId: string, at: string): void {
-    const message = this.messages.get(messageId);
-    const ack = message?.ack;
-    if (!message || !ack || ack.settled_seq == null || ack.seen_at) return;
-    this.appendMessage({ ...message, ack: { ...ack, seen_at: at } }, at);
-  }
-
   markAcksSeen(threadId: string, upToSeq = Number.POSITIVE_INFINITY, at = this.stamp()): void {
     for (const message of this.threadMessages(threadId)) {
       const ack = message.ack;
-      if (!ack || ack.settled_seq == null || ack.settled_seq > upToSeq || ack.seen_at) continue;
+      if (!ack || ack.settled_seq == null || ack.not_sent || ack.settled_seq > upToSeq || ack.seen_at) continue;
       this.appendMessage({ ...message, ack: { ...ack, seen_at: at } }, at);
     }
   }

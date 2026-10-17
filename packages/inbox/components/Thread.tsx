@@ -627,7 +627,7 @@ function useThreadAttachments(threadId: string, revision: unknown) {
 const SHOW_NEW_MESSAGE_BUTTON = false;
 
 /** Where a 👍 Looks good is on its way to the agent (amended 2026-10-16: it is sent through). */
-export type AckPillState = 'pending' | 'queued' | 'saved' | 'delivered';
+export type AckPillState = 'pending' | 'queued' | 'saved' | 'delivered' | 'not-sent';
 
 /**
  * The line under a 👍: the toast's Undo window still runs (`pending`), the
@@ -638,6 +638,9 @@ export type AckPillState = 'pending' | 'queued' | 'saved' | 'delivered';
  */
 export function ackPillLine(ack: NonNullable<InboxMessageWire['ack']>, agent: string, wakes: boolean, time: (iso: string) => string = whenTime): { state: AckPillState; text: string } {
   if (ack.delivered_at) return { state: 'delivered', text: `Delivered to ${agent}, ${time(ack.delivered_at)}` };
+  // The window ended after the person replied, or the agent wrote again: it was not sent.
+  if (ack.not_sent === 'replied') return { state: 'not-sent', text: 'not sent: you replied' };
+  if (ack.not_sent === 'wrote_again') return { state: 'not-sent', text: `not sent: ${agent} wrote again` };
   const you = `You, ${time(ack.at)} · `;
   if (ack.settled_seq == null) return { state: 'pending', text: `${you}goes to ${agent} in a few seconds` };
   // A 👍 settled before it was sent through (no note) never reaches a wake: it waits for a read.

@@ -743,6 +743,7 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
             for (const threadId of thresholds.keys()) {
               for (const message of store.thread(threadId)?.messages ?? []) {
                 const settled = message.ack?.settled_seq;
+                if (message.ack?.not_sent) continue;
                 if (acrossThreads && message.ack?.seen_at) continue;
                 if (settled != null && ackCounts(message, settled)) return message;
               }
@@ -785,7 +786,7 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
                 // The note carrying a 👍 is answered as `acknowledged`, from the ack's own line.
                 if (message.author.kind === "person" && !message.ack_of && forCaller(message) && line.seq > threshold && store.messageCursor(message.id) === line.seq) {
                   finish({ kind: "reply", message });
-                } else if (message.ack?.settled_seq === line.seq && ackCounts(message, line.seq)) {
+                } else if (message.ack?.settled_seq === line.seq && !message.ack.not_sent && ackCounts(message, line.seq)) {
                   finish({ kind: "ack", message });
                 } else if (message.id === message.thread_id && message.resolved_at !== null && threadIds.length === 1 && !store.agentAfterArchive(message.id)) {
                   finish({ kind: "resolved", threadId: message.id });

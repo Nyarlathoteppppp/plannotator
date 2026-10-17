@@ -388,6 +388,32 @@ describe("what the agent sees", () => {
   });
 });
 
+describe("a 👍 the window ends after the thread moved on", () => {
+  test("the person replied inside the window: the agent gets the reply, never the 👍; the window says not sent", async () => {
+    const { server, client, threadId, messageId } = await setup();
+    await ack(server, messageId);
+    const replied = await post(server, `/api/inbox/messages/${messageId}/reply`, { serverSession: server.serverSession, idempotency_key: "r-in-window", words: "Wait, also bump the version." });
+    expect(replied.status).toBe(200);
+    const replyId = ((await replied.json()) as { reply: { id: string } }).reply.id;
+    await Bun.sleep(DELAY + 400);
+    expect((await poll(server, SESSION)).map((c) => [c.id, c.ack_of ?? null])).toEqual([[replyId, null]]);
+    expect((await windowMessage(server, threadId, messageId)).ack).toMatchObject({ not_sent: "replied", delivered_at: null });
+    const waited = await waitForReply(client, threadId);
+    expect(waited.structuredContent.status).toBe("replied");
+    expect((await readThread(client, threadId)).structuredContent.thread.messages[0]!.ack ?? null).toBeNull();
+  });
+
+  test("the agent wrote again inside the window: the 👍 is not sent for the older message, and a wait on the newer question keeps waiting", async () => {
+    const { server, client, threadId, messageId, send } = await setup();
+    await ack(server, messageId);
+    await send(QUESTION, messageId);
+    await Bun.sleep(DELAY + 400);
+    expect(await poll(server, SESSION)).toEqual([]);
+    expect((await windowMessage(server, threadId, messageId)).ack).toMatchObject({ not_sent: "wrote_again", delivered_at: null });
+    expect((await waitForReply(client, threadId)).structuredContent.status).toBe("waiting");
+  });
+});
+
 describe("the Pi and OpenCode wake (agent-link)", () => {
   for (const host of [
     { id: "pi", name: "Pi" },

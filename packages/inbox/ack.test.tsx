@@ -291,6 +291,9 @@ test.skipIf(!hasDom)('the pressed button takes it back; the line says each state
   expect(lineOf({ ...base, settled_seq: 5, note_id: 'msg_note' }, false)).toMatchObject({ state: 'saved', text: expect.stringContaining('Saved for Claude Code. It sees it when it next reads this thread.') });
   // Settled before it was sent through (an older Inbox): no wake will take it.
   expect(lineOf({ ...base, settled_seq: 5 }, true).state).toBe('saved');
+  // The window ended after the thread moved on: not sent, and says why.
+  expect(lineOf({ ...base, settled_seq: 5, note_id: null, not_sent: 'replied' }, true)).toEqual({ state: 'not-sent', text: '👍 Looks goodnot sent: you replied' });
+  expect(lineOf({ ...base, settled_seq: 5, note_id: null, not_sent: 'wrote_again' }, true)).toEqual({ state: 'not-sent', text: '👍 Looks goodnot sent: Claude Code wrote again' });
   const delivered = lineOf({ ...base, settled_seq: 5, note_id: 'msg_note', delivered_at: '2026-10-15T11:04:00.000Z' }, true);
   expect(delivered.state).toBe('delivered');
   expect(delivered.text).toMatch(/^👍 Looks goodDelivered to Claude Code, /);
