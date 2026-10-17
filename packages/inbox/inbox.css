@@ -43,6 +43,7 @@
   --ib-soft-shape: ;             /* Soft's rounder corners on rows, controls, menus and surfaces (today's radii) */
   --ib-soft-float: ;             /* floating surfaces (menus, dialogs, popovers, the toast, a row's action): Soft's shadow and no outline (today's: an outline and a drop shadow) */
   --ib-soft-hover: ;             /* hover fills where today has none, Soft's hover colours, and 140 ms fades (today's hovers) */
+  --ib-soft-chip: ;              /* the thread chip: a grey pill in the window's face (today's: an outlined monospace tag; the face changes how a phone's chip wraps) */
 }
 :root.light .pn-inbox {
   --ib-soft-nav: initial;
@@ -583,16 +584,25 @@ dialog.ib-dlg::backdrop { background: oklch(0 0 0 / 0.45); }
 .ib-band { background: var(--ib-band-bg-s, var(--ib-band)); color: var(--ib-band-fg-s, currentcolor); border-radius: var(--ib-band-r-s, 8px); }
 .ib-band .ib-n, .ib-band .ib-ic { color: var(--ib-band-mfg-s, var(--muted-foreground)); }
 .ib-band .ib-n { font-weight: var(--ib-band-nw-s, 500); }
-button.ib-band { transition: background-color 140ms ease-out; }
+button.ib-band { transition: var(--ib-fade-s, var(--ib-ui-fade)); }
 button.ib-band:hover { background: var(--ib-band-hover-s, var(--ib-band)); }
 /* Rows part by space, not rules. */
 .ib-row, .ib-nrow { border-bottom-color: var(--ib-row-line); }
-:is(.ib-row, .ib-nrow, button.ib-drow)::before { border-radius: 10px; }
+:is(.ib-row, .ib-nrow, button.ib-drow)::before { border-radius: var(--ib-r10-s, 8px); }
 :is(.ib-row, .ib-nrow, button.ib-drow):hover::before { background: var(--ib-hover) !important; }
 /* Rows that wait on nobody (Sent, Quiet): the subject steps back. */
 :is(.ib-row, .ib-nrow)[data-section="quiet"] :is(.ib-s, .ib-l2 .ib-s) { color: var(--ib-quiet-dim, currentcolor); }
-/* The thread chip: a quiet pill in the window's own face (a name, not code; audit 4). */
-.ib-key { font-family: inherit; font-weight: 500; color: var(--ib-raise-mfg); background: color-mix(in oklch, var(--muted) 75%, transparent); border-color: transparent; border-radius: 999px; }
+/* The thread chip (switch --ib-soft-chip): a quiet pill in the window's own face (a name, not code; audit 4), or
+   today's outlined monospace tag. Its weight and fill have no today's declaration, so off they fall back to none. */
+.pn-inbox {
+  --ib-chip-font-s: var(--ib-soft-chip) var(--font-sans);
+  --ib-chip-w-s: var(--ib-soft-chip) 500;
+  --ib-chip-fg-s: var(--ib-soft-chip) var(--ib-raise-mfg);
+  --ib-chip-bg-s: var(--ib-soft-chip) color-mix(in oklch, var(--muted) 75%, transparent);
+  --ib-chip-line-s: var(--ib-soft-chip) transparent;
+  --ib-chip-r-s: var(--ib-soft-chip) 999px;
+}
+.ib-key { font-family: var(--ib-chip-font-s, var(--font-mono)); font-weight: var(--ib-chip-w-s); color: var(--ib-chip-fg-s, var(--muted-foreground)); background: var(--ib-chip-bg-s); border-color: var(--ib-chip-line-s, var(--border)); border-radius: var(--ib-chip-r-s, 5px); }
 /* The status badges (audit 3): tinted pills, never outlined like a button. */
 .ib-badge { border-color: var(--ib-badge-border); border-radius: var(--ib-badge-radius); font-weight: var(--ib-badge-weight); background: var(--ib-badge-bg); }
 .ib-badge.ib-b-stop { background: var(--ib-badge-stop-bg); color: var(--ib-badge-stop-fg, currentcolor); }
@@ -1758,8 +1768,9 @@ button.ib-vtime:hover { background: color-mix(in oklch, var(--primary) 22%, tran
 /* The list: a quiet hover action on rows that wait on the person, shown on hover or KEYBOARD focus (`:focus-visible`):
    focus the window puts on a row after a mouse action (a close, a settle) must not raise it. */
 .ib-rw { position: relative; }
-.pn-inbox .ib-ract { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: none; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 8px; border-radius: 999px; border: 1px solid transparent; background: var(--card); font-size: 12.5px; font-weight: 550; color: var(--foreground); box-shadow: var(--ib-float-shadow); }
-.pn-inbox .ib-ract:hover { background: color-mix(in oklch, var(--muted) 40%, var(--card)); }
+.pn-inbox .ib-ract { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: none; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 8px; border-radius: var(--ib-pill-s, 7px); border: 1px solid var(--ib-float-line-s, var(--border)); background: var(--card); font-size: 12.5px; font-weight: 550; color: var(--foreground); box-shadow: var(--ib-float-s, 0 4px 12px -6px rgba(0, 0, 0, 0.3)); }
+.pn-inbox .ib-ract:hover { background: var(--ib-ract-hover-s, color-mix(in oklch, var(--muted) 60%, var(--card))); }
+.pn-inbox { --ib-ract-hover-s: var(--ib-soft-hover) color-mix(in oklch, var(--muted) 40%, var(--card)); }
 .ib-rw:hover .ib-ract, .ib-rw:has(:focus-visible) .ib-ract { display: inline-flex; }
 .ib-rw:hover:has(.ib-ract) .ib-row .ib-t, .ib-rw:has(:focus-visible):has(.ib-ract) .ib-row .ib-t, .ib-rw:hover:has(.ib-ract) .ib-row .ib-c, .ib-rw:has(:focus-visible):has(.ib-ract) .ib-row .ib-c { visibility: hidden; }
 .ib-rw:hover:has(.ib-ract) .ib-nrow .ib-l1 .ib-t, .ib-rw:has(:focus-visible):has(.ib-ract) .ib-nrow .ib-l1 .ib-t, .ib-rw:hover:has(.ib-ract) .ib-nrow .ib-l1 .ib-c, .ib-rw:has(:focus-visible):has(.ib-ract) .ib-nrow .ib-l1 .ib-c { visibility: hidden; }
@@ -2820,5 +2831,5 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 @media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
   .ib-lbody .ib-band { background: var(--ib-band-bg-s, var(--ib-band)); border-radius: 0; }
   .ib-mrow { border-bottom-color: var(--ib-row-line); }
-  .ib-mrow:active { background: var(--ib-hover); }
+  .ib-mrow:active { background: var(--ib-hover-s, color-mix(in oklch, var(--muted) 50%, transparent)); }
 }
