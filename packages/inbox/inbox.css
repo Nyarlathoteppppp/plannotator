@@ -91,13 +91,13 @@
   --ib-q-side-fg: var(--ib-soft-quiet) var(--ib-side-fg-soft);
   --ib-q-side-mfg: var(--ib-soft-quiet) var(--ib-side-mfg-soft);
   --ib-q-quiet-fg: var(--ib-soft-quiet) var(--ib-quiet-fg-soft);
-  --ib-q-raise-fg: var(--ib-soft-quiet) var(--ib-raise-fg-soft);
-  --ib-q-raise-mfg: var(--ib-soft-quiet) var(--ib-raise-mfg-soft);
   --ib-side-fg: var(--ib-q-side-fg, var(--foreground));
   --ib-side-mfg: var(--ib-q-side-mfg, var(--muted-foreground));
   --ib-quiet-fg: var(--ib-q-quiet-fg, var(--muted-foreground));
-  --ib-raise-fg: var(--ib-q-raise-fg, var(--foreground));
-  --ib-raise-mfg: var(--ib-q-raise-mfg, var(--muted-foreground));
+  /* Text on a raised Soft surface (cards, tiles, chips) is always stepped for that surface: the surface is
+     Soft's, so its text is too, whatever the quiet-text switch says. */
+  --ib-raise-fg: var(--ib-raise-fg-soft);
+  --ib-raise-mfg: var(--ib-raise-mfg-soft);
   /* A Sent or Quiet row's subject (Soft steps it back; today only Sent's is). Used as var(--ib-quiet-dim, currentcolor). */
   --ib-quiet-dim: var(--ib-soft-quiet) var(--muted-foreground);
 
