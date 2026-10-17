@@ -48,6 +48,9 @@
   --ib-soft-foot: ;              /* the thread's foot: Reply, Looks good and Send as filled pills, the reply box's soft glow and pill chips (today's: outlined buttons, a 3 px ring) */
   --ib-soft-accept: ;            /* Accept recommended: a filled pill (today's: ui's outlined button) */
   --ib-soft-surfaces: ;          /* raised surfaces in the thread: attachment tiles (Open shown on hover), the read line, the route chooser, the fold (today's: outlined cards) */
+  --ib-soft-buttons: ;           /* buttons: a quiet fill with no outline (today's: outlined on the card) */
+  --ib-soft-segmented: ;         /* Settings' Light / Dark / System control: a faint well, quiet options (today's: the muted well with a border) */
+  --ib-soft-groups: ;            /* Settings' groups, What's new's skipped releases and a dialog's command box as raised cards (today's: outlined cards) */
 }
 :root.light .pn-inbox {
   --ib-soft-nav: initial;
@@ -84,6 +87,9 @@
   /* The search field's key hint (--ib-soft-chip). */
   --ib-kbd-bg-s: var(--ib-soft-chip) color-mix(in oklch, var(--muted) 80%, transparent);
   --ib-kbd-line-s: var(--ib-soft-chip) transparent;
+  /* Settings' Light / Dark / System control (--ib-soft-segmented). */
+  --ib-seg-bg-s: var(--ib-soft-segmented) var(--ib-fill);
+  --ib-seg-line-s: var(--ib-soft-segmented) transparent;
   --ib-side-hover-s: var(--ib-soft-panes) color-mix(in oklch, var(--card) 55%, transparent);
   --ib-side-menu-s: var(--ib-soft-panes) color-mix(in oklch, var(--card) 70%, transparent);
   --ib-side-hover: var(--ib-side-hover-s, color-mix(in oklch, var(--muted) 45%, transparent));
@@ -410,8 +416,8 @@ button.ib-mut { border-radius: 6px; }
 /* Under reduced motion a theme switch lands in one frame (theme.ts holds this class for two frames). */
 html.ib-theme-instant, html.ib-theme-instant *, html.ib-theme-instant *::before, html.ib-theme-instant *::after { transition: none !important; }
 /* Settings → Appearance: Light, Dark, Match system, as one segmented control of native radios. */
-.ib-seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 10px; background: var(--ib-fill); border: 1px solid transparent; }
-.ib-seg-o { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 8px; font-size: 13px; color: color-mix(in oklch, var(--ib-raise-mfg) 85%, var(--foreground)); cursor: pointer; white-space: nowrap; }
+.ib-seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--ib-r10-s, 8px); background: var(--ib-seg-bg-s, var(--muted)); border: 1px solid var(--ib-seg-line-s, var(--border)); }
+.ib-seg-o { --ib-seg-fg-s: var(--ib-soft-segmented) color-mix(in oklch, var(--ib-raise-mfg) 85%, var(--foreground)); position: relative; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: var(--ib-r8-s, 6px); font-size: 13px; color: var(--ib-seg-fg-s, var(--muted-foreground)); cursor: pointer; white-space: nowrap; }
 .ib-seg-o:hover { color: var(--foreground); }
 .ib-seg-o[data-on] { background: var(--card); color: var(--foreground); font-weight: 550; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .ib-seg-o input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
@@ -3094,69 +3100,119 @@ dialog.ib-cp::backdrop { background: oklch(0 0 0 / 0.45); }
 
 /* ───────────── The Soft look elsewhere (.product/approved/inbox-soft/): buttons, dialogs, the search
    palette, compose, Settings, Decisions, Drafts, What's new and a file's chrome ───────────── */
-/* Appended after the window's own rules. Paint only (owner, 2026-10-16): sizes and spacing stay today's.
-   Buttons: no outline, a quiet fill, Soft's radius; the primary keeps the accent. */
-.pn-inbox .ib-btn { border-color: transparent; border-radius: 10px; background: color-mix(in oklch, var(--muted) 60%, transparent); color: var(--ib-raise-fg); transition: background-color 140ms ease-out, color 140ms ease-out; }
-.pn-inbox .ib-btn:hover:not(:disabled) { background: color-mix(in oklch, var(--muted) 90%, transparent); }
+/* Appended after the window's own rules. Paint only (owner, 2026-10-16): sizes and spacing stay today's. Each
+   declaration is `var(<switch token>, <today's value>)` as in the thread's block. Switches read here: buttons
+   (--ib-soft-buttons), the Light / Dark / System control (--ib-soft-segmented), Settings' groups and the
+   dialogs' command boxes as raised cards (--ib-soft-groups), the Settings nav's current section (the sidebar's
+   --ib-soft-nav), small labels (--ib-soft-labels), and the shell's shape, float and hover switches. */
+.pn-inbox {
+  /* Buttons (--ib-soft-buttons): no outline, a quiet fill; the primary keeps the accent. */
+  --ib-bt-line-s: var(--ib-soft-buttons) transparent;
+  --ib-bt-bg-s: var(--ib-soft-buttons) color-mix(in oklch, var(--muted) 60%, transparent);
+  --ib-bt-fg-s: var(--ib-soft-buttons) var(--ib-raise-fg);
+  --ib-bt-hover-s: var(--ib-soft-buttons) color-mix(in oklch, var(--muted) 90%, transparent);
+  --ib-bt-pri-hover-s: var(--ib-soft-buttons) color-mix(in oklch, var(--primary) 88%, var(--foreground));
+  --ib-bt-ghost-hover-s: var(--ib-soft-buttons) var(--ib-hover);
+  --ib-bt-on-s: var(--ib-soft-buttons) color-mix(in oklch, var(--primary) 12%, transparent);
+  --ib-bt-r-s: var(--ib-soft-buttons) 10px;
+  --ib-bt-copy-r-s: var(--ib-soft-buttons) 8px;
+  /* Settings' groups (--ib-soft-groups): raised cards, their text taking the raised text colours. */
+  --ib-gr-line-s: var(--ib-soft-groups) transparent;
+  --ib-gr-bg-s: var(--ib-soft-groups) var(--ib-raise);
+  --ib-gr-fg-s: var(--ib-soft-groups) var(--ib-raise-fg);
+  --ib-gr-mfg-s: var(--ib-soft-groups) var(--ib-raise-mfg);
+  --ib-gr-color-s: var(--ib-soft-groups) var(--ib-raise-fg);
+  --ib-gr-r-s: var(--ib-soft-groups) 14px;
+  --ib-gr-tile-s: var(--ib-soft-groups) var(--card);
+  /* The Settings nav's section shown (--ib-soft-nav, as the sidebar's current page). */
+  --ib-sn-bg-s: var(--ib-soft-nav) var(--ib-fill);
+  --ib-sn-fg-s: var(--ib-soft-nav) var(--foreground);
+  --ib-sn-icon-s: var(--ib-soft-nav) var(--primary);
+  /* The comments panel's empty state at full quiet text (--ib-soft-quiet). */
+  --ib-ap-s: var(--ib-soft-quiet) var(--muted-foreground);
+}
+.pn-inbox .ib-btn { --ib-bt-ghost-fg-s: var(--ib-soft-buttons) var(--foreground); border-color: var(--ib-bt-line-s, var(--border)); border-radius: var(--ib-bt-r-s, 7px); background: var(--ib-bt-bg-s, var(--card)); color: var(--ib-bt-fg-s); transition: var(--ib-fade2-s, var(--ib-ui-fade)); }
+/* Off, a hovered button keeps its own rest colour (today's buttons have no hover fill). */
+.pn-inbox .ib-btn.ib-on { --ib-btn-rest: color-mix(in oklch, var(--primary) 10%, var(--card)); }
+.pn-inbox .ib-btn.ib-ack[aria-pressed="true"] { --ib-btn-rest: color-mix(in srgb, var(--success) 14%, var(--card)); }
+.pn-inbox .ib-btn:hover:not(:disabled) { background: var(--ib-bt-hover-s, var(--ib-btn-rest, var(--card))); }
 .pn-inbox .ib-btn.ib-pri { background: var(--primary); color: var(--primary-foreground); }
-.pn-inbox .ib-btn.ib-pri:hover:not(:disabled) { background: color-mix(in oklch, var(--primary) 88%, var(--foreground)); }
+.pn-inbox .ib-btn.ib-pri:hover:not(:disabled) { background: var(--ib-bt-pri-hover-s, var(--primary)); }
 .pn-inbox .ib-btn.ib-ghost { background: transparent; }
-.pn-inbox .ib-btn.ib-ghost:hover:not(:disabled) { background: var(--ib-hover); color: var(--foreground); }
-.pn-inbox .ib-btn.ib-on { background: color-mix(in oklch, var(--primary) 12%, transparent); }
-.pn-inbox .ib-copy { border-color: transparent; border-radius: 8px; background: color-mix(in oklch, var(--muted) 60%, transparent); }
+.pn-inbox .ib-btn.ib-ghost:hover:not(:disabled) { background: var(--ib-bt-ghost-hover-s, transparent); color: var(--ib-bt-ghost-fg-s, var(--muted-foreground)); }
+.pn-inbox .ib-btn.ib-on { background: var(--ib-bt-on-s, color-mix(in oklch, var(--primary) 10%, var(--card))); }
+.pn-inbox .ib-copy { border-color: var(--ib-bt-line-s, var(--border)); border-radius: var(--ib-bt-copy-r-s, 6px); background: var(--ib-bt-bg-s, var(--card)); }
 /* Dialogs, the search palette and compose: one floating surface, Soft's radius and shadow, no outline. */
-.pn-inbox .ib-dlg, dialog.ib-dlg { border-color: transparent; border-radius: 16px; box-shadow: var(--ib-float-shadow); }
-.ib-dlg h3 { font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
-.ib-cmd { border-color: transparent; border-radius: 10px; background: var(--ib-raise); }
-.pn-inbox dialog.ib-sp, dialog.ib-sp, .pn-inbox dialog.ib-cp, dialog.ib-cp { border-radius: 16px; box-shadow: var(--ib-float-shadow); }
+.pn-inbox .ib-dlg, dialog.ib-dlg { border-color: var(--ib-float-line-s, var(--border)); border-radius: var(--ib-r16-s, 12px); box-shadow: var(--ib-float-s, 0 24px 60px -20px oklch(0 0 0 / 0.55)); }
+.ib-dlg h3 { font-size: var(--ib-lbl-size-s, 11px); font-weight: 600; letter-spacing: var(--ib-lbl-track-s, 0.07em); text-transform: var(--ib-lbl-case-s, uppercase); }
+.ib-cmd { border-color: var(--ib-gr-line-s, var(--border)); border-radius: var(--ib-r10-s, 8px); background: var(--ib-gr-bg-s, var(--background)); }
+.pn-inbox dialog.ib-sp, dialog.ib-sp, .pn-inbox dialog.ib-cp, dialog.ib-cp { border-radius: var(--ib-r16-s, 10px); box-shadow: var(--ib-float-s, 0 0 0 1px color-mix(in oklch, var(--border) 70%, transparent), 0 24px 60px -20px oklch(0 0 0 / 0.55), 0 8px 18px -10px oklch(0 0 0 / 0.35)); }
 .ib-sp-inrow, .ib-sp-filters { border-bottom-color: var(--ib-sep-s, var(--ib-line)); }
 
 /* Settings: the section nav as the sidebar's (a lifted row for the section shown), the groups as raised cards. */
-.ib-snav a { border-radius: 10px; }
-.ib-snav a:hover { background: var(--ib-hover); }
-.ib-snav a[aria-current="page"] { background: var(--ib-fill); color: var(--foreground); }
-.ib-snav a[aria-current="page"] svg.ib-ic { color: var(--primary); }
-.ib-eyebrow { font-size: 12px; font-weight: 550; letter-spacing: 0; text-transform: none; }
-.ib-card { border-color: transparent; border-radius: 14px; background: var(--ib-raise); --foreground: var(--ib-raise-fg); --muted-foreground: var(--ib-raise-mfg); color: var(--foreground); }
+.ib-snav a { border-radius: var(--ib-r10-s, 7px); }
+.ib-snav a:hover { background: var(--ib-hover-s, color-mix(in oklch, var(--muted) 55%, transparent)); }
+.ib-snav a[aria-current="page"] { background: var(--ib-sn-bg-s, color-mix(in oklch, var(--primary) 12%, transparent)); color: var(--ib-sn-fg-s, var(--primary)); }
+.ib-snav a[aria-current="page"] svg.ib-ic { color: var(--ib-sn-icon-s); }
+.ib-eyebrow { font-size: var(--ib-lbl-size-s, 11px); font-weight: var(--ib-lbl-550-s, 600); letter-spacing: var(--ib-lbl-track-s, 0.07em); text-transform: var(--ib-lbl-case-s, uppercase); }
+.ib-card { border-color: var(--ib-gr-line-s, var(--ib-line)); border-radius: var(--ib-gr-r-s, 10px); background: var(--ib-gr-bg-s, var(--card)); --foreground: var(--ib-gr-fg-s, var(--ib-fg0)); --muted-foreground: var(--ib-gr-mfg-s, var(--ib-mfg0)); color: var(--ib-gr-color-s); }
 .ib-prow, .ib-card .ib-arcrow, .ib-sframe .ib-stbl td { border-bottom-color: var(--ib-sep-s, var(--ib-hair)); }
-.ib-callout { border-radius: 12px; }
-.ib-flow, .ib-way { border-radius: 14px; }
-.ib-tile { border-radius: 10px; background: var(--card); }
-.ib-skel { border-radius: 14px; }
-.pn-inbox .ib-sback { border-radius: 10px; }
-.ib-way-sec h5, .ib-before h5 { font-size: 12px; letter-spacing: 0; text-transform: none; }
+.ib-callout { border-radius: var(--ib-r12-s, 8px); }
+.ib-flow { border-radius: var(--ib-r14-s, 12px); }
+.ib-way { border-radius: var(--ib-r14-s, 10px); }
+.ib-tile { border-radius: var(--ib-r10-s, 8px); background: var(--ib-gr-tile-s, var(--muted)); }
+.ib-skel { border-radius: var(--ib-r14-s, 10px); }
+.pn-inbox .ib-sback { border-radius: var(--ib-r10-s, 6px); }
+.ib-way-sec h5, .ib-before h5 { font-size: var(--ib-lbl-size-s, 11px); letter-spacing: var(--ib-lbl-track-s, 0.06em); text-transform: var(--ib-lbl-case-s, uppercase); }
 
 /* Decisions and Drafts: Soft rows (the list's pill, below), sections as text headers. */
 .ib-drow { border-bottom-color: var(--ib-row-line); }
 .ib-draft { border-bottom-color: var(--ib-sep-s, var(--ib-hair)); }
-.pn-inbox .ib-draft-open:hover { background: var(--ib-hover); }
-.ib-draft-mk { border-radius: 11px; }
-.pn-inbox .ib-ppick-t { border-color: transparent; border-radius: 10px; background: var(--ib-raise); }
-.ib-ppick-list { border-color: transparent; border-radius: 14px; box-shadow: var(--ib-float-shadow); }
-.ib-ppick-o { border-radius: 9px; }
-.ib-deccard { border-color: transparent; border-radius: 16px; box-shadow: var(--ib-float-shadow); }
+.pn-inbox .ib-draft-open:hover { background: var(--ib-hover-s, color-mix(in oklch, var(--muted) 30%, transparent)); }
+.ib-draft-mk { border-radius: var(--ib-r11-s, 9px); }
+.pn-inbox .ib-ppick-t { border-color: var(--ib-bt-line-s, var(--border)); border-radius: var(--ib-r10-s, 8px); background: var(--ib-gr-bg-s, var(--card)); }
+.ib-ppick-list { border-color: var(--ib-float-line-s, var(--border)); border-radius: var(--ib-r14-s, 10px); box-shadow: var(--ib-float-s, 0 12px 32px rgba(0, 0, 0, 0.22)); }
+.ib-ppick-o { border-radius: var(--ib-r9-s, 7px); }
+.ib-deccard { border-color: var(--ib-float-line-s, var(--border)); border-radius: var(--ib-r16-s, 12px); box-shadow: var(--ib-float-s, 0 18px 50px rgba(0, 0, 0, 0.25)); }
 
 /* What's new: its bar shares the panes' hairline; the release card is raised. */
 .ib-wn-bar { border-bottom-color: var(--ib-sep-s, var(--border)); }
 .ib-wn-hero { border-bottom-color: var(--ib-sep-s, var(--border)); }
-.ib-wn-skipped { border-color: transparent; border-radius: 14px; background: var(--ib-raise); }
-.pn-inbox .ib-wn-gh { border-radius: 10px; }
+.ib-wn-skipped { border-color: var(--ib-gr-line-s, var(--border)); border-radius: var(--ib-gr-r-s, 8px); background: var(--ib-gr-bg-s, var(--card)); }
+.pn-inbox .ib-wn-gh { border-radius: var(--ib-r10-s, 7px); }
 
 /* A file's chrome: the panes' hairline, the bar under the file on the card. */
 .ib-vhead, .ib-vfoot, .ib-fold .ib-sheet-h { border-color: var(--ib-sep-s, color-mix(in oklch, var(--border) 60%, transparent)); }
 .ib-apanel { border-color: var(--ib-sep-s, color-mix(in oklch, var(--border) 50%, transparent)); }
-.ib-stepbox { border-color: transparent; border-radius: 10px; background: var(--ib-raise); --foreground: var(--ib-raise-fg); --muted-foreground: var(--ib-raise-mfg); color: var(--foreground); }
-.pn-inbox .ib-stepbtn, .pn-inbox .ib-steppos { border-radius: 8px; }
-.ib-toolstrip { border-radius: 12px; box-shadow: var(--ib-float-shadow); }
-.ib-fvbar, .ib-fvchip, .ib-fvver { border-color: transparent; border-radius: 12px; box-shadow: var(--ib-float-shadow); }
-:root.light .ib-fvbar, :root.light .ib-fvver { box-shadow: var(--ib-float-shadow); }
-.ib-imgbar, .ib-imgshowing { border-radius: 10px; }
+.ib-stepbox { border-color: var(--ib-sf-line-s, color-mix(in oklch, var(--border) 60%, transparent)); border-radius: var(--ib-r10-s, 8px); background: var(--ib-sf-bg-s, color-mix(in oklch, var(--muted) 35%, var(--card))); --foreground: var(--ib-sf-fg-s, var(--ib-fg0)); --muted-foreground: var(--ib-sf-mfg-s, var(--ib-mfg0)); color: var(--ib-sf-color-s); }
+.pn-inbox .ib-stepbtn, .pn-inbox .ib-steppos { border-radius: var(--ib-r8-s, 6px); }
+.ib-toolstrip { border-radius: var(--ib-r12-s, 9px); box-shadow: var(--ib-float-s, var(--card-shadow)); }
+.ib-fvbar { border-color: var(--ib-float-line-s, color-mix(in oklch, var(--border) 85%, transparent)); border-radius: var(--ib-r12-s, 11px); box-shadow: var(--ib-float-s, 0 10px 30px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.2)); }
+.ib-fvchip { border-color: var(--ib-float-line-s, var(--border)); border-radius: var(--ib-r12-s, 10px); box-shadow: var(--ib-float-s, 0 12px 34px rgba(0, 0, 0, 0.34)); }
+.ib-fvver { border-color: var(--ib-float-line-s, color-mix(in oklab, var(--warning) 40%, var(--border))); border-radius: var(--ib-r12-s, 10px); box-shadow: var(--ib-float-s, 0 10px 30px rgba(0, 0, 0, 0.28)); }
+:root.light .ib-fvbar { box-shadow: var(--ib-float-s, 0 8px 24px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08)); }
+:root.light .ib-fvver { box-shadow: var(--ib-float-s, 0 8px 24px rgba(0, 0, 0, 0.12)); }
+.ib-imgbar { border-radius: var(--ib-r10-s, 9px); }
+.ib-imgshowing { border-radius: var(--ib-r10-s, 8px); }
 
-/* The comments panel's empty state (ui fades its words to 60% and 40%) reads at AA here. */
-.pn-inbox .ib-apanel p[class*="text-muted-foreground/"] { color: var(--muted-foreground); }
+/* The comments panel's empty state (ui fades its words to 60% and 40%) reads at AA with Soft's quiet text. */
+.pn-inbox .ib-apanel p[class*="text-muted-foreground/"] { color: var(--ib-ap-s, color-mix(in oklab, var(--muted-foreground) var(--ib-ap-pct, 100%), transparent)); }
+.pn-inbox .ib-apanel p.text-muted-foreground\/40 { --ib-ap-pct: 40%; }
+.pn-inbox .ib-apanel p.text-muted-foreground\/50 { --ib-ap-pct: 50%; }
+.pn-inbox .ib-apanel p.text-muted-foreground\/60 { --ib-ap-pct: 60%; }
+.pn-inbox .ib-apanel p.text-muted-foreground\/70 { --ib-ap-pct: 70%; }
 /* The search palette's groups are sentence-case headers (as the list's sections); the row in focus is a neutral fill. */
-.ib-sp-gh { font-size: 12px; letter-spacing: 0; text-transform: none; }
-.ib-sp-row { border-radius: 10px; }
+.ib-sp-gh { font-size: var(--ib-lbl-size-s, 11px); letter-spacing: var(--ib-lbl-track-s, 0.07em); text-transform: var(--ib-lbl-case-s, uppercase); }
+.ib-sp-row { border-radius: var(--ib-r10-s, 6px); }
 :root .pn-inbox .ib-sp-row[aria-selected="true"] { background: var(--ib-sel-s, color-mix(in oklch, var(--muted) 80%, transparent)); }
 :root.light .pn-inbox .ib-sp-row[aria-selected="true"] { background: var(--ib-sel-s, var(--muted)); }
-.ib-sp-chip { border-radius: 999px; }
+.ib-sp-chip { border-radius: var(--ib-pill-s, 4px); }
+
+/* On a phone the rules above keep the phone's own shapes: buttons at 9 px, and the decision card, the
+   annotations list and New message's sessions as bottom sheets (rounded on top, no float around them). */
+@media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
+  .pn-inbox .ib-btn { border-radius: var(--ib-bt-r-s, 9px); }
+  .pn-inbox .ib-pfoot .ib-btn { border-radius: var(--ib-ft-r-s, 9px); }
+  .ib-deccard, .ib-annpop, .ib-nmpop { border-radius: 16px 16px 0 0; }
+  .ib-annpop, .ib-nmpop { box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.28); }
+}
