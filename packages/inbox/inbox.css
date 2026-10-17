@@ -38,12 +38,12 @@
   --ib-soft-card: ;              /* the question card: a raised, borderless surface (today's: ui's card) */
   --ib-soft-nav: ;               /* the sidebar's current page: a lifted card (today's: the accent's tint and text) */
   --ib-soft-quiet: ;             /* quiet text stepped for its surface, on the ground and on raised surfaces (today's: the palette's muted text) */
-  /* Not ruled yet (owner, 2026-10-17): each is Soft until he decides, and `initial` gives today's back. */
-  --ib-soft-labels: ;            /* small labels in sentence case at 12 px (today's: 11 px capitals, spaced out) */
-  --ib-soft-shape: ;             /* Soft's rounder corners on rows, controls, menus and surfaces (today's radii) */
-  --ib-soft-float: ;             /* floating surfaces (menus, dialogs, popovers, the toast, a row's action): Soft's shadow and no outline (today's: an outline and a drop shadow) */
-  --ib-soft-hover: ;             /* hover fills where today has none, Soft's hover colours, and 140 ms fades (today's hovers) */
-  --ib-soft-chip: ;              /* chips: the thread chip and the search field's key hint as grey pills (today's: an outlined monospace tag, an outlined key; the chip's face changes how a phone's chip wraps) */
+  /* Not ruled yet (owner, 2026-10-17): each is today's (`initial`) until he decides; a space turns it to Soft. */
+  --ib-soft-labels: initial;     /* small labels in sentence case at 12 px (today's: 11 px capitals, spaced out) */
+  --ib-soft-shape: initial;      /* Soft's rounder corners on rows, controls, menus and surfaces (today's radii) */
+  --ib-soft-float: initial;      /* floating surfaces (menus, dialogs, popovers, the toast, a row's action): Soft's shadow and no outline (today's: an outline and a drop shadow) */
+  --ib-soft-hover: initial;      /* hover fills where today has none, Soft's hover colours, and 140 ms fades (today's hovers) */
+  --ib-soft-chip: initial;       /* chips: the thread chip and the search field's key hint as grey pills (today's: an outlined monospace tag, an outlined key; the chip's face changes how a phone's chip wraps) */
   --ib-soft-hbtns: ;             /* the thread header's buttons: borderless, the label in the text colour (today's: outlined, the pressed one in the accent) */
   --ib-soft-foot: ;              /* the thread's foot: Reply, Looks good and Send as filled pills, the reply box's soft glow and pill chips (today's: outlined buttons, a 3 px ring) */
   --ib-soft-accept: ;            /* Accept recommended: a filled pill (today's: ui's outlined button) */
@@ -119,7 +119,7 @@
   --ib-q-raise-mfg: var(--ib-soft-quiet) var(--ib-raise-mfg-soft);
   --ib-raise-fg: var(--ib-q-raise-fg, var(--ib-raise-fg-keep));
   --ib-raise-mfg: var(--ib-q-raise-mfg, var(--ib-raise-mfg-keep));
-  /* A Sent or Quiet row's subject (Soft steps it back; today only Sent's is). Used as var(--ib-quiet-dim, currentcolor). */
+  /* A Sent or Quiet row's subject (Soft steps it back; today only Sent's is). Used as var(--ib-quiet-dim, <today's>). */
   --ib-quiet-dim: var(--ib-soft-quiet) var(--muted-foreground);
 
   /* The selected row's pill: a neutral fill (Soft) or the accent's tint (today; dark here, light below). */
@@ -599,8 +599,10 @@ button.ib-band:hover { background: var(--ib-band-hover-s, var(--ib-band)); }
 .ib-row, .ib-nrow { border-bottom-color: var(--ib-row-line); }
 :is(.ib-row, .ib-nrow, button.ib-drow)::before { border-radius: var(--ib-r10-s, 8px); }
 :is(.ib-row, .ib-nrow, button.ib-drow):hover::before { background: var(--ib-hover) !important; }
-/* Rows that wait on nobody (Sent, Quiet): the subject steps back. */
-:is(.ib-row, .ib-nrow)[data-section="quiet"] :is(.ib-s, .ib-l2 .ib-s) { color: var(--ib-quiet-dim, currentcolor); }
+/* Rows that wait on nobody (Sent, Quiet): the subject steps back. Off, each row keeps today's colour: a wide
+   row's subject takes its row's, a narrow row's is quiet text (`.ib-nrow .ib-l2 .ib-s`). */
+.ib-row[data-section="quiet"] .ib-s { color: var(--ib-quiet-dim, currentcolor); }
+.ib-nrow[data-section="quiet"] .ib-l2 .ib-s { color: var(--ib-quiet-dim, var(--muted-foreground)); }
 /* The thread chip (switch --ib-soft-chip): a quiet pill in the window's own face (a name, not code; audit 4), or
    today's outlined monospace tag. Its weight and fill have no today's declaration, so off they fall back to none. */
 .pn-inbox {
