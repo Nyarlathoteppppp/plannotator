@@ -9,9 +9,8 @@
  * server, and Send carries it (the thread's attachment, the reply's
  * attachment on the message that carries the words); a reply of a pasted
  * image alone is sent as a words-only reply; a paste of text alone makes no
- * tile and is inserted as text (by the page itself: pasteInsert.ts, the
- * Chrome 155-156 workaround), and text copied from a spreadsheet with the
- * picture Chromium adds beside it is left to the browser; Cancel forgets the reply box's files;
+ * tile and is left to the browser, as is text copied from a spreadsheet with
+ * the picture Chromium adds beside it; Cancel forgets the reply box's files;
  * a file pasted while a Send is in flight stays for the next one; a retry
  * whose contents changed is a new reply, never the earlier one replayed; and
  * each attach by paste is said in a polite live region.
@@ -252,9 +251,7 @@ test.skipIf(!hasDom)('compose: a pasted image makes a tile with a dated name, up
   await until(() => !!dialog()?.querySelector('[data-compose-to="ses-paste"]'), 'To prefilled');
   const text = dialog().querySelector('textarea') as HTMLTextAreaElement;
 
-  // Text alone: nothing attached; the page inserts it itself (pasteInsert.ts, the Chrome 155-156 workaround).
-  expect(paste(text, { text: 'just words' })).toBe(true);
-  expect(text.value).toBe('just words');
+  expect(paste(text, { text: 'just words' })).toBe(false);
   expect(tiles(dialog())).toHaveLength(0);
   // A cell copied in a spreadsheet: its text and the picture Chromium adds. The text is the paste; nothing attaches.
   expect(paste(text, { text: 'Q3\t1,204\t+8%', files: [image()] })).toBe(false);
@@ -287,10 +284,8 @@ test.skipIf(!hasDom)('the reply box: two pasted images make two tiles (the secon
   await until(() => replyBox(el) !== null, 'the reply box');
   const text = replyBox(el)!.querySelector('textarea') as HTMLTextAreaElement;
 
-  // Text alone (a dictation app's synthetic paste included): nothing attached; the page inserts it
-  // itself (pasteInsert.ts, the Chrome 155-156 workaround).
-  expect(paste(text, { text: 'some words' })).toBe(true);
-  expect(text.value).toBe('some words');
+  // Text alone (a dictation app's synthetic paste included): never prevented, nothing attached.
+  expect(paste(text, { text: 'some words' })).toBe(false);
   expect(el.querySelector('[data-reply-files]')).toBeNull();
   // An image copied from a page brings HTML too: the image attaches and the browser's own paste still runs.
   expect(paste(text, { files: [image()], html: '<img src="x.png">' })).toBe(false);

@@ -8,7 +8,9 @@
  * cancelled, files, empty, read-only, disabled, unfocused, mid IME
  * composition, contenteditable, code editors, email and number inputs), and
  * that what it inserts is what the browser would (maxlength, line breaks, the
- * selection replaced). happy-dom has no execCommand, so the setRangeText
+ * selection replaced); that it runs only on Chromium 155 and 156 on macOS
+ * (the gate), only for trusted events, and that a lost compositionend cannot
+ * leave it off. happy-dom has no execCommand, so the setRangeText
  * fallback runs; Chromium's execCommand path is proved in
  * tests/e2e/inbox-dictation-paste.spec.ts.
  *
@@ -17,12 +19,13 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 
 const hasDom = typeof document !== 'undefined';
-const { installPlainTextPaste, plainTextPasteInsertion } = (hasDom ? await import('./pasteInsert') : {}) as typeof import('./pasteInsert');
+const { installPlainTextPaste, plainTextPasteInsertion, chromiumPasteBugAffected, FORCE_PLAIN_TEXT_PASTE_FLAG } = (hasDom ? await import('./pasteInsert') : {}) as typeof import('./pasteInsert');
 
 let uninstall: (() => void) | null = null;
 beforeEach(() => {
   if (!hasDom) return;
-  uninstall = installPlainTextPaste(window);
+  // On, and taking script-dispatched events: the gate and the isTrusted check are proved apart, below.
+  uninstall = installPlainTextPaste(window, { enabled: true, allowUntrusted: true });
 });
 afterEach(() => {
   if (!hasDom) return;
@@ -196,4 +199,92 @@ test('the decision alone: plainTextPasteInsertion names the field, text and rang
   Object.defineProperty(event, 'target', { value: box });
   expect(plainTextPasteInsertion(event)).toEqual({ field: box, text: 'XY', start: 1, end: 2 });
   expect(plainTextPasteInsertion(event, true)).toBeNull();
+});
+
+const MAC_CHROME = (v: number) => `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v}.0.0.0 Safari/537.36`;
+const hints = (v: number, platform = 'macOS') => ({
+  userAgent: MAC_CHROME(v),
+  platform: 'MacIntel',
+  userAgentData: { platform, brands: [{ brand: 'Not.A/Brand', version: '99' }, { brand: 'Chromium', version: String(v) }, { brand: 'Google Chrome', version: String(v) }] },
+});
+
+test('the gate: Chromium 155 and 156 on macOS only', () => {
+  if (!hasDom) return;
+  // Client hints (Chrome, Edge, Brave, Arc all carry the Chromium brand).
+  expect(chromiumPasteBugAffected(hints(155))).toBe(true);
+  expect(chromiumPasteBugAffected(hints(156))).toBe(true);
+  expect(chromiumPasteBugAffected(hints(154))).toBe(false);
+  expect(chromiumPasteBugAffected(hints(157))).toBe(false);
+  expect(chromiumPasteBugAffected(hints(156, 'Windows'))).toBe(false);
+  // The Chromium brand wins over the UA string.
+  expect(chromiumPasteBugAffected({ ...hints(157), userAgent: MAC_CHROME(156) })).toBe(false);
+  // No client hints: the UA string (Edge says Edg/ beside Chrome/).
+  expect(chromiumPasteBugAffected({ userAgent: MAC_CHROME(155), platform: 'MacIntel' })).toBe(true);
+  expect(chromiumPasteBugAffected({ userAgent: `${MAC_CHROME(156)} Edg/156.0.0.0` })).toBe(true);
+  expect(chromiumPasteBugAffected({ userAgent: MAC_CHROME(154) })).toBe(false);
+  expect(chromiumPasteBugAffected({ userAgent: MAC_CHROME(157) })).toBe(false);
+  // Not macOS.
+  expect(
+    chromiumPasteBugAffected({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36', platform: 'Win32' }),
+  ).toBe(false);
+  expect(
+    chromiumPasteBugAffected({ userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36', platform: 'Linux x86_64' }),
+  ).toBe(false);
+  // Safari, Firefox, Chrome on iOS (WebKit).
+  expect(
+    chromiumPasteBugAffected({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+      platform: 'MacIntel',
+    }),
+  ).toBe(false);
+  expect(chromiumPasteBugAffected({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:150.0) Gecko/20100101 Firefox/150.0', platform: 'MacIntel' })).toBe(false);
+  expect(
+    chromiumPasteBugAffected({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/155.0.0.0 Mobile/15E148 Safari/604.1',
+      platform: 'iPhone',
+    }),
+  ).toBe(false);
+  expect(chromiumPasteBugAffected(undefined)).toBe(false);
+});
+
+test('by default, outside the affected engine (here, happy-dom), nothing is taken; the force flag turns it on', () => {
+  if (!hasDom) return;
+  uninstall?.();
+  uninstall = installPlainTextPaste(window, { allowUntrusted: true });
+  const box = field<HTMLTextAreaElement>('<textarea></textarea>');
+  expect(paste(box, { text: 'words' }).taken).toBe(false);
+  const win = window as unknown as Record<string, unknown>;
+  win[FORCE_PLAIN_TEXT_PASTE_FLAG] = true;
+  try {
+    expect(paste(box, { text: 'words' }).taken).toBe(true);
+    expect(box.value).toBe('words');
+  } finally {
+    delete win[FORCE_PLAIN_TEXT_PASTE_FLAG];
+  }
+});
+
+test('a script-dispatched (untrusted) paste inserts nothing', () => {
+  if (!hasDom) return;
+  uninstall?.();
+  uninstall = installPlainTextPaste(window, { enabled: true });
+  const box = field<HTMLTextAreaElement>('<textarea></textarea>');
+  expect(paste(box, { text: 'from a script' })).toEqual({ taken: false, inputs: 0 });
+  expect(box.value).toBe('');
+});
+
+test('a lost compositionend does not leave it off: focus moving or the window blurring ends the composition', () => {
+  if (!hasDom) return;
+  document.body.innerHTML = '<textarea id="a"></textarea><textarea id="b"></textarea>';
+  const a = document.getElementById('a') as HTMLTextAreaElement;
+  const b = document.getElementById('b') as HTMLTextAreaElement;
+  a.focus();
+  a.dispatchEvent(new Event('compositionstart', { bubbles: true }));
+  expect(paste(a, { text: 'x' }).taken).toBe(false);
+  b.focus(); // focusin, and no compositionend
+  expect(paste(b, { text: 'y' }).taken).toBe(true);
+  b.dispatchEvent(new Event('compositionstart', { bubbles: true }));
+  expect(paste(b, { text: 'z' }).taken).toBe(false);
+  window.dispatchEvent(new Event('blur'));
+  expect(paste(b, { text: 'z' }).taken).toBe(true);
+  expect(b.value).toBe('yz');
 });

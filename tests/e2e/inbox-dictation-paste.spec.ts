@@ -18,9 +18,10 @@
  * it, and words selected in a file to comment on keep their toolbar. With
  * image paste (#1953, `compose/paste.ts`): an image pasted after a pick
  * attaches once to the reply box, and text is still inserted once. And
- * Chrome 155-156's dropped paste (pasteInsert.ts): with the browser's own
- * insertion cancelled, the page still inserts each dictation once, as an
- * undo step, into the reply box, search and compose.
+ * Chrome 155-156's dropped paste (pasteInsert.ts, forced on here): with the
+ * browser's own insertion cancelled, the page still inserts each dictation
+ * once, as an undo step, into the reply box, search and compose; on an engine
+ * without the bug the browser's own paste is kept.
  *
  * Build the binary first (see inbox.spec.ts), then `bun run test:e2e:inbox`.
  */
@@ -32,6 +33,7 @@ import { join, resolve } from 'node:path';
 import { SimAgent, scratchProject } from '../../scripts/inbox-sim';
 import { inboxScratch, rememberInboxOf, removeInboxScratch } from './inbox-scratch';
 import { NO_BROWSER } from '../helpers/no-browser';
+import { FORCE_PLAIN_TEXT_PASTE_FLAG } from '../../packages/ui/utils/pasteInsert';
 
 const repo = resolve(__dirname, '../..');
 const binary = resolve(process.env.PLANNOTATOR_E2E_BINARY ?? join(repo, '.local/plannotator'));
@@ -355,29 +357,35 @@ test('text selected in a file to comment on: the paste is not taken to the reply
 /**
  * Chrome 155-156 on macOS (pasteInsert.ts): after a dictation app's synthetic ⌘V the `paste` event
  * carries the words, but the browser's own insertion is skipped. Simulated here by cancelling the
- * browser's `insertFromPaste` beforeinput, which is exactly the insertion Chrome drops. The page's
- * own insertion (execCommand's `insertText`, which fires `input` and no `beforeinput`) is what
- * lands. Every `beforeinput` and `input` is recorded as `<type>:<inputType>`.
+ * browser's `insertFromPaste` beforeinput (`drop`), which is exactly the insertion Chrome drops. The
+ * workaround runs only on Chromium 155 and 156 on macOS, so `force` turns it on in this Chromium
+ * (the window flag pasteInsert.ts reads). The page's own insertion (execCommand's `insertText`,
+ * which fires `input` and no `beforeinput`) is what lands. Every `beforeinput` and `input` is
+ * recorded as `<type>:<inputType>`.
  */
-async function dropBrowserPasteInsertion(on: Page, drop = true): Promise<void> {
-  await on.addInitScript((dropIt) => {
-    const seen: string[] = [];
-    (window as unknown as { __pasteInputs: string[] }).__pasteInputs = seen;
-    const record = (event: Event) => {
-      const input = event as InputEvent;
-      seen.push(`${input.type}:${input.inputType}`);
-      if (dropIt && input.type === 'beforeinput' && input.inputType === 'insertFromPaste') input.preventDefault();
-    };
-    window.addEventListener('beforeinput', record, true);
-    window.addEventListener('input', record, true);
-  }, drop);
+async function recordPasteInputs(on: Page, { drop, force }: { drop: boolean; force: boolean }): Promise<void> {
+  await on.addInitScript(
+    ({ dropIt, forceIt, flag }) => {
+      if (forceIt) (window as unknown as Record<string, unknown>)[flag] = true;
+      const seen: string[] = [];
+      (window as unknown as { __pasteInputs: string[] }).__pasteInputs = seen;
+      const record = (event: Event) => {
+        const input = event as InputEvent;
+        seen.push(`${input.type}:${input.inputType}`);
+        if (dropIt && input.type === 'beforeinput' && input.inputType === 'insertFromPaste') input.preventDefault();
+      };
+      window.addEventListener('beforeinput', record, true);
+      window.addEventListener('input', record, true);
+    },
+    { dropIt: drop, forceIt: force, flag: FORCE_PLAIN_TEXT_PASTE_FLAG },
+  );
 }
 const pasteInputs = (on: Page) => on.evaluate(() => (window as unknown as { __pasteInputs: string[] }).__pasteInputs.splice(0));
 
 test('Chrome 155-156 dropping the paste: the reply box, search and compose still get every dictation, once', async () => {
   const p = await context.newPage();
   try {
-    await dropBrowserPasteInsertion(p);
+    await recordPasteInputs(p, { drop: true, force: true });
     await p.goto(`${url}#thread=${threadId}`);
     // The simulation is real: a field the page leaves native gets nothing.
     await p.evaluate(() => {
@@ -437,10 +445,10 @@ test('Chrome 155-156 dropping the paste: the reply box, search and compose still
   }
 });
 
-test('a normal Chrome: a dictation is inserted exactly once (the page inserts, the browser does not too)', async () => {
+test('the workaround on, the bug not hit: a dictation is inserted exactly once (the page inserts, the browser does not too)', async () => {
   const p = await context.newPage();
   try {
-    await dropBrowserPasteInsertion(p, false); // only records the insertions
+    await recordPasteInputs(p, { drop: false, force: true });
     await p.goto(`${url}#thread=${threadId}`);
     await p.locator('.ib-pfoot').getByRole('button', { name: 'Reply' }).click();
     const box = p.locator('section.ib-pane .ib-rbox textarea');
@@ -452,6 +460,24 @@ test('a normal Chrome: a dictation is inserted exactly once (the page inserts, t
     await p.waitForTimeout(200);
     await expect(box).toHaveValue('Once.');
     expect(await pasteInputs(p)).toEqual(['input:insertText']);
+  } finally {
+    await p.close();
+  }
+});
+
+test('an engine without the bug (this Chromium is neither 155 nor 156): the browser pastes, the page does not', async () => {
+  const p = await context.newPage();
+  try {
+    await recordPasteInputs(p, { drop: false, force: false });
+    await p.goto(`${url}#thread=${threadId}`);
+    await p.locator('.ib-pfoot').getByRole('button', { name: 'Reply' }).click();
+    const box = p.locator('section.ib-pane .ib-rbox textarea');
+    await expect(box).toBeFocused();
+    await box.fill('');
+    await pasteInputs(p);
+    await dictate(p, 'Native.');
+    await expect(box).toHaveValue('Native.');
+    expect(await pasteInputs(p)).toEqual(['beforeinput:insertFromPaste', 'input:insertFromPaste']);
   } finally {
     await p.close();
   }
