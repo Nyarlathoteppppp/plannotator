@@ -9,18 +9,12 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { CollapsibleEdge, ResizeHandle } from "./CollapsibleEdge";
 import { useResizablePanel } from "./useResizablePanel";
-import { PANE_GUTTERS } from "../stack";
+import { paneGutters } from "../stack";
 
 /** The list's width beside a thread before it was resizable: the floor, so it never gets narrower than it was. */
 export const LIST_COLUMN_MIN = 380;
 /** The room the thread pane keeps beside a widened list. */
 export const READING_PANE_MIN = 480;
-/**
- * What the edge keeps free of `.ib-main` (its width includes the gutters):
- * the reading pane's room plus the three gutters, as inbox.css's
- * `max-width: calc(100% - 480px - var(--ib-gutter))` does.
- */
-export const READING_PANE_RESERVE = READING_PANE_MIN + PANE_GUTTERS;
 export const LIST_COLUMN_WIDTH_KEY = "plannotator-inbox-list-width";
 
 /**
@@ -44,7 +38,8 @@ export function ListColumnEdge({ controls }: { controls?: string }) {
 		minWidth: LIST_COLUMN_MIN,
 		// No cap of its own: the thread pane's minimum is the only limit.
 		maxWidth: Number.POSITIVE_INFINITY,
-		reserveViewport: READING_PANE_RESERVE,
+		// The floating panes' gutters, when the Soft panes switch is on (inbox.css: max-width: calc(100% - 480px - var(--ib-gutter))).
+		reserveViewport: READING_PANE_MIN + paneGutters(),
 		container,
 		side: "left",
 		apply: (w) => {
