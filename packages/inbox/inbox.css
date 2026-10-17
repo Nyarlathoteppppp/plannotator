@@ -115,7 +115,7 @@
   --ib-q-raise-mfg: var(--ib-soft-quiet) var(--ib-raise-mfg-soft);
   --ib-raise-fg: var(--ib-q-raise-fg, var(--ib-raise-fg-keep));
   --ib-raise-mfg: var(--ib-q-raise-mfg, var(--ib-raise-mfg-keep));
-  /* A Sent or Quiet row's subject (Soft steps it back; today only Sent's is). Used as var(--ib-quiet-dim, currentcolor). */
+  /* A Sent or Quiet row's subject (Soft steps it back; today only Sent's is). Used as var(--ib-quiet-dim, <today's>). */
   --ib-quiet-dim: var(--ib-soft-quiet) var(--muted-foreground);
 
   /* The selected row's pill: a neutral fill (Soft) or the accent's tint (today; dark here, light below). */
@@ -595,8 +595,10 @@ button.ib-band:hover { background: var(--ib-band-hover-s, var(--ib-band)); }
 .ib-row, .ib-nrow { border-bottom-color: var(--ib-row-line); }
 :is(.ib-row, .ib-nrow, button.ib-drow)::before { border-radius: var(--ib-r10-s, 8px); }
 :is(.ib-row, .ib-nrow, button.ib-drow):hover::before { background: var(--ib-hover) !important; }
-/* Rows that wait on nobody (Sent, Quiet): the subject steps back. */
-:is(.ib-row, .ib-nrow)[data-section="quiet"] :is(.ib-s, .ib-l2 .ib-s) { color: var(--ib-quiet-dim, currentcolor); }
+/* Rows that wait on nobody (Sent, Quiet): the subject steps back. Off, each row keeps today's colour: a wide
+   row's subject takes its row's, a narrow row's is quiet text (`.ib-nrow .ib-l2 .ib-s`). */
+.ib-row[data-section="quiet"] .ib-s { color: var(--ib-quiet-dim, currentcolor); }
+.ib-nrow[data-section="quiet"] .ib-l2 .ib-s { color: var(--ib-quiet-dim, var(--muted-foreground)); }
 /* The thread chip (switch --ib-soft-chip): a quiet pill in the window's own face (a name, not code; audit 4), or
    today's outlined monospace tag. Its weight and fill have no today's declaration, so off they fall back to none. */
 .pn-inbox {
