@@ -123,9 +123,8 @@ button.ib-mut { border-radius: 6px; }
 /* shell */
 .ib-shell { display: flex; height: 100%; width: 100%; overflow: hidden; }
 .ib-shell > * { min-height: 0; overflow: hidden; }
-.ib-side { --muted-foreground: var(--ib-side-mfg); --foreground: var(--ib-side-fg); color: var(--foreground); background: var(--ib-ground); display: flex; flex-direction: column; padding: 14px 0 12px 12px; }
+.ib-side { --muted-foreground: var(--ib-side-mfg); --foreground: var(--ib-side-fg); color: var(--foreground); background: var(--ib-ground); display: flex; flex-direction: column; padding: 14px 10px 12px; }
 /* Floating (the peek, a phone's sheet), the sidebar keeps room on its right; docked, the panes' gutter is that room. */
-.ib-peek-in > .ib-side, .ib-sb-sheet-in > .ib-side { padding-right: 10px; }
 .ib-brand { display: flex; align-items: center; gap: 9px; padding: 0 6px 10px; }
 /* Workspaces' TaterSpriteSidebar: 24 frames of 77x88 at 2x shown 44 px high
    (a 924 px strip), mirrored, 3.5 s per loop; the first frame under reduced motion. */
@@ -182,10 +181,10 @@ button.ib-mut { border-radius: 6px; }
 .ib-projrow[data-held] .ib-name { opacity: 0.7; }
 /* The menu: the Inbox's dropdown (the search chips' .ib-sp-menu), on Base UI Menu / ContextMenu. */
 .ib-pm-pos { z-index: 80; outline: none; }
-.ib-pm { min-width: 200px; padding: 5px; border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: var(--ib-float-shadow); transform-origin: var(--transform-origin, top left); animation: ib-pm-in 120ms cubic-bezier(0.23, 1, 0.32, 1); outline: none; font-size: 13px; }
+.ib-pm { min-width: 184px; padding: 4px; border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: var(--ib-float-shadow); transform-origin: var(--transform-origin, top left); animation: ib-pm-in 120ms cubic-bezier(0.23, 1, 0.32, 1); outline: none; font-size: 13px; }
 @keyframes ib-pm-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .ib-pm { animation: none; } }
-.ib-pmi { display: flex; align-items: center; gap: 9px; width: 100%; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 13.5px; white-space: nowrap; text-align: left; cursor: default; outline: none; user-select: none; }
+.ib-pmi { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 8px; border-radius: 8px; font-size: 13px; white-space: nowrap; text-align: left; cursor: default; outline: none; user-select: none; }
 .ib-pmi .ib-ic { width: 15px; height: 15px; color: var(--muted-foreground); flex: none; }
 .ib-pmi[data-highlighted] { background: var(--ib-hover); }
 .ib-pmi:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
@@ -226,7 +225,7 @@ button.ib-mut { border-radius: 6px; }
 /* Copy connect prompt (approval inbox-connect-row, 1b): an outlined pill as wide as its content,
    the four agent marks in their own colours, then the label. In a sidebar narrower than its
    content (the 200 px minimum) the label ends in an ellipsis; the marks never shrink. */
-.pn-inbox .ib-cpill { display: flex; align-items: center; gap: 9px; box-sizing: border-box; width: max-content; max-width: 100%; height: 34px; margin: 4px 0; padding: 0 12px 0 10px; border: 0; border-radius: 999px; background: color-mix(in oklch, var(--card) 70%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 45%, transparent); color: var(--foreground); font-size: 14px; text-align: left; flex-shrink: 0; transition: background-color 140ms ease-out; }
+.pn-inbox .ib-cpill { display: flex; align-items: center; gap: 9px; box-sizing: border-box; width: max-content; max-width: 100%; height: 34px; margin: 4px 0; padding: 0 12px 0 10px; border: 1px solid transparent; border-radius: 999px; background: color-mix(in oklch, var(--card) 70%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 45%, transparent); color: var(--foreground); font-size: 14px; text-align: left; flex-shrink: 0; transition: background-color 140ms ease-out; }
 .pn-inbox .ib-cpill:hover { background: var(--card); }
 .pn-inbox .ib-cpill:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .ib-cpill-ags { display: inline-flex; gap: 3px; flex: none; color: var(--foreground); }
@@ -2175,9 +2174,9 @@ details.ib-wn-skipped[open] > summary { margin-bottom: 6px; }
 
 /* ───────────── Search (the approved "inbox-search" design; the palette after Workspaces' ui/command.tsx) ───────────── */
 /* The sidebar's Search entry: field-shaped, under the Tater mark, above Inbox. No key hint (no key opens it). */
-.pn-inbox .ib-sp-entry { display: flex; align-items: center; gap: 8px; height: 32px; margin: 0 0 8px; padding: 0 8px 0 10px; width: 100%; flex: none; border-radius: 10px; border: 0; background: color-mix(in oklch, var(--card) 70%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 45%, transparent); color: var(--muted-foreground); font-size: 13.5px; text-align: left; }
+.pn-inbox .ib-sp-entry { display: flex; align-items: center; gap: 8px; height: 32px; margin: 0 0 8px; padding: 0 9px; width: 100%; flex: none; border-radius: 10px; border: 1px solid transparent; background: color-mix(in oklch, var(--card) 70%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 45%, transparent); color: var(--muted-foreground); font-size: 13.5px; text-align: left; }
 .pn-inbox .ib-sp-entry:hover { color: var(--foreground); background: var(--card); }
-.pn-inbox .ib-sp-entry .ib-kbd { border: 0; background: color-mix(in oklch, var(--muted) 80%, transparent); border-radius: 5px; padding: 1px 5px; }
+.pn-inbox .ib-sp-entry .ib-kbd { border-color: transparent; background: color-mix(in oklch, var(--muted) 80%, transparent); border-radius: 5px; }
 .pn-inbox .ib-sp-entry svg.ib-ic { width: 15px; height: 15px; }
 /* ⌘K / Ctrl K, the one Inbox shortcut, at the entry's end. */
 .pn-inbox .ib-sp-entry .ib-sp-hint { margin-left: auto; }
@@ -2301,7 +2300,7 @@ dialog.ib-sp::backdrop { background: oklch(0 0 0 / 0.45); }
 /* The sidebar's Search entry and, at its right, the compose icon (32 px): one row, the entry keeps its look. */
 .ib-sp-entryrow { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; flex: none; }
 .pn-inbox .ib-sp-entryrow .ib-sp-entry { margin: 0; flex: 1; min-width: 0; width: auto; }
-.pn-inbox .ib-compose-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; border: 0; background: color-mix(in oklch, var(--card) 70%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 45%, transparent); color: var(--muted-foreground); }
+.pn-inbox .ib-compose-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 10px; border: 1px solid transparent; background: color-mix(in oklch, var(--card) 70%, transparent); box-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 45%, transparent); color: var(--muted-foreground); }
 .pn-inbox .ib-compose-btn:hover { color: var(--foreground); background: var(--card); }
 .pn-inbox .ib-compose-btn svg.ib-ic { width: 16px; height: 16px; }
 /* A phone's list header (and the Drafts page): the compose icon beside search. */
