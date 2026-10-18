@@ -19,6 +19,7 @@ configurePlannotatorUI({
   storageBackend,              // where settings persist
   identityProvider,           // who the current user is
   imageSrcResolver,           // how image paths resolve to URLs
+  uploadTransport,             // where pasted/attached images upload to
   docPreviewFetcher,
   fileTreeBackend,
   draftTransport,
@@ -34,6 +35,8 @@ configurePlannotatorUI({
   identityGenerator,           // sync generator behind the default "tater" name (no identityProvider)
   alertIconRenderer,           // (name) => ReactNode | null for a GitHub alert title line's <!-- icon: name --> (default: null, the type's icon)
   fenceTheme,                  // (colorTheme, mode) => Shiki theme name | undefined for code fences (default: SHIKI_THEME_MAP, else pierre-dark/light)
+  componentTooltips,           // true: ui's own hover text (components/HostTitle) draws as ui's Tooltip, not a native title (ui 0.53.0; default false)
+  loadSettingsFromBackend,     // true: re-hydrate settings from your (synchronous) storageBackend after install, applied last
 });
 ```
 
