@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findQuestionBlocks, parseQuestionBlock, questionKey } from "./question-block";
+import { findQuestionBlocks, indexQuestionBlocks, parseQuestionBlock, questionKey } from "./question-block";
 
 const BODY = (decisionLine: string | null, where: "under" | "end" = "under") => {
   const lines = ["Where should losing conflict versions be kept?", ""];
@@ -157,5 +157,36 @@ describe("findQuestionBlocks", () => {
     const found = findQuestionBlocks("---\ntitle: x\n---\n\n:::question\nWhich?\n:::\n");
     expect(found[0].startLine).toBe(5);
     expect(found[0].text).toBe(":::question\nWhich?\n:::");
+  });
+});
+
+describe("{ decisionLines: false } (a host with no decisions)", () => {
+  const LINK_LINE = "Decision: [Keep local copies](https://x.test/d/1)";
+
+  test("reads a `Decision:` line as context and carries neither field", () => {
+    for (const line of ["Decision: when answered", LINK_LINE]) {
+      const q = parseQuestionBlock("question", BODY(line), { decisionLines: false })!;
+      expect(q.decisionOnAnswer).toBeUndefined();
+      expect(q.decision).toBeUndefined();
+      expect(q.context).toContain(line);
+      expect(q.context).toContain("Last-write-wins");
+    }
+  });
+
+  test("keeps the prompt, choices and key the default parse gives", () => {
+    const flagged = parseQuestionBlock("question", BODY("Decision: when answered"))!;
+    const plain = parseQuestionBlock("question", BODY("Decision: when answered"), { decisionLines: false })!;
+    expect(plain.key).toBe(flagged.key);
+    expect(plain.prompt).toBe(flagged.prompt);
+    expect(plain.choices).toEqual(flagged.choices);
+    expect(plain.recommendation).toBe(flagged.recommendation);
+  });
+
+  test("indexQuestionBlocks passes the option through", () => {
+    const block = { id: "b1", type: "directive", directiveKind: "question", content: BODY("Decision: when answered"), startLine: 1 };
+    expect(indexQuestionBlocks([block])[0]!.question.decisionOnAnswer).toBe(true);
+    const [indexed] = indexQuestionBlocks([block], { decisionLines: false });
+    expect(indexed!.question.decisionOnAnswer).toBeUndefined();
+    expect(indexed!.question.context).toContain("Decision: when answered");
   });
 });
