@@ -12,16 +12,16 @@ import { shownProjects, type ProjectAction } from '../projectMenu';
 import { ProjectRow } from './ProjectRow';
 import { useInboxTheme } from '../theme';
 import { TaterMark } from './TaterMark';
+import { ProjectTip } from './ProjectRow';
+import { Tip } from './Tip';
 import { UpdateButton } from './Updates';
 import { openSearchAriaKeys, openSearchHint } from '../search/searchShortcut';
 
 export interface SidebarProps {
-  page: 'inbox' | 'settings' | 'decisions' | 'whats-new' | 'drafts';
+  page: 'inbox' | 'settings' | 'whats-new' | 'drafts';
   projectId: string | null;
   /** Rows waiting on the person, all projects. */
   inboxCount: number;
-  /** Questions that record a decision once answered and sent, all projects. */
-  decisionsCount: number;
   projects: readonly ProjectFolder[];
   /** Rows waiting on the person, per project id. */
   projectCounts: ReadonlyMap<string, number>;
@@ -49,7 +49,6 @@ export interface SidebarProps {
   onInbox: () => void;
   onProject: (projectId: string) => void;
   onSettings: () => void;
-  onDecisions: () => void;
   onUpdate: () => void;
   onWhatsNew: (version: string) => void;
   /**
@@ -139,21 +138,22 @@ export function Sidebar(props: SidebarProps) {
           </kbd>
         </button>
         {props.onCompose && (
-          <button
-            type="button"
-            className="ib-compose-btn"
-            data-open-compose=""
-            aria-label="New message"
-            title="New message"
-            aria-haspopup="dialog"
-            onClick={(event) => {
-              const opener = event.currentTarget;
-              setOpenMobile(false);
-              props.onCompose?.(opener);
-            }}
-          >
-            <Icon name="compose" />
-          </button>
+          <Tip content="New message">
+            <button
+              type="button"
+              className="ib-compose-btn"
+              data-open-compose=""
+              aria-label="New message"
+              aria-haspopup="dialog"
+              onClick={(event) => {
+                const opener = event.currentTarget;
+                setOpenMobile(false);
+                props.onCompose?.(opener);
+              }}
+            >
+              <Icon name="compose" />
+            </button>
+          </Tip>
         )}
         </div>
       )}
@@ -167,17 +167,6 @@ export function Sidebar(props: SidebarProps) {
         <Icon name="inbox" />
         Inbox
         {!firstRun && props.inboxCount > 0 && <span className="ib-n">{formatCount(props.inboxCount)}</span>}
-      </button>
-      <button
-        type="button"
-        className={`ib-nav${props.page === 'decisions' ? ' ib-on' : ''}`}
-        onClick={pick(props.onDecisions)}
-        disabled={firstRun}
-        aria-current={props.page === 'decisions' ? 'page' : undefined}
-      >
-        <Icon name="diamond" />
-        Decisions
-        {props.decisionsCount > 0 && <span className="ib-n">{formatCount(props.decisionsCount)}</span>}
       </button>
       {(props.draftsCount ?? 0) > 0 && props.onDrafts && (
         <button
@@ -207,17 +196,17 @@ export function Sidebar(props: SidebarProps) {
             const on = props.page === 'inbox' && props.projectId === project.id;
             if (!props.onProjectAction) {
               return (
-                <button
-                  key={project.id}
-                  type="button"
-                  className={`ib-proj${n === 0 ? ' ib-proj-quiet' : ''}${on ? ' ib-on' : ''}`}
-                  onClick={pick(() => props.onProject(project.id))}
-                  aria-current={on ? 'page' : undefined}
-                  title={project.root}
-                >
-                  <span className="ib-name" dir="auto">{project.name}</span>
-                  {n > 0 && <span className="ib-n">{formatCount(n)}</span>}
-                </button>
+                <ProjectTip key={project.id} name={project.name} root={project.root}>
+                  <button
+                    type="button"
+                    className={`ib-proj${n === 0 ? ' ib-proj-quiet' : ''}${on ? ' ib-on' : ''}`}
+                    onClick={pick(() => props.onProject(project.id))}
+                    aria-current={on ? 'page' : undefined}
+                  >
+                    <span className="ib-name" dir="auto">{project.name}</span>
+                    {n > 0 && <span className="ib-n">{formatCount(n)}</span>}
+                  </button>
+                </ProjectTip>
               );
             }
             return (
@@ -352,8 +341,10 @@ function ThemeToggle() {
   const next = shown === 'dark' ? 'light' : 'dark';
   const label = `Switch to ${next} mode`;
   return (
-    <button type="button" className="ib-theme-tg" aria-label={label} title={label} data-theme-toggle={shown} onClick={flip}>
-      <Icon name={next === 'light' ? 'sun' : 'moon'} />
-    </button>
+    <Tip content={label}>
+      <button type="button" className="ib-theme-tg" aria-label={label} data-theme-toggle={shown} onClick={flip}>
+        <Icon name={next === 'light' ? 'sun' : 'moon'} />
+      </button>
+    </Tip>
   );
 }

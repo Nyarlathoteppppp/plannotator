@@ -28,7 +28,7 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
           "type": "string"
         },
         "thread": {
-          "description": "A short thread name (1-120 characters, one line). Without it, your messages join your session's open thread in this project (a new one the first time, or once the person resolved it; a thread keeps its first subject). With it, the same name in this project is the same open thread, across sessions (compared without case, spacing or invisible characters). Use it to split separate work, or to join another session's thread. Ignored with reply_to.",
+          "description": "A short thread name (1-120 characters, one line). Without it, your messages join your session's open thread in this project (a new one the first time, or once the person resolved it; a thread keeps its first subject). With it, the same name in this project is the same open thread, across sessions (compared without case, spacing or invisible characters). Use it to split separate work, or to join another session's thread. Ignored with reply_to, with one exception: in a thread the person started (read_thread or wait_for_reply says name_this_thread: true, or the Inbox's message asks you to name it), your reply's `thread` names that thread, once: a few words saying what it is about, not the name of another open thread in the project.",
           "type": "string"
         },
         "reply_to": {
@@ -74,7 +74,7 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
   },
   {
     "name": "read_thread",
-    "description": "Read one Inbox thread (thread_id or message_id): every message with its questions and the person's answers. A message the person marked 👍 Looks good carries `ack` (they read it and need nothing more; nothing was sent). Without an id, list this project's threads, newest activity first, each with its section in the person's list: only the ones you sent in unless asked_by is \"anyone\", and only open ones unless include_resolved.",
+    "description": "Read one Inbox thread (thread_id or message_id): every message with its questions and the person's answers. A message the person marked 👍 Looks good carries `ack` (they read it and need nothing more; no reply is needed). Without an id, list this project's threads, newest activity first, each with its section in the person's list: only the ones you sent in unless asked_by is \"anyone\", and only open ones unless include_resolved.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -174,78 +174,6 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
     }
   },
   {
-    "name": "list_decisions",
-    "description": "List the decisions that hold in this project (state \"current\", the default), or the replaced, retired or all of them, oldest first. Each has text, reason, source (an answer the person sent, an agent's record_decision, or the person's own words), state, version and, for a replaced one, replacement_id.",
-    "inputSchema": {
-      "type": "object",
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "properties": {
-        "project_path": {
-          "description": "Absolute path of the repository or folder you work in; the thread lands in that project's row. The `plannotator inbox mcp` shim fills it from its working folder.",
-          "type": "string"
-        },
-        "state": {
-          "description": "Default \"current\".",
-          "type": "string",
-          "enum": [
-            "current",
-            "replaced",
-            "retired",
-            "all"
-          ]
-        },
-        "agent_session": {
-          "description": "Your session id. The `plannotator inbox mcp` shim fills it. send_message joins your session's thread by it; read_thread's asked_by \"me\" and wait_for_reply without a thread match on it.",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false
-    }
-  },
-  {
-    "name": "record_decision",
-    "description": "Record a decision that now holds in this project, one you settled with the person (it shows on their Decisions page as recorded by you). text is the decision as one statement, e.g. \"Webhooks are verified before any database write.\"; reason says why. To have the person's answer to a question recorded instead, write `Decision: when answered` in the question block.",
-    "inputSchema": {
-      "type": "object",
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "properties": {
-        "text": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The decision, one statement."
-        },
-        "reason": {
-          "description": "Why it holds.",
-          "type": "string"
-        },
-        "project_path": {
-          "description": "Absolute path of the repository or folder you work in; the thread lands in that project's row. The `plannotator inbox mcp` shim fills it from its working folder.",
-          "type": "string"
-        },
-        "idempotency_key": {
-          "description": "Any unique string; recording again with the same key answers the first decision.",
-          "type": "string"
-        },
-        "agent_session": {
-          "description": "Your session id. The `plannotator inbox mcp` shim fills it. send_message joins your session's thread by it; read_thread's asked_by \"me\" and wait_for_reply without a thread match on it.",
-          "type": "string"
-        },
-        "agent_name": {
-          "description": "How the person sees you, e.g. \"Claude Code\".",
-          "type": "string"
-        },
-        "agent_host": {
-          "description": "Your agent host, e.g. claude-code, codex, cursor.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "additionalProperties": false
-    }
-  },
-  {
     "name": "submit_guide",
     "description": "Send the person a guided review of a code change. It lands in the Plannotator Inbox as a message with a \"Guided review\" card that opens in Plannotator's guide viewer. Pass `guide` (the shape get_guide_brief gives) and `patch` (the exact unified diff it describes), or `snapshot` (a complete Plannotator guide snapshot). Every file a section names must be in the patch, in one section only; a refusal names the file. Files you leave out show under \"Everything else\". `body` is your note above the card (default: the guide's intent). thread, reply_to, supersedes and idempotency_key work as in send_message; the person's answer comes back through wait_for_reply.\n\nExample: get_guide_brief's `example` is a call that works as it is.",
     "inputSchema": {
@@ -299,7 +227,7 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
           "type": "string"
         },
         "thread": {
-          "description": "A short thread name (1-120 characters, one line). Without it, your messages join your session's open thread in this project (a new one the first time, or once the person resolved it; a thread keeps its first subject). With it, the same name in this project is the same open thread, across sessions (compared without case, spacing or invisible characters). Use it to split separate work, or to join another session's thread. Ignored with reply_to.",
+          "description": "A short thread name (1-120 characters, one line). Without it, your messages join your session's open thread in this project (a new one the first time, or once the person resolved it; a thread keeps its first subject). With it, the same name in this project is the same open thread, across sessions (compared without case, spacing or invisible characters). Use it to split separate work, or to join another session's thread. Ignored with reply_to, with one exception: in a thread the person started (read_thread or wait_for_reply says name_this_thread: true, or the Inbox's message asks you to name it), your reply's `thread` names that thread, once: a few words saying what it is about, not the name of another open thread in the project.",
           "type": "string"
         },
         "reply_to": {

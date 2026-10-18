@@ -46,8 +46,6 @@ const ASK = [
   ':::question',
   LONG_PROMPT,
   '',
-  'Decision: when answered',
-  '',
   '- [ ] Pagefind',
   '- [ ] Algolia DocSearch',
   '',
@@ -246,10 +244,14 @@ test('the read run folds: first and last two as lines, the middle behind "3 earl
   await expect(pane().locator('[data-middle-fold]')).toHaveText('3 earlier messages');
   // Every question answered: the line shows the answers, not the first words.
   const first = article(ids[0]!);
-  // A long prompt is cut at a word, so the answer stays on the line; the whole prompt is the line's title.
+  // A long prompt is cut at a word, so the answer stays on the line; the whole prompt is the line's tooltip.
   const answers = first.locator('[data-snippet="answers"]');
   await expect(answers).toHaveText('Which search index should the docs site… → Pagefind · Which sections go in the index → Guides, API reference');
-  await expect(answers).toHaveAttribute('title', `${LONG_PLAIN}: Pagefind; Which sections go in the index: Guides, API reference`);
+  // The whole answers are its component tooltip, never a native title.
+  await expect(answers).not.toHaveAttribute('title', /./);
+  await answers.hover();
+  await expect(world.page.locator('[data-side].bg-popover')).toHaveText(`${LONG_PLAIN}: Pagefind; Which sections go in the index: Guides, API reference`);
+  await world.page.mouse.move(1, 1);
   const line = (await answers.boundingBox())!;
   const answer = (await answers.locator('b').first().boundingBox())!;
   expect(answer.x).toBeGreaterThanOrEqual(line.x);
@@ -338,7 +340,7 @@ test('keys: n goes to the first new message, k and j move between messages; neve
   await pane().locator('.ib-pfoot').getByRole('button', { name: 'Cancel' }).click();
 });
 
-test("Expand all gives back today's fully open thread; scrolled up, the pill points down to the new message", async () => {
+test("Expand all gives back today's fully open thread; scrolled up past the new message already read, no pill comes back; n goes down to it", async () => {
   const { page, ids } = world;
   await pane().locator('[data-expand-all]').click();
   await expect(pane().locator('[data-expand-all]')).toHaveText('Fold all');
@@ -348,14 +350,20 @@ test("Expand all gives back today's fully open thread; scrolled up, the pill poi
   await expect(article(ids[0]!).getByText(/^Which search index should the docs site use for its first public release/)).toBeVisible();
   await expect(article(ids[3]!).locator('.ib-body')).toContainText('The plan is close.');
   await pane().locator('.ib-pbody').evaluate((el) => el.scrollTo({ top: 0 }));
+  // The new message has been on screen this visit (the tests above opened and
+  // read it), so scrolling back up above it never brings the pill back (the
+  // owner, 2026-10-16: "Why does this whole 'one new' thing keep showing, even
+  // though I've seen the whole message? Shows when I scroll up."). The pill
+  // pointing down to a message not yet on screen is proved in
+  // inbox-seen-on-sight.spec.ts.
   const pill = pane().locator('[data-new-pill]');
-  await expect(pill).not.toHaveAttribute('data-off', '');
-  await expect(pill).toHaveText('1 new');
+  await page.waitForTimeout(300);
+  await expect(pill).toHaveAttribute('data-off', '');
   await expect(pane().locator('[data-header-subject]')).not.toHaveAttribute('data-on', '');
-  await shot('4-expanded-pill');
-  // A real click where the pill floats (a locator click would scroll the sticky pill's own spot into view first).
-  const box = (await pill.boundingBox())!;
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await shot('4-expanded-scrolled-up');
+  // n still goes down to the first new message.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('n');
   await expect(pane().locator('[data-new-divider]')).toBeInViewport();
   await expect(pill).toHaveAttribute('data-off', '');
   // Fold all: back to lines, the new message's included; the last stays open.

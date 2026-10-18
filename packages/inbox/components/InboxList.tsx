@@ -1,8 +1,9 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { inboxThreadNameKey, type InboxListRow, type InboxListSection } from '@plannotator/core/inbox-types';
-import { Tooltip, TooltipProvider } from '@plannotator/ui/components/Tooltip';
+import type { InboxListRow, InboxListSection } from '@plannotator/core/inbox-types';
+import { threadChipName } from '../threadChip';
 import { agentName, formatCount, questionCount, shortTime } from '../format';
-import { titleIfClipped } from '../clipTitle';
+import { sentRowLine } from '../deliveryLine';
+import { Tip } from './Tip';
 import { AuthorMark, Icon } from '../icons';
 import { ListColumnEdge } from '../shell/ListColumnEdge';
 import { SidebarTrigger, useSidebar } from '../shell/sidebar';
@@ -62,10 +63,15 @@ function badgeOf(row: InboxListRow): string | null {
   return null;
 }
 
-/** The subject cell's words: a Sent row says where its reply is (the agent reads it when it checks). */
+/** The badge's class: its tint names the state (Stopped in the destructive colour, Holds up in the warning one). */
+function badgeClass(row: InboxListRow): string {
+  return row.section === 'stopped' ? 'ib-badge ib-b-stop' : 'ib-badge ib-b-hold';
+}
+
+/** The subject cell's words: a Sent row says where its reply is (queued for a turn, or saved until the agent reads the thread). */
 function subjectOf(row: InboxListRow): string {
   // A thread the person started keeps its own subject in Sent; its count cell says whom it went to.
-  if (row.section === 'sent' && !row.addressee) return `Saved for ${agentName(rowAgent(row))}. It sees it when it checks.`;
+  if (row.section === 'sent' && !row.addressee) return sentRowLine(agentName(rowAgent(row)), row.sent?.wakes);
   return row.subject ?? '(no subject)';
 }
 
@@ -80,41 +86,24 @@ function countOf(row: InboxListRow): string {
   return questionCount(row.questions.open);
 }
 
-/**
- * The thread's name as a chip, unless the subject already starts with it
- * (agents often begin the subject with the thread's name, and the row then
- * said it twice). Compared the way threads are matched (`inboxThreadNameKey`),
- * and only when the name ends where the subject's words do: the subject ends
- * there, or goes on with a space, or with ":", "-", "–" or "—" and a space.
- * So `search` still shows beside "Searchable…", `v2` beside "v2.1 release"
- * and `auth` beside "auth-service down".
- */
+/** The thread's name as a chip, unless the subject already starts with it (`threadChipName`). */
 export function chipName(row: InboxListRow): string | null {
-  if (!row.thread_name) return null;
-  const name = inboxThreadNameKey(row.thread_name);
-  const subject = inboxThreadNameKey(subjectOf(row));
-  if (name && subject.startsWith(name) && /^(?:$|\s|[:\-–—]\s)/u.test(subject.slice(name.length))) return null;
-  return row.thread_name;
-}
-
-/** The text is cut with "…" across (its own overflow): only then is the tooltip worth opening. */
-function isCut(el: Element): boolean {
-  return el.scrollWidth > el.clientWidth + 1;
+  return threadChipName(row.thread_name, subjectOf(row));
 }
 
 /**
  * One line of text the row may cut with "…": ui's tooltip shows it whole on
- * hover (the list's provider sets the delays), only while it is cut. Never a
+ * hover (`Tip`; the window's provider sets the delays), only while it is cut. Never a
  * focus stop, and nothing for a screen reader to add: the row's name already
  * holds the whole text.
  */
 function ClipText({ className, text }: { className: string; text: string }) {
   return (
-    <Tooltip content={text} side="top" wide shouldOpen={isCut}>
+    <Tip content={text} cut>
       <span className={className} dir="auto">
         {text}
       </span>
-    </Tooltip>
+    </Tip>
   );
 }
 
@@ -137,10 +126,12 @@ function SubjectLine({ row }: { row: InboxListRow }) {
       </span>
       {/* The record's 1.1: a thread that carries a guided review says so after its subject. */}
       {row.guide && row.section !== 'sent' && (
-        <span className="ib-att" data-guide-mark="" role="img" aria-label="Guided review" title="Guided review">
-          <Icon name="book" size={13} />
-          <span className="ib-att-l">Guided review</span>
-        </span>
+        <Tip content="Guided review" when={guideLabelHidden}>
+          <span className="ib-att" data-guide-mark="" role="img" aria-label="Guided review">
+            <Icon name="book" size={13} />
+            <span className="ib-att-l">Guided review</span>
+          </span>
+        </Tip>
       )}
     </>
   );
@@ -163,7 +154,7 @@ export const WIDE_ROWS_MIN_LIST_WIDTH = 900;
 function WideRow({ row, selected, filtered, lit, onOpen }: { row: InboxListRow; selected: boolean; filtered: boolean; lit: boolean; onOpen: () => void }) {
   const badge = badgeOf(row);
   const sent = row.section === 'sent';
-  const badgeEl = badge && <span className="ib-badge">{badge}</span>;
+  const badgeEl = badge && <span className={badgeClass(row)}>{badge}</span>;
   return (
     <button
       type="button"
@@ -174,7 +165,7 @@ function WideRow({ row, selected, filtered, lit, onOpen }: { row: InboxListRow; 
       data-section={row.section}
       data-lit={lit ? '' : undefined}
     >
-      {!filtered && <span className="ib-p" dir="auto" data-clip="">{row.project.name}</span>}
+      {!filtered && <ClipText className="ib-p" text={row.project.name} />}
       {!filtered && <span>{badgeEl}</span>}
       <span className="ib-subj">
         {filtered && badgeEl}
@@ -199,20 +190,21 @@ function RowWithAction({ row, onMarkRead, children }: { row: InboxListRow; onMar
     <div className="ib-rw" data-row={row.thread_id}>
       {children}
       {offer && (
-        <button
-          type="button"
-          className="ib-ract"
-          data-row-mark-read=""
-          title={`Mark read (E): out of the top until ${agentName(rowAgent(row))} writes again`}
-          aria-label={`Mark read: ${row.subject ?? '(no subject)'}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            onMarkRead(row);
-          }}
-        >
-          <Icon name="checkCircle" size={15} />
-          Mark read
-        </button>
+        <Tip content={`Mark read (E): out of the top until ${agentName(rowAgent(row))} writes again`}>
+          <button
+            type="button"
+            className="ib-ract"
+            data-row-mark-read=""
+            aria-label={`Mark read: ${row.subject ?? '(no subject)'}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onMarkRead(row);
+            }}
+          >
+            <Icon name="checkCircle" size={15} />
+            Mark read
+          </button>
+        </Tip>
       )}
     </div>
   );
@@ -232,12 +224,12 @@ function NarrowRow({ row, selected, filtered, lit, onOpen }: { row: InboxListRow
       data-lit={lit ? '' : undefined}
     >
       <div className="ib-l1">
-        <span className="ib-p" dir="auto" data-clip="">{filtered ? agentName(rowAgent(row)) : row.project.name}</span>
+        <ClipText className="ib-p" text={filtered ? agentName(rowAgent(row)) : row.project.name} />
         {count && <span className={`ib-c${row.section === 'quiet' ? ' ib-qlabel' : ''}`}>{count}</span>}
         <span className={`ib-t${count ? '' : ' ib-alone'}`}>{shortTime(row.last_at)}</span>
       </div>
       <div className="ib-l2">
-        {badge && <span className="ib-badge">{badge}</span>}
+        {badge && <span className={badgeClass(row)}>{badge}</span>}
         <AuthorMark author={rowAgent(row)} />
         <SubjectLine row={row} />
       </div>
@@ -268,13 +260,13 @@ function PhoneRow({ row, filtered, lit, onOpen }: { row: InboxListRow; filtered:
     >
       <span className="ib-m1">
         <AuthorMark author={rowAgent(row)} />
-        <span className="ib-p" dir="auto" data-clip="">{filtered ? agentName(rowAgent(row)) : row.project.name}</span>
+        <ClipText className="ib-p" text={filtered ? agentName(rowAgent(row)) : row.project.name} />
         <span className="ib-t">{shortTime(row.last_at)}</span>
       </span>
       <span className="ib-m2" dir="auto">{subjectOf(row)}</span>
       {(badge || chip || count || guide) && (
         <span className="ib-m3">
-          {badge && <span className="ib-badge">{badge}</span>}
+          {badge && <span className={badgeClass(row)}>{badge}</span>}
           {chip && (
             <span className="ib-key">
               <span className="ib-keyt" dir="auto">{chip}</span>
@@ -282,7 +274,7 @@ function PhoneRow({ row, filtered, lit, onOpen }: { row: InboxListRow; filtered:
           )}
           {count && <span className={`ib-c${row.section === 'quiet' ? ' ib-qlabel' : ''}`}>{count}</span>}
           {guide && (
-            <span className="ib-att" data-guide-mark="" role="img" aria-label="Guided review" title="Guided review">
+            <span className="ib-att" data-guide-mark="" role="img" aria-label="Guided review">
               <Icon name="book" size={13} />
               <span className="ib-att-l">Guided review</span>
             </span>
@@ -320,20 +312,19 @@ export function InboxList(props: InboxListProps) {
   return (
     <section
       ref={listRef}
-      onPointerOver={titleIfClipped}
       id={columnId}
       className={`ib-listcol${props.narrow ? ' ib-narrow' : ''}${resizable ? ' ib-resizable' : ''}${props.filtered ? ' ib-noproj' : ''}`}
       aria-label={props.title}
     >
       <div className="ib-lhead">
         <SidebarTrigger />
-        <h1 dir="auto" data-clip="">
-          {props.title}
-        </h1>
+        <Tip content={props.title} cut>
+          <h1 dir="auto">{props.title}</h1>
+        </Tip>
         {props.path && (
-          <span className="ib-path" data-clip="">
-            {props.path}
-          </span>
+          <Tip content={props.path} cut>
+            <span className="ib-path">{props.path}</span>
+          </Tip>
         )}
         {props.onSearch && (
           <button type="button" className="ib-lhead-search" data-open-search="" aria-label="Search" aria-haspopup="dialog" onClick={(event) => props.onSearch?.(event.currentTarget)}>
@@ -346,8 +337,6 @@ export function InboxList(props: InboxListProps) {
           </button>
         )}
       </div>
-      {/* One provider for every row's tooltip: 150 ms to open, and the next one at once within 400 ms. */}
-      <TooltipProvider delayDuration={150} skipDelayDuration={400} disableHoverableContent>
         <div className="ib-lbody" ref={bodyRef}>
           {props.ask}
           {props.notice && (
@@ -392,8 +381,13 @@ export function InboxList(props: InboxListProps) {
             );
           })}
         </div>
-      </TooltipProvider>
       {resizable && <ListColumnEdge controls={columnId} />}
     </section>
   );
+}
+
+/** The guided review mark drops its label to its icon when the row is short of room: only then does it need a tooltip. */
+function guideLabelHidden(trigger: Element): boolean {
+  const label = trigger.querySelector<HTMLElement>('.ib-att-l');
+  return !label || label.offsetWidth === 0 || getComputedStyle(label).display === 'none';
 }

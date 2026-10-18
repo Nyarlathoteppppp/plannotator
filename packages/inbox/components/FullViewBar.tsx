@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useId, useImperativeHandle, useLayoutEffect, use
 import { Tooltip } from '@plannotator/ui/components/Tooltip';
 import { formatShortcutBindingText, formatShortcutBindingTokens } from '@plannotator/ui/shortcuts';
 import { Icon } from '../icons';
+import { Tip as HoverTip } from './Tip';
 
 /**
  * The toolbar of full screen (approval "inbox-one-fullscreen", Drawer): the
@@ -291,25 +292,26 @@ export const FullViewBar = forwardRef<FullViewBarHandle, FullViewBarProps>(funct
       }}
     >
       {!phone && <div className="ib-fvzone" aria-hidden="true" />}
-      <button
-        type="button"
-        ref={handleRef}
-        className="ib-fvhandle"
-        onClick={(event) => set('revealed', event.detail === 0 ? 'bar' : null)}
-        aria-controls={barId}
-        aria-expanded={state !== 'tucked'}
-        aria-label={handleLabel}
-        title="Show tools"
-        data-full-view-handle=""
-      >
-        <Icon name="chevL" size={phone ? 18 : 14} />
-        {count > 0 && (
-          <span key={bump} className={`ib-fvhandle-n${bump ? ' ib-bump' : ''}`}>
-            {count}
-          </span>
-        )}
-        {props.changed && <span className="ib-fvhandle-dot" aria-hidden="true" />}
-      </button>
+      <HoverTip content="Show tools">
+        <button
+          type="button"
+          ref={handleRef}
+          className="ib-fvhandle"
+          onClick={(event) => set('revealed', event.detail === 0 ? 'bar' : null)}
+          aria-controls={barId}
+          aria-expanded={state !== 'tucked'}
+          aria-label={handleLabel}
+          data-full-view-handle=""
+        >
+          <Icon name="chevL" size={phone ? 18 : 14} />
+          {count > 0 && (
+            <span key={bump} className={`ib-fvhandle-n${bump ? ' ib-bump' : ''}`}>
+              {count}
+            </span>
+          )}
+          {props.changed && <span className="ib-fvhandle-dot" aria-hidden="true" />}
+        </button>
+      </HoverTip>
       <div
         ref={barRef}
         id={barId}

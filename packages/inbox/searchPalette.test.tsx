@@ -28,6 +28,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { InboxSearchAnswer, InboxSearchRow, InboxSearchThreadRow } from '@plannotator/core/inbox-search';
+import { tooltipOf } from './testing/tooltip';
 
 const hasDom = typeof document !== 'undefined';
 const { default: SearchPalette } = (hasDom ? await import('./search/SearchPalette') : {}) as typeof import('./search/SearchPalette');
@@ -45,7 +46,7 @@ let opened: { hash: string; land: unknown }[] = [];
 let closed: string[] = [];
 
 const project = { id: 'prj_01M4V7JERHR0Y3XQERK1MR604A', name: 'plannotator' };
-const totals = (t: Partial<Record<'threads' | 'messages' | 'files' | 'decisions' | 'projects', number>>) => ({ threads: 0, messages: 0, files: 0, decisions: 0, projects: 0, ...t });
+const totals = (t: Partial<Record<'threads' | 'messages' | 'files' | 'projects', number>>) => ({ threads: 0, messages: 0, files: 0, projects: 0, ...t });
 
 function threadRow(id: string, title: string, extra: Partial<InboxSearchThreadRow> = {}): InboxSearchThreadRow {
   return { type: 'thread', id, thread_id: id, project, section: 'quiet', archived: false, at: '2026-10-09T14:03:00Z', title, title_marks: [], thread_name: null, ...extra };
@@ -447,4 +448,78 @@ test.skipIf(!hasDom)("compose's Actions: below real results unless the words nam
   await type('idle');
   await waitFor(() => host!.querySelector('[data-search-indexing]') !== null);
   expect(host!.querySelector('[data-compose-action="new"]')).not.toBeNull();
+});
+
+test.skipIf(!hasDom)('every result in a thread draws the list’s thread chip: its name, else its subject; whole in the DOM; thread rows follow the list’s rule', async () => {
+  const where = { project, section: 'quiet' as const, archived: false, at: '2026-10-09T14:03:00Z' };
+  const longSubject = 'Investigate why the nightly deploy of the customer-portal-frontend fails only on the second retry when the CDN cache is warm';
+  const messages: InboxSearchRow[] = [
+    // A named thread: its name in the chip, the subject in its title and words.
+    { type: 'message', id: 'msg_a', thread_id: 'msg_t1', ...where, author: { kind: 'agent', name: 'Claude Code' }, title: longSubject, thread_name: 'nightly-deploy', snippet: { text: 'The nightly deploy fails on the second retry', marks: [] }, question: null },
+    // An unnamed thread: its subject in the chip.
+    { type: 'message', id: 'msg_b', thread_id: 'msg_t2', ...where, author: { kind: 'me', name: 'You' }, title: 'Deploy', thread_name: null, snippet: { text: 'We should deploy tomorrow morning', marks: [] }, question: null },
+    // An unnamed thread whose subject the message's own words are: no chip repeats it.
+    { type: 'message', id: 'msg_c', thread_id: 'msg_t3', ...where, author: { kind: 'agent', name: 'Pi' }, title: 'Schema migration for the comments table', thread_name: null, snippet: { text: '…Schema migration for the comments table…', marks: [] }, question: null },
+  ];
+  const files: InboxSearchRow[] = [
+    // The subject starts with the name: a result still shows the name (its subject is not on the row).
+    { type: 'file', id: 'att_1', thread_id: 'msg_t4', message_id: 'msg_t4', ...where, name: 'retry-policy.md', name_marks: [], folder: 'docs', kind: 'md', title: 'Retry storm on the relay after a deploy', thread_name: 'retry' },
+  ];
+  const threads: InboxSearchRow[] = [
+    threadRow('msg_t4', 'Retry storm on the relay after a deploy', { thread_name: 'retry' }),
+    threadRow('msg_t1', longSubject, { thread_name: 'nightly-deploy' }),
+    threadRow('msg_t5', 'Schema migration', { thread_name: null }),
+  ];
+  respond = async (call) =>
+    call.url.searchParams.get('q')
+      ? answer({ q: 'x', terms: ['x'], totals: totals({ threads: 3, messages: 3, files: 1 }), groups: { threads, messages, files }, recent: null })
+      : answer({});
+  await render();
+  await type('x');
+  await waitFor(() => options().length === 7);
+  const row = (type: string, id: string) => host!.querySelector<HTMLElement>(`[data-result="${type}"][data-result-id="${id}"]`)!;
+  const chip = (type: string, id: string) => row(type, id).querySelector<HTMLElement>('[data-result-thread]');
+
+  // The list's chip, its whole text in the DOM and its tooltip naming the whole thread.
+  const named = chip('message', 'msg_a')!;
+  expect(named.classList.contains('ib-key')).toBe(true);
+  expect(named.getAttribute('data-result-thread')).toBe('name');
+  expect(named.querySelector('.ib-keyt')!.textContent).toBe('nightly-deploy');
+  expect(named.querySelector('.ib-keyt')!.getAttribute('dir')).toBe('auto');
+  expect(named.hasAttribute('title')).toBe(false);
+  expect(await tooltipOf(named)).toBe(`Thread: nightly-deploy: ${longSubject}`);
+  // A screen reader hears the thread, then ", " where each "·" is drawn.
+  expect(row('message', 'msg_a').textContent).toContain(`Thread: nightly-deploy, ${longSubject}, Claude Code·, plannotator·, `);
+  // No name: the subject in the chip, even a short one met inside the text.
+  expect(chip('message', 'msg_b')!.getAttribute('data-result-thread')).toBe('subject');
+  expect(chip('message', 'msg_b')!.querySelector('.ib-keyt')!.textContent).toBe('Deploy');
+  expect(chip('message', 'msg_c')).toBeNull();
+  expect(row('message', 'msg_c').textContent).toContain('plannotator');
+  expect(chip('file', 'att_1')!.querySelector('.ib-keyt')!.textContent).toBe('retry');
+  // Thread rows: the list's rule (no chip when the subject starts with the name; none without a name).
+  expect(chip('thread', 'msg_t4')).toBeNull();
+  expect(chip('thread', 'msg_t1')!.querySelector('.ib-keyt')!.textContent).toBe('nightly-deploy');
+  expect(chip('thread', 'msg_t5')).toBeNull();
+  // One chip per row, never more.
+  for (const option of options()) expect(option.querySelectorAll('.ib-key').length).toBeLessThanOrEqual(1);
+});
+
+test.skipIf(!hasDom)('the subject chip is left out only when the first line is, begins with or starts the subject; never for a word met inside the text', async () => {
+  const { rowThreadChip } = await import('./search/model');
+  const where = { project, section: 'quiet' as const, archived: false, at: '2026-10-09T14:03:00Z' };
+  const message = (title: string, text: string, thread_name: string | null = null): InboxSearchRow => ({
+    type: 'message', id: 'msg_x', thread_id: 'msg_t', ...where, author: { kind: 'agent', name: 'Pi' }, title, thread_name, snippet: { text, marks: [] }, question: null,
+  });
+  const text = (row: InboxSearchRow) => rowThreadChip(row)?.text ?? null;
+  // A word inside the text is not the subject being shown.
+  expect(text(message('Deploy', 'We should deploy tomorrow morning'))).toBe('Deploy');
+  expect(text(message('Tests', 'All tests pass now'))).toBe('Tests');
+  expect(text(message('Auth bug', '…the auth bug is in the session check…'))).toBe('Auth bug');
+  // Is, begins with, or is a start of at least 12 characters: left out.
+  expect(text(message('Keep the rate limit?', 'Keep the rate limit?'))).toBeNull();
+  expect(text(message('Schema migration', 'Schema migration for the comments table runs in 4 s'))).toBeNull();
+  expect(text(message('Investigate why the nightly deploy fails on the second retry', 'Investigate why the nightly…'))).toBeNull();
+  expect(text(message('Investigate why the nightly deploy fails', 'Investigate…'))).toBe('Investigate why the nightly deploy fails');
+  // A name always shows.
+  expect(rowThreadChip(message('Keep the rate limit?', 'Keep the rate limit?', 'relay'))).toEqual({ text: 'relay', kind: 'name', subject: 'Keep the rate limit?' });
 });

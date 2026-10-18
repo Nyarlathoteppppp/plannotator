@@ -3,9 +3,8 @@ import { createPortal } from 'react-dom';
 import { Viewer } from '@plannotator/ui/components/Viewer';
 import { ImageLightbox } from '@plannotator/ui/components/ImageLightbox';
 import { parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
-import type { InboxDecision, InboxDecisionDraft, InboxListRow, InboxMessageWire, InboxProjectRepo, InboxQuestion, InboxThread, InboxUpload } from '@plannotator/core/inbox-types';
+import type { InboxListRow, InboxMessageWire, InboxProjectRepo, InboxQuestion, InboxThread, InboxUpload } from '@plannotator/core/inbox-types';
 import type { IndexedQuestion, QuestionAnswer, QuestionStatus } from '@plannotator/core/question-block';
-import { inboxDecisionWords } from '@plannotator/core/inbox-questions';
 import { isInboxNote, isInboxTextKind, readInboxAttachmentKind, type InboxAnnotationRecord, type InboxAttachment, type InboxAttachmentState, type InboxInlineImage } from '@plannotator/core/inbox-types';
 import type { LocalLinkResolver } from '@plannotator/ui/components/LocalLinkContext';
 import { NOT_ATTACHED_TITLE, attachmentDeepLink, attachmentDisplayPath, attachmentForLink, openAttachmentTitle, useRefRepo } from '../links';
@@ -17,17 +16,16 @@ import type { OpenInSurface } from './OpenIn';
 import { attachmentSequence } from '../stepping';
 import { AnnotationsChip } from './AnnotationsChip';
 import { agentName, clockTime, dayWords, fullTime, plural, whenTime } from '../format';
-import { titleIfClipped } from '../clipTitle';
 import { answerWords, foldSnippet, holdingsOf, isDelivered, isPersonReply, lastNonNote, lookBoundary, newSinceLook, planFolds, snippetText, type FoldSnippet, type Holding } from '../folding';
 import { highlightSearchHits } from '../search/highlight';
-import { AuthorMark, DecisionDiamond, Icon } from '../icons';
+import { AuthorMark, Icon } from '../icons';
 import { PILL_BAND_PX, atEnd, followBy, lookThrough, measureFirstLines, unseenArrivals, useSeenOnSight } from '../seenOnSight';
-import { DecisionCard } from './DecisionCard';
 import { GuideCard } from './GuideCard';
 import { inboxMessageImageBase, inlineImageRefFromSrc, markTallImage } from '../images';
 import { reportUnsentReply } from '../unsent';
 import { canToggleRead } from '../markRead';
 import { NewMessageButton, NewMessageComposer, NewMessagePopover, hostName, useLiveSessions, type NewMessageMode } from './NewMessage';
+import { deliveryLine, type DeliveryLine, type RecipientConnection } from '../deliveryLine';
 import { SendToAnotherSession } from '../compose/SendToAnotherSession';
 import { ComposeFileTiles, attachedAnnouncement, useComposeFiles } from '../compose/ComposeFiles';
 import {
@@ -52,6 +50,7 @@ import { SkillsLine } from './SkillsLine';
 import { paintSkillReferences } from '../skillHighlight';
 import { INBOX_REPLY_SKILL_AUDIENCE, annotationSkillTexts, inboxSkillsBlock, withSkillsBlock } from '../skills';
 import { splitInboxSkillsBlock } from '@plannotator/core/skill-reference-block';
+import { Tip } from './Tip';
 
 const noop = () => {};
 /** The agent superseded the question this call named (`422 question_superseded`). */
@@ -94,13 +93,29 @@ const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(pre
  * not yet seen on sight (`data-arrival`, design record
  * "inbox-new-in-open-thread": the pill counts only unseen arrivals below);
  * only when none waits there, the messages that were new when the thread
- * opened (`data-new`). An arrival already seen (`data-sighted`) never counts.
+ * opened (`data-new`). An arrival already seen (`data-sighted`) never counts,
+ * and neither does a message the person has had on screen this visit
+ * (`passed`): once its top was in the view, or the view went past it, it is
+ * read as far as the pill is concerned, so scrolling back up never brings it
+ * back. `mark` (the tab visible and nothing over the thread) adds what is on
+ * screen now to `passed`; scrolled to the end, everything is on screen.
  */
-function newBelow(body: HTMLElement): HTMLElement[] {
+function newBelow(body: HTMLElement, passed: Set<string>, mark: boolean): HTMLElement[] {
   const bottom = body.getBoundingClientRect().bottom - PILL_BAND_PX;
-  const below = (selector: string) => [...body.querySelectorAll<HTMLElement>(selector)].filter((a) => a.getBoundingClientRect().top > bottom);
+  const end = mark && body.scrollHeight > 0 && atEnd(body);
+  const below = (selector: string) =>
+    [...body.querySelectorAll<HTMLElement>(selector)].filter((a) => {
+      const id = a.getAttribute('data-message-article') ?? '';
+      if (passed.has(id)) return false;
+      if (end || a.getBoundingClientRect().top <= bottom) {
+        if (mark) passed.add(id);
+        return false;
+      }
+      return true;
+    });
   const arrivals = below('[data-message-article][data-arrival]:not([data-sighted])');
-  return arrivals.length > 0 ? arrivals : below('[data-message-article][data-new]:not([data-arrival]):not([data-sighted])');
+  const atOpen = below('[data-message-article][data-new]:not([data-arrival]):not([data-sighted])');
+  return arrivals.length > 0 ? arrivals : atOpen;
 }
 
 /** A folded line's snippet: the message's first words, or the person's answers. */
@@ -228,9 +243,6 @@ export function MessageBody({
   answers,
   onPick,
   footerFor,
-  recordingOf,
-  onToggleDecision,
-  onOpenDecision,
   renderReplacedCard,
   renderReplacesLine,
 }: {
@@ -247,10 +259,6 @@ export function MessageBody({
   answers: ReadonlyMap<string, QuestionAnswer>;
   onPick: (key: string, answer: QuestionAnswer | null) => void;
   footerFor: (key: string) => string | null;
-  /** The switch's state per question key (the stored one, or a click not yet saved). */
-  recordingOf: (key: string) => boolean | undefined;
-  onToggleDecision: (key: string, next: boolean) => void;
-  onOpenDecision: (key: string, anchor: HTMLElement) => void;
   /** A superseded question's card in place of its answer card (the question's key and number), or undefined to keep it. */
   renderReplacedCard?: (key: string, number: number) => React.ReactNode | undefined;
   /** The "Replaces …" line under a question's prompt, or null. */
@@ -389,14 +397,6 @@ export function MessageBody({
     },
     [footerFor],
   );
-  // Every question carries the tag (the record's 3.1): its switch is kept on
-  // the question record (on by default where the block says `Decision: when
-  // answered`, off elsewhere); a linked decision (`Decision: [statement](url)`)
-  // is already recorded and keeps its own tag.
-  const recording = useCallback(
-    (question: IndexedQuestion) => (question.question.decision ? undefined : recordingOf(question.question.key)),
-    [recordingOf],
-  );
   // Replaced questions: the host's Quiet card in place of the answer card, and
   // the newer card's "Replaces …" line. Kept stable across renders.
   const replacedRef = useRef(renderReplacedCard);
@@ -413,15 +413,6 @@ export function MessageBody({
     [message.questions],
   );
 
-  // Read-only per question: a sent answer's tag is a plain tag while an open
-  // question in the same message keeps its switch and card.
-  const locked = useCallback(
-    (question: IndexedQuestion) => {
-      const wire = message.questions?.find((q) => q.key === question.question.key);
-      return wire !== undefined && (wire.state === 'sent' || wire.decision_id !== null);
-    },
-    [message.questions],
-  );
   // The whole card, per question: only an open or picked question can be
   // answered. A sent one, one a Mark read or the archive closed, and a
   // replaced one draw read-only (no ticks, no Accept recommended, no Skip),
@@ -470,11 +461,8 @@ export function MessageBody({
         questionAnswers={answers}
         onAnswerQuestion={(_blockId, answer, key) => onPick(key, answer)}
         renderQuestionFooter={renderFooter}
-        questionDecisionScope="any"
-        questionDecisionRecording={recording}
-        onToggleQuestionDecisionRecording={onToggleDecision}
-        onOpenQuestionDecision={onOpenDecision}
-        questionDecisionLocked={locked}
+        // The Inbox records no decisions: a `Decision:` line an older agent wrote is context.
+        questionDecisionLines={false}
         questionReadOnly={answerLocked}
         questionStatusLabel={statusLabel}
         renderQuestionCard={renderReplacedCard ? questionCard : undefined}
@@ -500,10 +488,6 @@ export interface ThreadPaneProps {
   /** Something was written (a Send, resolve): read the thread and the list again. */
   onChanged: () => Promise<void>;
   onClose: () => void;
-  /** The decisions this thread's questions recorded (the "Settled: ..." lines). */
-  decisions: readonly InboxDecision[];
-  /** Open a recorded decision on the Decisions page. */
-  onOpenDecisionPage: (decision: InboxDecision) => void;
   /** The attachment open beside the thread (`#…&file=att_…`), its version, and an annotation to show. */
   file: { id: string; version: 'current' | 'sent'; focus: string | null } | null;
   /** `replace`: swap the history entry (stepping between files), so Back returns to the thread in one press. */
@@ -625,32 +609,67 @@ function useThreadAttachments(threadId: string, revision: unknown) {
  */
 const SHOW_NEW_MESSAGE_BUTTON = false;
 
+/** Where a 👍 Looks good is on its way to the agent (amended 2026-10-16: it is sent through). */
+export type AckPillState = 'pending' | 'queued' | 'sending' | 'saved' | 'delivered' | 'not-sent';
+
 /**
- * Under a message the person marked 👍 Looks good: when, that nothing was
- * sent, and later that the agent saw it (it read the thread, or its wait
- * returned the ack). Never "Delivered": nothing was delivered.
+ * The line under a 👍: the toast's Undo window still runs (`pending`), the
+ * Inbox sent it and a connection wakes the agent with it (`queued`, or
+ * `sending` while that session is idle: the same honest words as a reply's
+ * line, from the session's connection now, `deliveryLine`), it waits for an
+ * agent that only reads the thread (`saved`), or it reached the agent
+ * (`delivered`: its turn was delivered, or the agent read it). No Send now: a
+ * 👍 asks nothing of the agent, so it never goes into a running turn; it
+ * waits for the turn to end. Pure, for the tests.
  */
-export function AckPill({ ack, agent }: { ack: NonNullable<InboxMessageWire['ack']>; agent: string }) {
+export function ackPillLine(
+  ack: NonNullable<InboxMessageWire['ack']>,
+  agent: string,
+  wakes: boolean,
+  time: (iso: string) => string = whenTime,
+  connection?: RecipientConnection | null,
+): { state: AckPillState; text: string } {
+  if (ack.delivered_at) return { state: 'delivered', text: `Delivered to ${agent}, ${time(ack.delivered_at)}` };
+  // The window ended after the person replied, or the agent wrote again: it was not sent.
+  if (ack.not_sent === 'replied') return { state: 'not-sent', text: 'not sent: you replied' };
+  if (ack.not_sent === 'wrote_again') return { state: 'not-sent', text: `not sent: ${agent} wrote again` };
+  const you = `You, ${time(ack.at)} · `;
+  if (ack.settled_seq == null) return { state: 'pending', text: `${you}goes to ${agent} in a few seconds` };
+  // A 👍 settled before it was sent through (no note) never reaches a wake: it waits for a read.
+  if (wakes && ack.note_id) {
+    const line = deliveryLine({ name: agent, deliveredAt: null, time, wakes: true, sendingNow: false, connection });
+    return { state: line.state === 'sending' ? 'sending' : 'queued', text: `${you}${line.text}` };
+  }
+  return { state: 'saved', text: `${you}Saved for ${agent}. It sees it when it next reads this thread.` };
+}
+
+/** Under a message the person marked 👍 Looks good: when, and where it is on its way to the agent. */
+export function AckPill({
+  ack,
+  agent,
+  wakes = false,
+  connection,
+}: {
+  ack: NonNullable<InboxMessageWire['ack']>;
+  agent: string;
+  wakes?: boolean;
+  /** How the agent's session is connected now (the sessions route's `asker.connection`); undefined while unknown. */
+  connection?: RecipientConnection | null;
+}) {
+  const line = ackPillLine(ack, agent, wakes, whenTime, connection);
   return (
-    <p className="ib-ackpill" data-ack-pill={ack.seen_at ? 'seen' : 'not-sent'}>
+    <p className="ib-ackpill" data-ack-pill={line.state}>
       <span className="ib-ackchip">
         <span aria-hidden="true">👍</span> {ack.label}
       </span>
-      <span className="ib-ackwhen" title={fullTime(ack.at)}>
-        You, {whenTime(ack.at)} ·{' '}
-        {ack.seen_at ? (
-          <span title={fullTime(ack.seen_at)}>
-            {agent} saw it, {whenTime(ack.seen_at)}
-          </span>
-        ) : (
-          <>not sent; {agent} sees it when it next reads this thread</>
-        )}
-      </span>
+      <Tip content={line.state === 'delivered' && ack.delivered_at ? `You marked it ${fullTime(ack.at)}; delivered ${fullTime(ack.delivered_at)}` : fullTime(ack.at)}>
+        <span className="ib-ackwhen">{line.text}</span>
+      </Tip>
     </p>
   );
 }
 
-export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, decisions, onOpenDecisionPage, file, onOpenFile, onOpenGuide, lookSeq, seenThrough = null, onSeen, covered = false, onScreenChange, row, onMarkRead, onAck, onArchive, replyRequest, onReplyOpened, backLabel = 'Inbox', phone = false, stacked = false, fileStacked = false, remote = false, onBackToList, landing = null, onLanded }: ThreadPaneProps) {
+export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file, onOpenFile, onOpenGuide, lookSeq, seenThrough = null, onSeen, covered = false, onScreenChange, row, onMarkRead, onAck, onArchive, replyRequest, onReplyOpened, backLabel = 'Inbox', phone = false, stacked = false, fileStacked = false, remote = false, onBackToList, landing = null, onLanded }: ThreadPaneProps) {
   // "Open in" (OpenIn.tsx): apps on this computer; a new tab only through the tailnet or on a phone.
   const openIn: OpenInSurface | undefined = phone || remote === true ? 'tab' : remote === null ? undefined : 'apps';
   const root = thread.messages[0]!;
@@ -686,12 +705,6 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   const threadRef = useRef(thread);
   threadRef.current = thread;
 
-  /** Switch clicks shown before the server answers, `<message id>/<key>` to on or off. */
-  const [switching, setSwitching] = useState<ReadonlyMap<string, boolean>>(new Map());
-  /** The decision card open on one question, under the tag's words. */
-  const [card, setCard] = useState<{ messageId: string; key: string; anchor: HTMLElement } | null>(null);
-  /** Decisions a Send could not record (the answers stay sent). */
-  const [refused, setRefused] = useState<{ key: string; message: string }[]>([]);
   const [box, setBox] = useState<{ open: boolean; text: string }>({ open: false, text: '' });
   /**
    * Files pasted into the reply box (the owner: "paste in images … if I'm
@@ -1131,9 +1144,6 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
     setBox({ open: false, text: '' });
     replyFiles.reset();
     setError(null);
-    setSwitching(new Map());
-    setCard(null);
-    setRefused([]);
     setNewMessage(null);
     setStale([]);
     setGuard(false);
@@ -1148,17 +1158,26 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   // while new messages the person has not seen are below the view (its count:
   // those messages, never everything new this visit).
   const [chrome, setChrome] = useState({ subject: false, pill: 0 });
+  /** The new messages the person has had on screen this visit (newBelow): the pill never counts them again. */
+  const passed = useRef<{ threadId: string; ids: Set<string> }>({ threadId: thread.thread_id, ids: new Set() });
+  const passedIds = useCallback((): Set<string> => {
+    if (passed.current.threadId !== thread.thread_id) passed.current = { threadId: thread.thread_id, ids: new Set() };
+    return passed.current.ids;
+  }, [thread.thread_id]);
+  /** Whether what is on screen now counts as shown: the tab visible and nothing over the thread. */
+  const showingRef = useRef(true);
   const updateChrome = useCallback(() => {
     const body = bodyRef.current;
     if (!body) return;
     const box = body.getBoundingClientRect();
     const subject = body.querySelector<HTMLElement>('.ib-subject');
+    const shown = showingRef.current && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
     const next = {
       subject: subject !== null && subject.getBoundingClientRect().bottom < box.top + 4,
-      pill: newBelow(body).length,
+      pill: newBelow(body, passedIds(), shown).length,
     };
     setChrome((current) => (current.subject === next.subject && current.pill === next.pill ? current : next));
-  }, []);
+  }, [passedIds]);
 
   // ── Seen on sight (design record "inbox-new-in-open-thread", variant A) ──
   // An agent message that arrives while the thread is open counts as seen once
@@ -1195,6 +1214,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   const screenRef = useRef(onScreenChange);
   screenRef.current = onScreenChange;
   const paneCovered = covered || fileCovers;
+  showingRef.current = !paneCovered;
   useEffect(() => {
     screenRef.current?.({ threadId: thread.thread_id, covered: paneCovered });
   }, [thread.thread_id, paneCovered]);
@@ -1240,6 +1260,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
     body.addEventListener('scroll', trackEnd, { passive: true });
     body.addEventListener('scroll', updateChrome, { passive: true });
     window.addEventListener('resize', updateChrome);
+    document.addEventListener('visibilitychange', updateChrome);
     // The thread's own box changes without a scroll or a window resize when
     // the foot grows (the reply box, the stale guard, the New-message
     // composer) or a file opens beside it.
@@ -1249,6 +1270,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       body.removeEventListener('scroll', trackEnd);
       body.removeEventListener('scroll', updateChrome);
       window.removeEventListener('resize', updateChrome);
+      document.removeEventListener('visibilitychange', updateChrome);
       resized?.disconnect();
     };
   }, [updateChrome]);
@@ -1289,7 +1311,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       }
     }
     updateChrome();
-  }, [foldState, thread, file?.id, updateChrome, sighted]);
+  }, [foldState, thread, file?.id, updateChrome, sighted, paneCovered]);
 
   /**
    * n goes to the first new message (at the divider); the pill to what it
@@ -1301,11 +1323,11 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
     const body = bodyRef.current;
     const first = body?.querySelector<HTMLElement>('[data-message-article][data-new]');
     if (!body || !first) return;
-    const target = below ? (newBelow(body)[0] ?? first) : first;
+    const target = below ? (newBelow(body, passedIds(), false)[0] ?? first) : first;
     const divider = target === first ? body.querySelector<HTMLElement>('[data-new-divider]') : null;
     (divider ?? target).scrollIntoView?.({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
     target.querySelector<HTMLElement>('[data-fold-head]')?.focus({ preventScroll: true });
-  }, []);
+  }, [passedIds]);
 
   // j / k move between messages (and the middle fold), n goes to the first
   // new one; Enter and Space are the buttons' own. Never while typing.
@@ -1420,54 +1442,6 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
     if (q.state === 'closed' && q.set_aside_at) return `Closed unanswered when you marked it read · ${whenTime(q.set_aside_at)}`;
     if (q.state === 'picked' && q.picked_at) return `Picked ${whenTime(q.picked_at)}, not sent`;
     return null;
-  };
-
-  /** The question as the server last answered, with one question replaced. */
-  const patchQuestion = (question: InboxQuestion) => {
-    const message = threadRef.current.messages.find((m) => m.id === question.message_id);
-    if (!message) return;
-    onQuestions(message.id, (message.questions ?? []).map((q) => (q.key === question.key ? question : q)));
-  };
-
-  const recordingOf = (message: InboxMessageWire) => (key: string): boolean | undefined => {
-    const id = `${message.id}/${key}`;
-    if (switching.has(id)) return switching.get(id);
-    return message.questions?.find((q) => q.key === key)?.decision_recording;
-  };
-
-  /** The tag's diamond: saved on the question at once, like a pick. */
-  const toggleDecision = (messageId: string) => (key: string, next: boolean) => {
-    const id = `${messageId}/${key}`;
-    setSwitching((current) => new Map(current).set(id, next));
-    setError(null);
-    void inboxApi
-      .setDecision(messageId, key, { recording: next })
-      .then((result) => patchQuestion(result.question))
-      .catch(async (cause) => {
-        if (!isSuperseded(cause)) setError(cause instanceof InboxApiError ? cause.message : 'The switch was not saved.');
-        await onChanged();
-      })
-      .finally(() =>
-        setSwitching((current) => {
-          if (current.get(id) !== next) return current;
-          const updated = new Map(current);
-          updated.delete(id);
-          return updated;
-        }),
-      );
-  };
-
-  const openDecision = (messageId: string) => (key: string, anchor: HTMLElement) => setCard({ messageId, key, anchor });
-
-  /** Done on the card: keep its words on the question and turn recording on. */
-  const keepDecision = async (messageId: string, key: string, draft: InboxDecisionDraft | null) => {
-    try {
-      const result = await inboxApi.setDecision(messageId, key, { recording: true, draft });
-      patchQuestion(result.question);
-      setCard(null);
-    } catch (cause) {
-      throw new Error(cause instanceof InboxApiError ? cause.message : 'The decision was not kept.');
-    }
   };
 
   // What a Send carries: every picked, unsent answer, per message. A pick on a
@@ -1589,7 +1563,6 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       const contents = JSON.stringify([words, uploads, pendingAnnotations.map((r) => [r.id, r.updated_at])]);
       if (sendContents.current !== null && sendContents.current !== contents) sendKeys.current.set(targets.at(-1)!.message.id, crypto.randomUUID());
       sendContents.current = contents;
-      const notRecorded: { key: string; message: string }[] = [];
       // The words and the annotations ride the last reply, after its picks;
       // the skills they reference ride it too, as one block at its end
       // (skills.ts: a human-only skill's SKILL.md pasted in, its folder named).
@@ -1598,7 +1571,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
       const feedback = withSkillsBlock(annotationsFeedback, skills);
       for (const [index, target] of targets.entries()) {
         const last = index === targets.length - 1;
-        const result = await inboxApi.reply(target.message.id, {
+        await inboxApi.reply(target.message.id, {
           idempotency_key: sendKeys.current.get(target.message.id) ?? crypto.randomUUID(),
           words: last ? words : '',
           questions: target.questions,
@@ -1611,9 +1584,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
           ...(to && target.message.author.kind === 'agent' && target.message.author.session === asking?.session ? { to } : {}),
         });
         went += 1;
-        notRecorded.push(...result.decisions_refused);
       }
-      setRefused(notRecorded);
       sendKeys.current = null;
       sendContents.current = null;
       setRoute(CLOSED_ROUTE);
@@ -1678,23 +1649,63 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   // Where the person's last message is addressed: its own `to`, or, for a reply in a thread the
   // person started, the thread's (the server hands it to that session).
   const lastTo = last.author.kind === 'person' && !isInboxNote(last) ? (last.to ?? (startedTo && last.reply_to ? startedTo : null)) : null;
-  // Not delivered (compose): the session it is addressed to stopped before it took it (after the asker grace).
-  const { model: pendingLive, load: loadPendingLive } = useLiveSessions(thread.thread_id, lastTo?.session ?? null, !!lastTo && !last.delivery);
+  // The session the person's last reply goes to, when its connection wakes it: a message addressed to a
+  // session (`lastTo`), or a reply to an agent message sent through a waking connection (`wakes`).
+  const repliedTo = last.author.kind === 'person' && !lastTo ? askedBy(last) : undefined;
+  const askedSession = repliedTo?.author.kind === 'agent' && repliedTo.author.session ? repliedTo.author.session : null;
+  // Its connection wakes it when the asking message came through one (`wakes`), or, for a message sent
+  // another way from such a session (the stdio shim run inside Claude Code), when that session polls now.
+  const wakingSession = askedSession && repliedTo?.wakes === true ? askedSession : null;
+  const replySession = lastTo?.session ?? askedSession;
+  const replyWaiting = !!replySession && !last.delivery && !(lastTo === null && sent?.checked_at);
+  // A 👍 the Inbox sent through to a waking session and that session has not taken yet (the person's reply
+  // is not the last message then: the 👍 is offered only before it): its line reads the same connection.
+  const ackSession = ackTarget?.author.kind === 'agent' && ackTarget.author.session ? ackTarget.author.session : null;
+  const ackWaiting = ackSession && ackTarget?.ack?.note_id && !ackTarget.ack.delivered_at && ackTarget.wakes === true ? ackTarget : null;
+  const recipientSession = replySession ?? (ackWaiting ? ackSession : null);
+  const waitingOnWake = replyWaiting || (!replySession && ackWaiting !== null);
+  // How that session is connected now ("Queued", "Sending", Send now), and, for compose, whether it
+  // stopped before it took it (after the asker grace). Read every few seconds while the reply waits.
+  const { model: pendingLive, load: loadPendingLive } = useLiveSessions(thread.thread_id, recipientSession, waitingOnWake, 3_000);
   const undelivered = !!lastTo && !last.delivery && pendingLive?.asker?.session === lastTo.session && pendingLive.asker.live === false;
-  const delivered =
+  const recipientConnection = pendingLive?.asker?.session === recipientSession ? pendingLive?.asker?.connection : undefined;
+  const ackConnection = ackWaiting && !replySession && pendingLive?.asker?.session === ackSession ? pendingLive.asker.connection : undefined;
+  const delivered: DeliveryLine | null =
     last.author.kind !== 'person'
       ? null
       : lastTo
-        ? last.delivery
-          ? { state: 'delivered', text: `Delivered to ${toName(last, last.delivery)}, ${whenTime(last.delivery.at)}` }
-          : undelivered
-            ? { state: 'undelivered', text: `Not delivered. That ${hostName(lastTo.host)} session stopped before it took this. If it is resumed, it still gets it.` }
-            : { state: 'queued', text: `${last.to ? toName(last, last.to) : hostName(lastTo.host)} takes it as its next turn.` }
-        : sent?.checked_at
-          ? { state: 'delivered', text: `Delivered to ${asker}, ${whenTime(sent.checked_at)}` }
-          : askerEnded && asking
-            ? { state: 'saved', ended: true, text: `Saved for ${asking.name}. The session that asked has ended, so it waits here until an agent reads this thread.` }
-            : { state: 'saved', text: `Saved for ${asker}. It sees it when it checks.` };
+        ? deliveryLine({
+            name: last.delivery ? toName(last, last.delivery) : last.to ? toName(last, last.to) : hostName(lastTo.host),
+            deliveredAt: last.delivery?.at ?? null,
+            time: whenTime,
+            wakes: true,
+            sendingNow: !!last.deliver_now_at,
+            connection: recipientConnection,
+            undelivered: undelivered ? { host: hostName(lastTo.host) } : null,
+          })
+        : deliveryLine({
+            name: asker,
+            deliveredAt: sent?.checked_at ?? null,
+            time: whenTime,
+            wakes: wakingSession !== null || (askedSession !== null && recipientConnection != null),
+            sendingNow: !!last.deliver_now_at,
+            connection: recipientConnection,
+            askerEnded: askerEnded && asking ? { name: asking.name } : null,
+          });
+  const [sendNowState, setSendNowState] = useState<{ id: string; busy: boolean; error: string | null } | null>(null);
+  const sendNow = async () => {
+    setSendNowState({ id: last.id, busy: true, error: null });
+    try {
+      await inboxApi.sendNow(last.id);
+      setSendNowState({ id: last.id, busy: false, error: null });
+      await onChanged();
+      void loadPendingLive();
+    } catch (cause) {
+      setSendNowState({ id: last.id, busy: false, error: cause instanceof InboxApiError ? cause.message : 'It was not sent now. Try again.' });
+      void loadPendingLive();
+    }
+  };
+  const sendNowError = sendNowState?.id === last.id ? sendNowState.error : null;
 
   const waitingHoldsUp = [...new Set(lastAgent.questions?.filter((q) => q.state === 'open').flatMap((q) => q.holds_up) ?? [])];
   const [holdsOpen, setHoldsOpen] = useState(false);
@@ -1775,26 +1786,21 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
   };
 
   const archiveButton = (
-    <button
-      type="button"
-      className="ib-iconbtn"
-      onClick={() => void resolve(!archived)}
-      title={archived ? 'Unarchive' : 'Archive: the thread ends; the next message starts a new one'}
-      aria-label={archived ? 'Unarchive the thread' : 'Archive the thread'}
-      data-archive=""
-    >
-      <Icon name="archive" />
-    </button>
+    <Tip content={archived ? 'Unarchive' : 'Archive: the thread ends; the next message starts a new one'}>
+      <button
+        type="button"
+        className="ib-iconbtn"
+        onClick={() => void resolve(!archived)}
+        aria-label={archived ? 'Unarchive the thread' : 'Archive the thread'}
+        data-archive=""
+      >
+        <Icon name="archive" />
+      </button>
+    </Tip>
   );
   const markReadButton = markReadOffered ? (
-    <button
-      type="button"
-      className="ib-hbtn"
-      data-mark-read=""
-      aria-pressed={readAt !== null}
-      disabled={!markReadEnabled}
-      onClick={() => onMarkRead!(readAt === null)}
-      title={
+    <Tip
+      content={
         readAt !== null
           ? 'Move it back to the top'
           : markReadEnabled
@@ -1802,17 +1808,18 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
             : 'Nothing here waits on you'
       }
     >
-      <Icon name="checkCircle" size={16} />
-      {readAt !== null ? 'Read' : 'Mark read'}
-      <kbd className="ib-kbd ib-wide">E</kbd>
-    </button>
+      <button type="button" className="ib-hbtn" data-mark-read="" aria-pressed={readAt !== null} disabled={!markReadEnabled} onClick={() => onMarkRead!(readAt === null)}>
+        <Icon name="checkCircle" size={16} />
+        {readAt !== null ? 'Read' : 'Mark read'}
+        <kbd className="ib-kbd ib-wide">E</kbd>
+      </button>
+    </Tip>
   ) : null;
 
   return (
     <>
     <section
       ref={sectionRef}
-      onPointerOver={titleIfClipped}
       className={`ib-pane${fileOpen ? ' ib-withfile' : ''}`}
       aria-label={thread.subject ?? 'Thread'}
       data-thread-id={thread.thread_id}
@@ -1829,27 +1836,24 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
             {/* A stacked thread covers the list: the way back to it leads, where the list was. */}
             {stacked && (
               <>
-                <button type="button" className="ib-pback" onClick={onClose} aria-label={`Back to ${backLabel}`} title={`Back to ${backLabel}`} data-stack-back="">
-                  <Icon name="chevL" size={16} />
-                  <span className="ib-pback-l">{backLabel}</span>
-                </button>
+                <Tip content={`Back to ${backLabel}`}>
+                  <button type="button" className="ib-pback" onClick={onClose} aria-label={`Back to ${backLabel}`} data-stack-back="">
+                    <Icon name="chevL" size={16} />
+                    <span className="ib-pback-l">{backLabel}</span>
+                  </button>
+                </Tip>
                 <span className="ib-vsep" aria-hidden="true" />
               </>
             )}
             {/* A file beside the thread hides the list: the same way back leads; it closes the file. */}
             {backBesideFile && (
               <>
-                <button
-                  type="button"
-                  className="ib-pback"
-                  onClick={backToList}
-                  aria-label={`Back to ${backLabel}`}
-                  title={openAttachment ? `Close ${openAttachment.name} and show the list` : `Back to ${backLabel}`}
-                  data-file-back=""
-                >
-                  <Icon name="chevL" size={16} />
-                  <span className="ib-pback-l">{backLabel}</span>
-                </button>
+                <Tip content={openAttachment ? `Close ${openAttachment.name} and show the list` : `Back to ${backLabel}`}>
+                  <button type="button" className="ib-pback" onClick={backToList} aria-label={`Back to ${backLabel}`} data-file-back="">
+                    <Icon name="chevL" size={16} />
+                    <span className="ib-pback-l">{backLabel}</span>
+                  </button>
+                </Tip>
                 <span className="ib-vsep" aria-hidden="true" />
               </>
             )}
@@ -1866,24 +1870,27 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
             <span className="ib-phsubj" dir="auto" data-header-subject="" data-on={chrome.subject ? '' : undefined} aria-hidden="true">
               {thread.subject ?? '(no subject)'}
             </span>
-            <button
-              type="button"
-              className="ib-ptool"
-              data-expand-all=""
-              onClick={expandAll}
-              title={allOpen ? 'Fold the earlier messages' : 'Expand all messages'}
-              aria-label={allOpen ? 'Fold the earlier messages' : 'Expand all messages'}
-            >
-              <Icon name={allOpen ? 'collapse' : 'expand'} size={15} />
-              <span className="ib-ptool-l">{allOpen ? 'Fold all' : 'Expand all'}</span>
-            </button>
+            <Tip content={allOpen ? 'Fold the earlier messages' : 'Expand all messages'}>
+              <button
+                type="button"
+                className="ib-ptool"
+                data-expand-all=""
+                onClick={expandAll}
+                aria-label={allOpen ? 'Fold the earlier messages' : 'Expand all messages'}
+              >
+                <Icon name={allOpen ? 'collapse' : 'expand'} size={15} />
+                <span className="ib-ptool-l">{allOpen ? 'Fold all' : 'Expand all'}</span>
+              </button>
+            </Tip>
           </>
         )}
         {archiveButton}
         {phone || stacked || backBesideFile ? null : (
-          <button type="button" className="ib-iconbtn" onClick={onClose} title="Close" aria-label="Close the thread">
-            <Icon name="x" />
-          </button>
+          <Tip content="Close">
+            <button type="button" className="ib-iconbtn" onClick={onClose} aria-label="Close the thread">
+              <Icon name="x" />
+            </button>
+          </Tip>
         )}
       </div>
       <div className={`ib-pbody${one ? '' : ' ib-folding'}`} ref={bodyRef}>
@@ -1999,15 +2006,22 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                       <Icon name="reply" />
                     </span>
                   )}
-                  <span className="ib-fl-nm" data-clip="">{name}</span>
-                  <span className="ib-fl-sn" dir="auto" data-snippet={snippet.kind} title={snippetText(snippet)}>
-                    <SnippetText snippet={snippet} />
-                  </span>
+                  <Tip content={name} cut>
+                    <span className="ib-fl-nm">{name}</span>
+                  </Tip>
+                  {/* An answers snippet is shortened (each prompt cut at a word): its whole text always; words only while cut. */}
+                  <Tip content={snippetText(snippet)} cut={snippet.kind !== 'answers'}>
+                    <span className="ib-fl-sn" dir="auto" data-snippet={snippet.kind}>
+                      <SnippetText snippet={snippet} />
+                    </span>
+                  </Tip>
                   <HoldingChips holdings={holdings} />
-                  <span className="ib-fl-tm" title={fullWhen}>
-                    {isNew && <span className="ib-newtag">New</span>}
-                    {time}
-                  </span>
+                  <Tip content={fullWhen}>
+                    <span className="ib-fl-tm">
+                      {isNew && <span className="ib-newtag">New</span>}
+                      {time}
+                    </span>
+                  </Tip>
                 </button>
               </article>,
             );
@@ -2098,9 +2112,11 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                     </span>
                   )}
                 </span>
-                <span className="ib-fl-nm ib-who" aria-hidden={hide} data-clip={one ? '' : undefined}>
-                  <bdi>{name}</bdi>
-                </span>
+                <Tip content={one ? name : null} cut>
+                  <span className="ib-fl-nm ib-who" aria-hidden={hide}>
+                    <bdi>{name}</bdi>
+                  </span>
+                </Tip>
                 {/* The project gives way first; "to you", the session-ended mark and the count never shrink (the row wraps instead). */}
                 <span className="ib-fl-meta">
                   <span className="ib-fl-in" aria-hidden={hide}>
@@ -2114,11 +2130,15 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                 <span className="ib-fl-chips" />
                 <span className="ib-fl-tm">
                   {isNew && <span className="ib-newtag">New</span>}
-                  <span title={fullWhen}>{time}</span>
+                  <Tip content={fullWhen}>
+                    <span data-full-when="">{time}</span>
+                  </Tip>
                   {isAgent && liveMessage(message) && (
-                    <button type="button" className="ib-mut" onClick={() => openBox(picksCount > 0)} title="Reply" aria-label="Reply">
-                      <Icon name="reply" size={15} />
-                    </button>
+                    <Tip content="Reply">
+                      <button type="button" className="ib-mut" onClick={() => openBox(picksCount > 0)} aria-label="Reply">
+                        <Icon name="reply" size={15} />
+                      </button>
+                    </Tip>
                   )}
                 </span>
               </div>
@@ -2150,33 +2170,9 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                   answers={answersOf(message)}
                   onPick={(key, answer) => pick(message.id, key, answer)}
                   footerFor={footerFor(message)}
-                  recordingOf={recordingOf(message)}
-                  onToggleDecision={toggleDecision(message.id)}
-                  onOpenDecision={openDecision(message.id)}
                   renderReplacedCard={replacedCard}
                   renderReplacesLine={replacesLine}
                 />
-                {questions.map((q) => {
-                  const decision = q.decision_id ? decisions.find((d) => d.id === q.decision_id) : undefined;
-                  if (!decision) return null;
-                  return (
-                    <p className="ib-settled" key={q.key} data-question-settled={q.key}>
-                      <DecisionDiamond />
-                      <span>
-                        Settled:{' '}
-                        <a
-                          href={`#decisions=${decision.project_id}&decision=${decision.id}`}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            onOpenDecisionPage(decision);
-                          }}
-                        >
-                          {decision.text}
-                        </a>
-                      </span>
-                    </p>
-                  );
-                })}
                 {/* An agent's files, and the person's own (compose): the same tiles and viewers. */}
                 {(message.attachments?.length ?? 0) > 0 && (
                   <AttachmentTiles
@@ -2188,11 +2184,13 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                   />
                 )}
                 {message.guide && <GuideCard guide={message.guide} onOpen={() => onOpenGuide(message.id)} />}
-                {isAgent && message.ack && <AckPill ack={message.ack} agent={name} />}
+                {isAgent && message.ack && (
+                  <AckPill ack={message.ack} agent={name} wakes={message.wakes === true} connection={message.id === ackWaiting?.id ? ackConnection : undefined} />
+                )}
                 {message === lastAgent && liveMessage(lastAgent) && waitingHoldsUp.length > 0 && (
                   <div className="ib-waitfoot">
                     <b>Waiting on this answer</b>
-                    <span className="ib-badge">Holds up {waitingHoldsUp.length}</span>
+                    <span className="ib-badge ib-b-hold">Holds up {waitingHoldsUp.length}</span>
                     <span className="ib-sp" />
                     <button type="button" className="ib-mut" onClick={() => setHoldsOpen((v) => !v)} aria-expanded={holdsOpen}>
                       {holdsOpen ? 'Hide' : 'Show'} <Icon name={holdsOpen ? 'chevR' : 'chevD'} size={14} />
@@ -2209,9 +2207,32 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                 {message === last && delivered && (
                   // tabIndex -1: Send to another session puts focus here once it moved the message.
                   <div className="ib-delivered" data-delivery={delivered.state} tabIndex={-1}>
-                    <Icon name={delivered.state === 'undelivered' ? 'warn' : 'ended' in delivered && delivered.ended ? 'clock' : 'check'} size={14} />
-                    {delivered.text}
+                    <span className="ib-dl-main">
+                      <Icon
+                        name={delivered.state === 'undelivered' ? 'warn' : delivered.ended || delivered.state === 'queued' ? 'clock' : delivered.state === 'sending' ? 'send' : 'check'}
+                        size={14}
+                      />
+                      <span className="ib-dl-text">{delivered.text}</span>
+                    </span>
+                    {delivered.sendNow && (
+                      <Tip content="Put it into the running turn now: the agent reads it at its next step, without waiting for the turn to end.">
+                        <button
+                          type="button"
+                          className="ib-sendnow"
+                          data-send-now=""
+                          disabled={sendNowState?.id === last.id && sendNowState.busy}
+                          onClick={() => void sendNow()}
+                        >
+                          Send now
+                        </button>
+                      </Tip>
+                    )}
                   </div>
+                )}
+                {message === last && sendNowError && (
+                  <p className="ib-error" role="alert" data-send-now-error="">
+                    {sendNowError}
+                  </p>
                 )}
                 {message === last && delivered?.state === 'undelivered' && lastTo && (
                   <SendToAnotherSession
@@ -2343,9 +2364,11 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
                   )}
                   <SkipChip count={unanswered.length} keepOpen={keepOpen} onToggle={toggleKeepOpen} />
                   {dropped.length > 0 && (
-                    <span className="ib-rchip ib-dropped" data-dropped-picks-chip="" title="Replaced; this pick won't be sent">
-                      {dropped.length} {dropped.length === 1 ? 'pick' : 'picks'} on a replaced question
-                    </span>
+                    <Tip content="Replaced; this pick won't be sent">
+                      <span className="ib-rchip ib-dropped" data-dropped-picks-chip="">
+                        {dropped.length} {dropped.length === 1 ? 'pick' : 'picks'} on a replaced question
+                      </span>
+                    </Tip>
                   )}
                   {takesAnnotations && (
                     <AnnotationsChip records={records} attachments={allFiles} onEdit={editRecord} onRemove={removeRecord} onOpen={openRecord} />
@@ -2389,25 +2412,22 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
               <Icon name="reply" size={15} />
               {waiting ? 'Edit the reply' : 'Reply'}
             </button>
-            {/* 👍 Looks good beside Reply: silent, nothing sent; hidden while a question waits. */}
+            {/* 👍 Looks good beside Reply: sent to the agent after the Undo window; hidden while a question waits. */}
             {ackOffered && !waiting && (
-              <button
-                type="button"
-                className="ib-btn ib-ack"
-                data-ack=""
-                aria-pressed={ackOn}
-                onClick={() => onAck!(ackTarget!.id, !ackOn, agentName(ackTarget!.author))}
-                title={
+              <Tip
+                content={
                   ackOn
                     ? 'Take back Looks good'
-                    : `Not sent to ${agentName(ackTarget!.author)}: it sees it when it next reads this thread. Moves to Quiet until it writes again.`
+                    : `Tells ${agentName(ackTarget!.author)} you read it and need nothing more. Moves to Quiet until it writes again.`
                 }
               >
-                <span className="ib-ack-emoji" aria-hidden="true">
-                  👍
-                </span>
-                Looks good
-              </button>
+                <button type="button" className="ib-btn ib-ack" data-ack="" aria-pressed={ackOn} onClick={() => onAck!(ackTarget!.id, !ackOn, agentName(ackTarget!.author))}>
+                  <span className="ib-ack-emoji" aria-hidden="true">
+                    👍
+                  </span>
+                  Looks good
+                </button>
+              </Tip>
             )}
             {/* The in-thread New message button is off (approval "inbox-acknowledge", 2026-10-15): Reply and compose cover it.
                 Its route, door row and code stay; turn SHOW_NEW_MESSAGE_BUTTON on to bring it back. */}
@@ -2444,13 +2464,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, deci
             {error}
           </div>
         )}
-        {refused.map((entry) => (
-          <div className="ib-error" role="status" key={entry.key} data-question-decision-refused={entry.key}>
-            Not recorded as a decision: {entry.message.replace(/\.$/, '')}. The answer was sent.
-          </div>
-        ))}
       </div>
-      {card && <ThreadDecisionCard thread={thread} card={card} answersOf={answersOf} onCancel={() => setCard(null)} onDone={keepDecision} />}
     </section>
     {openAttachment && (
       <AttachmentPane
@@ -2521,41 +2535,5 @@ function SkipChip({ count, keepOpen, onToggle }: { count: number; keepOpen: bool
         {keepOpen ? `Skip ${them}` : 'Keep open'}
       </button>
     </span>
-  );
-}
-
-/** The decision card for one question, drafted from its answer as it is now (a pick not yet saved included). */
-function ThreadDecisionCard({
-  thread,
-  card,
-  answersOf,
-  onCancel,
-  onDone,
-}: {
-  thread: InboxThread;
-  card: { messageId: string; key: string; anchor: HTMLElement };
-  answersOf: (message: InboxMessageWire) => Map<string, QuestionAnswer>;
-  onCancel: () => void;
-  onDone: (messageId: string, key: string, draft: InboxDecisionDraft | null) => Promise<void>;
-}) {
-  const message = thread.messages.find((m) => m.id === card.messageId);
-  const question = message?.questions?.find((q) => q.key === card.key);
-  if (!message || !question) return null;
-  const drafted = inboxDecisionWords({
-    answer: answersOf(message).get(card.key) ?? null,
-    prompt: question.prompt,
-    askerName: agentName(message.author),
-    draft: null,
-  });
-  return (
-    <DecisionCard
-      key={`${card.messageId}/${card.key}`}
-      anchor={card.anchor}
-      drafted={drafted}
-      draft={question.decision_draft}
-      projectName={thread.project.name}
-      onCancel={onCancel}
-      onDone={(draft) => onDone(card.messageId, card.key, draft)}
-    />
   );
 }

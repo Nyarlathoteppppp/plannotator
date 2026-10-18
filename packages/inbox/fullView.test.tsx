@@ -23,6 +23,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { InboxAnnotationRecord, InboxAttachmentState, InboxMessageWire } from '@plannotator/core/inbox-types';
 import { attachmentSequence, type AttachmentStep } from './stepping';
+import { tooltipOf } from './testing/tooltip';
 
 const hasDom = typeof document !== 'undefined';
 const { AttachmentPane, COMMENTS_DRAWER_COOKIE } = (hasDom ? await import('./components/AttachmentPane') : {}) as typeof import('./components/AttachmentPane');
@@ -521,7 +522,7 @@ test.skipIf(!hasDom)('⋯ holds Download and the other version (the changed chip
   const chip = host!.querySelector<HTMLElement>('[data-full-view-changed]')!;
   expect(chip.querySelector('.ib-fvver-t')!.textContent).toBe('Changed since sent');
   expect(chip.querySelector('button')!.textContent).toBe('Open the version it sent');
-  expect(chip.getAttribute('title')).toMatch(/^Changed since Claude Code sent it at /);
+  expect(await tooltipOf(chip)).toMatch(/^Changed since Claude Code sent it at /);
 
   const more = host!.querySelector<HTMLButtonElement>('[data-full-view-more]')!;
   expect(more.getAttribute('aria-label')).toBe('More: download, versions');

@@ -38,7 +38,6 @@ import {
   inboxViewKind,
 } from '../attachments';
 import { whenTime, formatBytes } from '../format';
-import { titleIfClipped } from '../clipTitle';
 import { useRefRepo } from '../links';
 import { ImageAttachmentView } from './ImageAttachmentView';
 import { VideoAttachmentView, type VideoAttachmentViewHandle } from './VideoAttachmentView';
@@ -57,6 +56,7 @@ import { inboxFileViewerShortcuts } from '../shortcuts/fileViewer.shortcuts';
 import { inOverlay, isComposingKey, isEditableTarget, keyTarget, modalOpen } from '../shortcuts/guards';
 import { escapeRung, type EscapeRung } from '../escapeLadder';
 import { storage } from '@plannotator/ui/utils/storage';
+import { Tip } from './Tip';
 
 /**
  * The pane width below which the 300 px comments panel beside the thread
@@ -1017,7 +1017,6 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
   return (
     <section
       ref={sectionRef}
-      onPointerOver={titleIfClipped}
       tabIndex={-1}
       className={`ib-view${full ? ' ib-full ib-fullview' : ''}${phone ? ' ib-phone' : ''}${folded && !phone ? ' ib-fold' : ''}${hasPanel ? '' : ' ib-nopanel'}${sheetMode && sheet ? ' ib-panel-open' : ''}${drawerMode && drawer && hasPanel ? ' ib-drawer' : ''}`}
       aria-label={multi ? `${attachment.name}, file ${index + 1} of ${steps.length}` : attachment.name}
@@ -1122,16 +1121,17 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
           <span className="ib-sp" />
           {isHtml && !props.readOnly && <HtmlSurfaceControls armed={armed} onToggleArmed={() => setArmed((v) => !v)} />}
           {props.openIn && <OpenInControl attachment={attachment} version={effectiveVersion} surface={props.openIn} label={!folded} big={phone} />}
-          <a
-            className="ib-btn ib-sm ib-ghost"
-            href={attachmentDownloadUrl(attachment, effectiveVersion)}
-            download={attachment.name}
-            title={`Download ${attachment.name}${effectiveVersion === 'sent' ? ' (the version it sent)' : ''}`}
-            data-attachment-download=""
-          >
-            <Icon name="download" size={14} />
-            Download
-          </a>
+          <Tip content={`Download ${attachment.name}${effectiveVersion === 'sent' ? ' (the version it sent)' : ''}`}>
+            <a
+              className="ib-btn ib-sm ib-ghost"
+              href={attachmentDownloadUrl(attachment, effectiveVersion)}
+              download={attachment.name}
+              data-attachment-download=""
+            >
+              <Icon name="download" size={14} />
+              Download
+            </a>
+          </Tip>
           {folded && hasPanel && (
             <button
               type="button"
@@ -1147,7 +1147,6 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
               aria-expanded={sheet}
               aria-controls={sheetId}
               aria-label={`Comments, ${annotations.length}`}
-              title="Comments"
               data-annotations-sheet=""
             >
               <Icon name="comment" size={15} />
@@ -1160,15 +1159,18 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
               Full screen
             </button>
           )}
-          <button type="button" className="ib-iconbtn" onClick={close} aria-label={`Close ${attachment.name}`} title="Close">
-            <Icon name="x" />
-          </button>
+          <Tip content="Close">
+            <button type="button" className="ib-iconbtn" onClick={close} aria-label={`Close ${attachment.name}`}>
+              <Icon name="x" />
+            </button>
+          </Tip>
         </div>
       )}
       {full ? (
         versionChip && (
           // A fact about the file: it stays when the toolbar tucks.
-          <div className="ib-fvver" role="status" title={versionChip.full} data-full-view-changed="">
+          <Tip content={versionChip.full}>
+          <div className="ib-fvver" role="status" data-full-view-changed="">
             <Icon name="info" size={13} />
             <span className="ib-fvver-t">{versionChip.text}</span>
             {versionChip.action && (
@@ -1177,6 +1179,7 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
               </button>
             )}
           </div>
+          </Tip>
         )
       ) : line ? (
         <div className="ib-changed" data-changed-line="">
@@ -1334,6 +1337,7 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
                 ref={viewerRef}
                 blocks={blocks}
                 markdown={view.text}
+                questionDecisionLines={false}
                 annotations={annotations}
                 onAddAnnotation={(annotation) => void save(annotation)}
                 onSelectAnnotation={setSelectedId}
@@ -1397,20 +1401,23 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
                     const frame = annotation.images?.[0];
                     return (
                       <span className="ib-vcardtop">
-                        <button
-                          type="button"
-                          className="ib-vtime"
-                          onClick={() => {
-                            setSelectedId(annotation.id);
-                            videoRef.current?.seekTo(annotation.id);
-                          }}
-                          title={`Go to ${formatInboxVideoTime(time)}`}
-                          data-video-card-time={annotation.id}
-                        >
-                          {formatInboxVideoTime(time)}
-                        </button>
+                        <Tip content={`Go to ${formatInboxVideoTime(time)}`}>
+                          <button
+                            type="button"
+                            className="ib-vtime"
+                            onClick={() => {
+                              setSelectedId(annotation.id);
+                              videoRef.current?.seekTo(annotation.id);
+                            }}
+                            aria-label={`Go to ${formatInboxVideoTime(time)}`}
+                            data-video-card-time={annotation.id}
+                          >
+                            {formatInboxVideoTime(time)}
+                          </button>
+                        </Tip>
                         {frame && (
-                          <span className="ib-vframe ib-vframe-sm" title={frame.name} data-video-card-frame={annotation.id}>
+                          <Tip content={frame.name}>
+                          <span className="ib-vframe ib-vframe-sm" data-video-card-frame={annotation.id}>
                             <img src={getImageSrc(frame.path)} alt="" />
                             {/marked up$/.test(frame.name) && (
                               <span className="ib-vpen" aria-hidden="true">
@@ -1418,6 +1425,7 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
                               </span>
                             )}
                           </span>
+                          </Tip>
                         )}
                       </span>
                     );

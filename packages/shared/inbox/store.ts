@@ -34,6 +34,7 @@ import {
   composeInboxSetAsideBody,
   inboxSkipAnswer,
   deriveInboxSubject,
+  derivePersonThreadSubject,
   inboxQuestionState,
   isInboxQuestionSupersedable,
   parseInboxQuestionBlocks,
@@ -49,7 +50,6 @@ import {
   type InboxAck,
   type InboxAddressee,
   type InboxAuthor,
-  type InboxDecision,
   type InboxGuideRef,
   type InboxLine,
   type InboxMessage,
@@ -64,11 +64,13 @@ import {
   type InboxThread,
   type InboxThreadSummary,
   checkInboxThreadName,
+  type InboxThreadNaming,
   inboxThreadNameKey,
   isInboxNote,
 } from "@plannotator/core/inbox-types";
 import { inboxListSections, inboxRowUnread, inboxSectionOf } from "./list";
 import { inboxProjectLabels } from "./project-name";
+import { inboxAckLine } from "./connection";
 import type { QuestionAnswer } from "@plannotator/core/question-block";
 import { sanitizeTag } from "@plannotator/core/project";
 import {
@@ -90,7 +92,7 @@ import { pendingInboxUploadBlobs, removeUnusedInboxUploadFiles } from "./uploads
 import { inboxDraftsBytes } from "./drafts";
 import {
   ANNOTATIONS_FILE,
-  DECISIONS_FILE,
+  LEGACY_DECISIONS_FILE,
   INBOX_PROJECTS_DIR,
   SEQ_FLOOR_FILE,
   InboxError,
@@ -151,6 +153,15 @@ export interface InboxSendInput {
 export interface InboxSendResult {
   message: InboxMessageWire;
   replayed: boolean;
+  /**
+   * A reply into a thread the person started that this agent may still name
+   * (`canNameThread`): `named` when its `thread` named the thread, `refused`
+   * (with a code and why) when that name was not valid or another open thread
+   * of the project has it, `unnamed` when it gave none. A replay answers what
+   * the first call answered (kept on the reply as `thread_naming`). Absent
+   * everywhere else.
+   */
+  naming?: InboxThreadNaming;
 }
 
 export interface InboxAnswerEntry {
@@ -259,6 +270,11 @@ function lastNonNote(messages: readonly InboxMessage[]): InboxMessage | undefine
   return undefined;
 }
 
+/** The note that carries a 👍 Looks good to the agent (`ack_of`): never listed in a thread, the ack on its message says it. */
+function isAckNote(message: InboxMessage): boolean {
+  return message.author.kind === "person" && typeof message.ack_of === "string" && message.ack_of !== "";
+}
+
 /** The most ids one send may supersede. */
 export const INBOX_SUPERSEDES_MAX = 100;
 
@@ -267,6 +283,31 @@ export function inboxProjectKey(name: string, root: string, hashLength = 6): str
   const base = sanitizeTag(name) ?? "project";
   const hash = createHash("sha256").update(root).digest("hex").slice(0, Math.min(hashLength, 64));
   return `${base}-${hash}`;
+}
+
+/**
+ * The highest seq in an older store's decisions.jsonl (Decisions were removed
+ * in 2026-10; the file is kept on disk and its records are never read), or 0.
+ * Read leniently: only each line's `seq` counts.
+ */
+function legacySeqFloor(path: string): number {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return 0;
+  }
+  let high = 0;
+  for (const raw of text.split("\n")) {
+    if (!raw.trim()) continue;
+    try {
+      const seq = (JSON.parse(raw) as { seq?: unknown }).seq;
+      if (typeof seq === "number" && Number.isSafeInteger(seq) && seq > high) high = seq;
+    } catch {
+      // A torn line: skipped, as the store skips one.
+    }
+  }
+  return high;
 }
 
 export class InboxStore {
@@ -286,6 +327,12 @@ export class InboxStore {
    * finds the same value; nothing is written for it.
    */
   private readonly resolvedSeq = new Map<string, number>();
+  /**
+   * The roots of threads the person started whose address moved ("Send to
+   * another session": a later root line names another `to.session`). Derived
+   * from the log in seq order, like `resolvedSeq`; read by `threadNamers`.
+   */
+  private readonly readdressed = new Set<string>();
   private readonly questions = new Map<string, InboxQuestionRecord>();
   /** Each message's question ids (a question's message never changes, so the index only grows). */
   private readonly messageQuestions = new Map<string, Set<string>>();
@@ -300,8 +347,12 @@ export class InboxStore {
   private readonly threadMembers = new Map<string, string[]>();
   /** Every root of each thread name in seq order (`<project>\0<name key>`). */
   private readonly namedThreads = new Map<string, string[]>();
-  /** Every decision, by id (step 3; the rules are packages/server/inbox-decisions.ts). */
-  private readonly decisions = new Map<string, InboxDecision>();
+  /**
+   * Threads the person started, by the name compose gave them (typed or the
+   * suggestion): never routes anything, only keeps a second open thread
+   * from taking the name (`threadNameTaken`).
+   */
+  private readonly personNamed = new Map<string, string[]>();
   /** The person's annotations on attachments, by id. */
   private readonly annotations = new Map<string, InboxAnnotationRecord>();
   /** A guided review's files by its snapshot's sha256 (a blob never changes). */
@@ -339,7 +390,11 @@ export class InboxStore {
     const lines: InboxLine[] = [];
     for (const key of readdirSync(projectsDir)) {
       const folder = join(projectsDir, key);
-      for (const name of [PROJECT_FILE, MESSAGES_FILE, QUESTIONS_FILE, DECISIONS_FILE, ANNOTATIONS_FILE]) {
+      // Decisions were removed (2026-10): an older store's decisions.jsonl is
+      // left on disk and never applied, but its seqs still count, so a seq is
+      // never handed out twice.
+      this.seq = Math.max(this.seq, legacySeqFloor(join(folder, LEGACY_DECISIONS_FILE)));
+      for (const name of [PROJECT_FILE, MESSAGES_FILE, QUESTIONS_FILE, ANNOTATIONS_FILE]) {
         const path = join(folder, name);
         let text: string;
         try {
@@ -403,6 +458,22 @@ export class InboxStore {
         const before = previous?.kind === "message" ? previous.record.resolved_at : null;
         if (line.record.resolved_at == null) this.resolvedSeq.delete(line.record.id);
         else if (before !== line.record.resolved_at || !this.resolvedSeq.has(line.record.id)) this.resolvedSeq.set(line.record.id, line.seq);
+        if (previous?.kind === "message" && line.record.started_by_person && previous.record.to && line.record.to && previous.record.to.session !== line.record.to.session) {
+          this.readdressed.add(line.record.id);
+        }
+        // A thread the person started routes by name only once an AGENT names it (sendMessage):
+        // indexed at that line, in seq order, so later sends with the name join it and a replay
+        // routes the same. A name the person typed, or compose's suggestion, never routes another
+        // session's send into the person's thread (`personNamed`, for de-duplication only).
+        if (
+          previous?.kind === "message" &&
+          line.record.started_by_person &&
+          line.record.thread_name &&
+          line.record.named_by?.kind === "agent" &&
+          previous.record.named_by?.kind !== "agent"
+        ) {
+          this.indexName(line.record.project_id, line.record.thread_name, line.record.id);
+        }
         this.messages.set(line.record.id, line.record);
         if (!this.messageSeq.has(line.record.id)) {
           this.messageSeq.set(line.record.id, line.seq);
@@ -420,9 +491,6 @@ export class InboxStore {
         else this.messageQuestions.set(line.record.message_id, new Set([line.record.id]));
         break;
       }
-      case "decision":
-        this.decisions.set(line.record.id, line.record);
-        break;
       case "annotation":
         this.annotations.set(line.record.id, line.record);
         break;
@@ -431,16 +499,37 @@ export class InboxStore {
 
   /** Note a root's routing keys, from its first line only. */
   private indexRoot(message: InboxMessage): void {
-    if (message.thread_id !== message.id || message.author.kind !== "agent") return;
+    if (message.thread_id !== message.id) return;
+    // A thread the person started is no session's default thread, and its compose name (typed, or
+    // the suggestion) routes nothing: it is noted only so no other thread takes the same name.
+    if (message.author.kind !== "agent") {
+      if (message.started_by_person && message.thread_name) {
+        const key = `${message.project_id}\0${inboxThreadNameKey(message.thread_name)}`;
+        const roots = this.personNamed.get(key);
+        if (roots) roots.push(message.id);
+        else this.personNamed.set(key, [message.id]);
+      }
+      return;
+    }
     const name = message.thread_name ?? null;
     if (name !== null) {
-      const key = `${message.project_id}\0${inboxThreadNameKey(name)}`;
-      const roots = this.namedThreads.get(key);
-      if (roots) roots.push(message.id);
-      else this.namedThreads.set(key, [message.id]);
+      this.indexName(message.project_id, name, message.id);
     } else if (message.author.session) {
       this.sessionThreads.set(`${message.project_id}\0${message.author.session}`, message.id);
     }
+  }
+
+  /** The roots a name routes to (agents' names: a name, once there, never changes), oldest first. */
+  private rootsNamed(projectId: string, name: string): string[] {
+    return this.namedThreads.get(`${projectId}\0${inboxThreadNameKey(name)}`) ?? [];
+  }
+
+  /** Add a root under a thread name; the last one added is the newest of that name. */
+  private indexName(projectId: string, name: string, rootId: string): void {
+    const key = `${projectId}\0${inboxThreadNameKey(name)}`;
+    const roots = this.namedThreads.get(key);
+    if (roots) roots.push(rootId);
+    else this.namedThreads.set(key, [rootId]);
   }
 
   /**
@@ -452,7 +541,7 @@ export class InboxStore {
    */
   private routeThread(projectId: string, session: string | null, name: string | null): string | null {
     if (name !== null) {
-      const roots = this.namedThreads.get(`${projectId}\0${inboxThreadNameKey(name)}`) ?? [];
+      const roots = this.rootsNamed(projectId, name);
       for (let i = roots.length - 1; i >= 0; i--) if (!this.isResolved(roots[i]!)) return roots[i]!;
       return null;
     }
@@ -649,6 +738,62 @@ export class InboxStore {
     return deriveInboxSubject("", [record]) ?? root.subject;
   }
 
+  /**
+   * The agent sessions that may still name a thread the person started
+   * (approval "inbox-agent-names-own-thread"): the session it is addressed to
+   * and, once the address moved, also the first agent that replied in it.
+   * Empty when the thread is not one the person started, already carries a
+   * name an agent gave (`named_by`), or is unknown. A subject the person set
+   * would be marked the same way and so never change.
+   */
+  threadNamers(threadId: string): string[] {
+    const root = this.messages.get(threadId);
+    // Compose's own suggestion (`named_by.kind === "auto"`) does not count: the agent still names it.
+    if (!root || root.thread_id !== threadId || !root.started_by_person || (root.named_by && root.named_by.kind !== "auto") || !root.to) return [];
+    const sessions = [root.to.session];
+    if (this.readdressed.has(threadId)) {
+      for (const member of this.threadMembers.get(threadId) ?? []) {
+        const message = this.messages.get(member);
+        if (message?.author.kind !== "agent" || !message.author.session) continue;
+        if (!sessions.includes(message.author.session)) sessions.push(message.author.session);
+        break;
+      }
+    }
+    return sessions;
+  }
+
+  /** May this agent session name the thread now? See `threadNamers`. */
+  canNameThread(threadId: string, session: string | null | undefined): boolean {
+    return !!session && this.threadNamers(threadId).includes(session);
+  }
+
+  /**
+   * `canNameThread` for a reply about to be written: once the address moved
+   * and no agent has replied yet, this sender is about to be the first one.
+   */
+  private mayNameWithReply(threadId: string, session: string | null): boolean {
+    if (!session) return false;
+    const namers = this.threadNamers(threadId);
+    if (namers.includes(session)) return true;
+    if (namers.length === 0 || !this.readdressed.has(threadId)) return false;
+    return !(this.threadMembers.get(threadId) ?? []).some((member) => this.messages.get(member)?.author.kind === "agent");
+  }
+
+  /**
+   * Does another OPEN thread of the project already have this name? Naming a
+   * thread the person started refuses such a name: a later send with it would
+   * otherwise move from that thread (perhaps another session's work) into
+   * this one, which is addressed to someone else.
+   */
+  private threadNameTaken(projectId: string, name: string, exceptRoot: string | null): boolean {
+    const key = inboxThreadNameKey(name);
+    // Threads the person started that still carry their compose name (an agent may have replaced a suggestion).
+    const personRoots = (this.personNamed.get(`${projectId}\0${key}`) ?? []).filter(
+      (rootId) => inboxThreadNameKey(this.messages.get(rootId)?.thread_name ?? "") === key,
+    );
+    return [...this.rootsNamed(projectId, name), ...personRoots].some((rootId) => rootId !== exceptRoot && !this.isResolved(rootId));
+  }
+
   thread(threadId: string): InboxThread | null {
     const root = this.messages.get(threadId);
     if (!root || root.thread_id !== threadId) return null;
@@ -660,7 +805,10 @@ export class InboxStore {
       subject: this.threadSubject(threadId),
       thread_name: root.thread_name ?? null,
       resolved_at: root.resolved_at,
-      messages: this.threadMessages(threadId).map((m) => this.wire(m)),
+      // The note carrying a 👍 to the agent is not listed: the ack on the message it marks says it.
+      messages: this.threadMessages(threadId)
+        .filter((m) => !isAckNote(m))
+        .map((m) => this.wire(m)),
     };
   }
 
@@ -687,6 +835,8 @@ export class InboxStore {
           ...message,
           ...(seq === undefined ? {} : { seq }),
           ...(message.author.kind === "person" ? { sent_annotations: carried.get(message.id) ?? 0 } : {}),
+          // When the 👍 reached the agent: its note delivered as a turn, or an agent read it.
+          ...(message.ack ? { ack: { ...message.ack, delivered_at: this.ackDeliveredAt(message.ack) } } : {}),
         };
       }),
     };
@@ -695,7 +845,8 @@ export class InboxStore {
   threadSummary(threadId: string): InboxThreadSummary | null {
     const root = this.messages.get(threadId);
     if (!root || root.thread_id !== threadId) return null;
-    const messages = this.threadMessages(threadId);
+    // The note carrying a 👍 is not a message of the thread as the person sees it.
+    const messages = this.threadMessages(threadId).filter((m) => !isAckNote(m));
     const last = messages[messages.length - 1] ?? root;
     // The Inbox's own notes are not the person's reply: the last word is the last other message's.
     const lastWord = lastNonNote(messages) ?? root;
@@ -757,7 +908,11 @@ export class InboxStore {
     const lastReal = lastNonNote(messages) ?? root;
     const sent =
       lastReal.author.kind === "person"
-        ? { at: lastReal.created_at, checked_at: (root.agent_checked_seq ?? 0) >= seqOf(lastReal) ? (root.agent_checked_at ?? null) : null }
+        ? {
+            at: lastReal.created_at,
+            checked_at: (root.agent_checked_seq ?? 0) >= seqOf(lastReal) ? (root.agent_checked_at ?? null) : null,
+            wakes: this.wakesRecipient(lastReal),
+          }
         : null;
     // An agent wrote after the person archived the thread (mail apps' rule):
     // it comes back to the list while something there waits (an agent
@@ -845,7 +1000,7 @@ export class InboxStore {
     const archiveSeq = this.archiveSeq(root.id);
     if (archiveSeq !== null && readSeq <= archiveSeq) return null;
     for (const message of messages) {
-      if (message.set_aside && message.author.kind === "person") continue;
+      if ((message.set_aside || isAckNote(message)) && message.author.kind === "person") continue;
       if ((this.messageSeq.get(message.id) ?? 0) > readSeq) return null;
     }
     return root.person_read_at ?? null;
@@ -855,7 +1010,7 @@ export class InboxStore {
    * Mark read (`read`), or move it back (Undo, the pressed button). Mark read
    * moves the thread to Quiet without archiving it: every question still
    * waiting on the person (open, or picked and not sent) is closed as a skip
-   * (`set_aside`, never a decision), and the thread counts as looked at. It
+   * (`set_aside`), and the thread counts as looked at. It
    * comes back when an agent writes again. Moving back reopens the questions
    * that Mark read closed (not an earlier one's) exactly as they were, a
    * saved pick included (its revision goes up by one, so a pick in flight is
@@ -1093,12 +1248,13 @@ export class InboxStore {
   }
 
   /**
-   * 👍 Looks good (design record "inbox-acknowledge", approved 2026-10-15),
-   * or take it back (`on: false`: the toast's Undo, the pressed button).
-   * Silent: nothing is sent and no session is woken. It records `ack` on the
-   * agent's latest message and marks the thread read (Quiet until an agent
-   * writes again); taking it back removes the ack and undoes the Mark read it
-   * made. Refused on a person's message, on a message that is not the
+   * 👍 Looks good (design record "inbox-acknowledge", approved 2026-10-15,
+   * amended 2026-10-16), or take it back (`on: false`: the toast's Undo, the
+   * pressed button). It records `ack` on the agent's latest message and marks
+   * the thread read (Quiet until an agent writes again); once the Undo window
+   * passes, `settleAcks` sends it to the agent. Taking it back removes the ack
+   * and undoes the Mark read it made, and a note not delivered yet is then
+   * never delivered. Refused on a person's message, on a message that is not the
    * thread's latest agent message (a newer one arrived), while a question in
    * the thread is open or picked, and on an archived thread. No write when
    * nothing changes.
@@ -1161,8 +1317,16 @@ export class InboxStore {
 
   /**
    * Acks whose Undo window (`afterMs`) has passed while they still stand
-   * become visible to agents: one line each with `settled_seq` (the seq of
-   * that line). Returns the messages settled.
+   * are sent to the agent (amended 2026-10-16: "send looks good through"):
+   * first the ack's line with `settled_seq` (the seq of that line) and
+   * `note_id`, then the note it names, a person's reply to the message whose
+   * body is `inboxAckLine` (`ack_of`), delivered like any reply (the wake,
+   * wait_for_reply's `acknowledged`). The note's line is the one a held
+   * bridge poll wakes on. From then on agents see it in read_thread too.
+   * `ackMessage`'s conditions are checked again here: when the person wrote
+   * back after the message inside the window, or the agent wrote again, the
+   * ack settles with `not_sent` (`replied` / `wrote_again`) and no note, and
+   * no agent ever sees it. Returns the messages settled.
    */
   settleAcks(afterMs: number): InboxMessage[] {
     const now = this.now().getTime();
@@ -1170,12 +1334,73 @@ export class InboxStore {
     for (const message of [...this.messages.values()]) {
       const ack = message.ack;
       if (!ack || ack.settled_seq != null || Date.parse(ack.at) + afterMs > now) continue;
+      const notSent = this.ackNotSentReason(message);
+      if (notSent) {
+        const at = this.stamp();
+        const settled: InboxMessage = { ...message, ack: { ...ack, settled_seq: this.seq + 1, settled_at: at, note_id: null, not_sent: notSent } };
+        this.appendMessage(settled, at);
+        out.push(settled);
+        continue;
+      }
+      const noteId = inboxId("msg");
       const at = this.stamp();
-      const settled: InboxMessage = { ...message, ack: { ...ack, settled_seq: this.seq + 1, settled_at: at } };
+      const settled: InboxMessage = { ...message, ack: { ...ack, settled_seq: this.seq + 1, settled_at: at, note_id: noteId } };
       this.appendMessage(settled, at);
+      const noteAt = this.stamp();
+      const note: InboxMessage = {
+        id: noteId,
+        project_id: message.project_id,
+        thread_id: message.thread_id,
+        reply_to: message.id,
+        author: { kind: "person" },
+        subject: null,
+        body: inboxAckLine(message.id),
+        created_at: noteAt,
+        resolved_at: null,
+        idempotency_key: null,
+        ack_of: message.id,
+      };
+      this.appendMessage(note, noteAt);
       out.push(settled);
     }
     return out;
+  }
+
+  /**
+   * Why a 👍 can no longer go to the agent when its Undo window ends
+   * (`ackMessage`'s rules, again): the agent wrote again after the message
+   * (the 👍 would read as the answer to the newer one), or the person wrote
+   * back after it (their reply is the answer). The Inbox's own notes do not
+   * count. Null when it can go.
+   */
+  private ackNotSentReason(message: InboxMessage): "replied" | "wrote_again" | null {
+    const members = this.threadMessages(message.thread_id);
+    const after = members.slice(members.findIndex((m) => m.id === message.id) + 1);
+    if (after.some((m) => m.author.kind === "agent")) return "wrote_again";
+    if (after.some((m) => m.author.kind === "person" && !isInboxNote(m))) return "replied";
+    return null;
+  }
+
+  /**
+   * Whether the note carrying a 👍 still stands for it: the message it marks
+   * still carries that ack. A 👍 taken back (Undo, the pressed button, Move
+   * back) leaves its note in the log, never delivered.
+   */
+  private ackNoteLive(note: InboxMessage): boolean {
+    return !!note.ack_of && this.messages.get(note.ack_of)?.ack?.note_id === note.id;
+  }
+
+  /** When a 👍 reached the agent: its note delivered as a turn, else when an agent read it; null while it waits. */
+  private ackDeliveredAt(ack: InboxAck): string | null {
+    const note = ack.note_id ? this.messages.get(ack.note_id) : undefined;
+    return note?.delivery?.at ?? ack.seen_at ?? null;
+  }
+
+  /** The note carrying a message's 👍 to the agent, while it stands. */
+  ackNote(messageId: string): InboxMessage | null {
+    const noteId = this.messages.get(messageId)?.ack?.note_id;
+    const note = noteId ? this.messages.get(noteId) : undefined;
+    return note && this.ackNoteLive(note) ? note : null;
   }
 
   /** Acks not settled yet (still inside their Undo window, or a stop interrupted it). */
@@ -1198,20 +1423,29 @@ export class InboxStore {
       messages: thread.messages.map((message) => {
         if (message.ack === undefined) return message;
         const { ack, ...rest } = message;
-        return { ...rest, ack: ack && ack.settled_seq != null ? { label: ack.label, at: ack.at } : null } as InboxMessageWire;
+        return { ...rest, ack: ack && ack.settled_seq != null && !ack.not_sent ? { label: ack.label, at: ack.at } : null } as InboxMessageWire;
       }),
     };
+  }
+
+  /** One message's settled ack was seen by its agent (its note delivered). No write when already seen. */
+  private markAckSeen(messageId: string, at: string): void {
+    const message = this.messages.get(messageId);
+    const ack = message?.ack;
+    if (!message || !ack || ack.settled_seq == null || ack.not_sent || ack.seen_at) return;
+    this.appendMessage({ ...message, ack: { ...ack, seen_at: at } }, at);
   }
 
   /**
    * An agent read the thread's settled acks (read_thread, or wait_for_reply's
    * `acknowledged`): each gets `seen_at`, so the window's pill says "<agent>
-   * saw it". `upToSeq` limits it to acks settled at or before that seq.
+   * saw it". `upToSeq` limits it to acks settled at or before that seq. An
+   * ack that was not sent (`not_sent`) is never seen.
    */
   markAcksSeen(threadId: string, upToSeq = Number.POSITIVE_INFINITY, at = this.stamp()): void {
     for (const message of this.threadMessages(threadId)) {
       const ack = message.ack;
-      if (!ack || ack.settled_seq == null || ack.settled_seq > upToSeq || ack.seen_at) continue;
+      if (!ack || ack.settled_seq == null || ack.not_sent || ack.settled_seq > upToSeq || ack.seen_at) continue;
       this.appendMessage({ ...message, ack: { ...ack, seen_at: at } }, at);
     }
   }
@@ -1294,7 +1528,7 @@ export class InboxStore {
         perThread.set(threadId, threadBytes);
       }
       for (const sha256 of projectBlobs) bytes += blobSizes.get(sha256) ?? 0;
-      for (const name of [PROJECT_FILE, MESSAGES_FILE, QUESTIONS_FILE, DECISIONS_FILE, ANNOTATIONS_FILE]) {
+      for (const name of [PROJECT_FILE, MESSAGES_FILE, QUESTIONS_FILE, LEGACY_DECISIONS_FILE, ANNOTATIONS_FILE]) {
         let text: string;
         try {
           text = readFileSync(join(folder, name), "utf8");
@@ -1303,8 +1537,8 @@ export class InboxStore {
         }
         bytes += Buffer.byteLength(text);
         total += Buffer.byteLength(text);
-        // The project line and its decisions count for the project, not a thread.
-        if (name === PROJECT_FILE || name === DECISIONS_FILE) continue;
+        // The project line, and an older store's decisions file, count for the project, not a thread.
+        if (name === PROJECT_FILE || name === LEGACY_DECISIONS_FILE) continue;
         for (const raw of text.split("\n")) {
           const line = parseInboxLine(raw);
           if (!line) continue;
@@ -1453,6 +1687,8 @@ export class InboxStore {
       replyTo = parent.id;
     }
     if (!this.projectsById.has(projectId)) throw new InboxError("project_not_found", `No project ${projectId}.`);
+    // A reply's `thread` routes nothing; it may name a thread the person started (below).
+    const replyThread = replyTo && typeof input.thread === "string" && input.thread.trim() !== "" ? input.thread.trim() : null;
 
     const supersedes = this.normalizeSupersedes(input.supersedes);
     const key = input.idempotency_key?.trim() || null;
@@ -1460,10 +1696,15 @@ export class InboxStore {
       for (const message of this.messages.values()) {
         if (message.project_id !== projectId || message.idempotency_key !== key || message.author.kind !== "agent") continue;
         // A retry is the same call: the same body, reply target, thread
-        // name (compared as routing compares names) and superseded ids. The
-        // thread it joined is the first call's, whatever the routing would
-        // say now.
-        const sameName = inboxThreadNameKey(message.thread_name ?? "") === inboxThreadNameKey(threadName ?? "");
+        // name (a reply's `thread` included; compared as routing compares
+        // names) and superseded ids. The thread it joined is the first
+        // call's, whatever the routing would say now, and so is what its
+        // naming came to.
+        // A reply's `thread` counts only where it could name the thread (the reply kept `thread_naming`):
+        // anywhere else it is ignored, and an older store never recorded it.
+        const sameName =
+          inboxThreadNameKey(message.thread_name ?? "") === inboxThreadNameKey(threadName ?? "") &&
+          (!message.thread_naming || inboxThreadNameKey(message.reply_thread ?? "") === inboxThreadNameKey(replyThread ?? ""));
         const sameGuide = (message.guide?.input_sha256 ?? null) === (input.guide?.input_sha256 ?? null);
         const sameSupersedes = [...(message.supersedes ?? [])].sort().join("\n") === [...supersedes].sort().join("\n");
         if (message.body !== body || message.reply_to !== replyTo || !sameName || !sameGuide || !sameSupersedes) {
@@ -1473,11 +1714,36 @@ export class InboxStore {
             { message_id: message.id },
           );
         }
-        return { message: this.wire(message), replayed: true };
+        return { message: this.wire(message), replayed: true, ...(message.thread_naming ? { naming: message.thread_naming } : {}) };
       }
     }
 
     if (!replyTo) threadId = this.routeThread(projectId, input.author.session, threadName);
+
+    // A reply into a thread the person started may name it, once (approval
+    // "inbox-agent-names-own-thread"): its `thread`, checked by the
+    // thread-name rules, and refused when another open thread of the project
+    // already has the name (`threadNameTaken`). Decided before the reply is
+    // written and kept on it (`thread_naming`), so a retry answers the same.
+    let naming: InboxThreadNaming | undefined;
+    if (replyTo && threadId && this.mayNameWithReply(threadId, input.author.session)) {
+      if (replyThread === null) {
+        naming = { status: "unnamed" };
+      } else {
+        const checked = checkInboxThreadName(replyThread);
+        if (!checked.ok) {
+          naming = { status: "refused", code: "invalid_thread_name", reason: `The name ${checked.message}` };
+        } else if (this.threadNameTaken(projectId, checked.name, threadId)) {
+          naming = {
+            status: "refused",
+            code: "thread_name_taken",
+            reason: `Another open thread in this project is already named "${checked.name}".`,
+          };
+        } else {
+          naming = { status: "named", name: checked.name };
+        }
+      }
+    }
 
     const at = this.stamp();
     const id = inboxId("msg");
@@ -1507,6 +1773,8 @@ export class InboxStore {
       ...(input.guide ? { guide: input.guide } : {}),
       ...(input.base_path ? { base_path: input.base_path } : {}),
       ...(input.wakes === true ? { wakes: true } : {}),
+      ...(replyThread !== null ? { reply_thread: replyThread } : {}),
+      ...(naming ? { thread_naming: naming } : {}),
     };
     this.appendMessage(message, at);
     for (const question of parsed) {
@@ -1520,7 +1788,6 @@ export class InboxStore {
           kind: question.kind,
           prompt: question.prompt,
           parsed: question.parsed,
-          decision_on_answer: question.decision_on_answer,
           stopped: question.stopped,
           holds_up: question.holds_up,
           asked_by_agent_id: input.author.session,
@@ -1530,20 +1797,35 @@ export class InboxStore {
           picked_by: null,
           picked_at: null,
           sent_reply_id: null,
-          decision_id: null,
         },
         at,
       );
     }
     // The superseded questions last, so whoever reads them finds the message
-    // that superseded them. A pick saved on one stays on it, never sent; a
-    // decision drafted on it is dropped.
+    // that superseded them. A pick saved on one stays on it, never sent.
     for (const [questionId, by] of superseding) {
       const record = this.questions.get(questionId)!;
-      this.appendQuestion({ ...record, superseded_by: by, ...(record.decision_draft ? { decision_draft: null } : {}) }, at);
+      this.appendQuestion({ ...record, superseded_by: by }, at);
+    }
+    // The name, last: the root written again with `thread_name` and
+    // `named_by` (append-only; `apply` indexes a name it gains at that line,
+    // in seq order, so a replay routes the same). A crash between the reply
+    // line and this one leaves the reply saying `named` over an unnamed
+    // thread, which a later reply can still name; accepted, as for any
+    // half-written send.
+    if (naming?.status === "named" && threadId) {
+      const root = this.messages.get(threadId)!;
+      this.appendMessage(
+        {
+          ...root,
+          thread_name: naming.name,
+          named_by: { kind: "agent", host: input.author.host, session: input.author.session!, message_id: id, at },
+        },
+        at,
+      );
     }
     // A reply from the agent reopens nothing: a resolved thread stays resolved.
-    return { message: this.wire(message), replayed: false };
+    return { message: this.wire(message), replayed: false, ...(naming ? { naming } : {}) };
   }
 
   /** send_message's `supersedes` as the store keeps it: trimmed, each once, in order. */
@@ -1904,28 +2186,6 @@ export class InboxStore {
     return { reply, questions: this.questionsOf(message.id), replayed: false };
   }
 
-  // ─────────────── decisions (step 3; the rules: packages/server/inbox-decisions.ts) ───────────────
-
-  decision(id: string): InboxDecision | null {
-    return this.decisions.get(id) ?? null;
-  }
-
-  /** A project's decisions, oldest first. */
-  decisionsOf(projectId: string): InboxDecision[] {
-    return [...this.decisions.values()]
-      .filter((d) => d.project_id === projectId)
-      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
-  }
-
-  /**
-   * Every decision of every project, unordered: for one-pass counts. A live
-   * view of the store's map: iterate it at once, never hold it across a write
-   * or a reload().
-   */
-  allDecisions(): Iterable<Readonly<InboxDecision>> {
-    return this.decisions.values();
-  }
-
   /**
    * Every question record of every project, unordered: for one-pass counts.
    * A live view of the store's map: iterate it at once, never hold it across
@@ -1947,36 +2207,6 @@ export class InboxStore {
     return out.sort(
       (a, b) => (this.messageSeq.get(a.message_id) ?? 0) - (this.messageSeq.get(b.message_id) ?? 0) || a.position - b.position,
     );
-  }
-
-  /** Append one decision snapshot (a new decision, or a retired or replaced one). */
-  writeDecision(record: InboxDecision): void {
-    const project = this.projectsById.get(record.project_id);
-    if (!project) throw new InboxError("project_not_found", `No project ${record.project_id}.`);
-    this.write(join(this.projectFolder(project), DECISIONS_FILE), {
-      v: INBOX_RECORD_VERSION,
-      seq: this.seq + 1,
-      at: this.stamp(),
-      kind: "decision",
-      id: record.id,
-      record,
-    });
-  }
-
-  /**
-   * Change a question's decision fields only (the switch, the card's words,
-   * the recorded decision's id). Never its answer or revision, so a switch
-   * never races a pick.
-   */
-  writeQuestionDecision(
-    id: string,
-    patch: Partial<Pick<InboxQuestionRecord, "decision_recording" | "decision_draft" | "decision_id">>,
-  ): InboxQuestionRecord {
-    const record = this.questions.get(id);
-    if (!record) throw new InboxError("question_not_found", `No question ${id}.`);
-    const next = { ...record, ...patch };
-    this.appendQuestion(next, this.stamp());
-    return next;
   }
 
   /**
@@ -2324,7 +2554,7 @@ export class InboxStore {
 
   /**
    * Delete a thread: its messages, questions and annotations are dropped from
-   * the project's files (its decisions stay: they belong to the project) (each rewritten whole: temp file, then rename), and
+   * the project's files (each rewritten whole: temp file, then rename), and
    * every blob no other record uses is removed. The store is then read again
    * from disk, so what routes and lists next is exactly what a restart reads.
    */
@@ -2392,12 +2622,13 @@ export class InboxStore {
     this.messages.clear();
     this.messageSeq.clear();
     this.resolvedSeq.clear();
+    this.readdressed.clear();
     this.questions.clear();
     this.messageQuestions.clear();
     this.sessionThreads.clear();
     this.threadMembers.clear();
     this.namedThreads.clear();
-    this.decisions.clear();
+    this.personNamed.clear();
     this.annotations.clear();
     this.tornFiles.clear();
     this.load();
@@ -2452,6 +2683,8 @@ export class InboxStore {
     const out: { message: InboxMessage; seq: number }[] = [];
     for (const message of this.messages.values()) {
       if (message.author.kind !== "person" || message.delivery || !this.isFor(message, session)) continue;
+      // A 👍 taken back before it went is never delivered.
+      if (isAckNote(message) && !this.ackNoteLive(message)) continue;
       const seq = this.messageSeq.get(message.id) ?? 0;
       // A New message, or a reply the person sent to another session, is
       // settled only by its delivery to the session it names (its own
@@ -2478,6 +2711,8 @@ export class InboxStore {
     const delivered: InboxMessage = { ...reply, delivery: { state: "delivered", host: by.host, session: by.session, at } };
     this.appendMessage(delivered, at);
     this.markAgentChecked(reply.thread_id, this.messageSeq.get(reply.id) ?? 0, at);
+    // A 👍 that reached the agent was seen: a later wait on every thread is not answered by it again.
+    if (isAckNote(reply) && reply.ack_of) this.markAckSeen(reply.ack_of, at);
     return delivered;
   }
 
@@ -2490,6 +2725,69 @@ export class InboxStore {
     if (message.to) return message.to.session === session;
     const asked = message.reply_to ? this.messages.get(message.reply_to) : undefined;
     return asked?.author.kind === "agent" && asked.author.session === session;
+  }
+
+  /**
+   * The agent session a person's message goes to (`isFor`'s answer): the
+   * session it is addressed to, else the session of the message it replies
+   * to; null when there is none (a reply to a message sent without a
+   * session, the Inbox's own notes).
+   */
+  recipientOf(message: InboxMessage): { host: string | null; session: string } | null {
+    if (message.author.kind !== "person" || isInboxNote(message)) return null;
+    if (message.to) return { host: message.to.host, session: message.to.session };
+    const asked = message.reply_to ? this.messages.get(message.reply_to) : undefined;
+    if (asked?.author.kind !== "agent" || !asked.author.session) return null;
+    return { host: asked.author.host ?? null, session: asked.author.session };
+  }
+
+  /** Whether a person's message goes to a session whose connection delivers it as a turn by itself. */
+  private wakesRecipient(message: InboxMessage): boolean {
+    if (message.author.kind !== "person" || isInboxNote(message)) return false;
+    if (message.to) return true;
+    const asked = message.reply_to ? this.messages.get(message.reply_to) : undefined;
+    return asked?.author.kind === "agent" && asked.wakes === true;
+  }
+
+  /**
+   * Send now: the person asks for a reply or message of theirs to be
+   * delivered at once (the bridge command's `now`), into the running turn
+   * when one runs. A new snapshot of the same message with `deliver_now_at`
+   * (the last line wins); a second press writes nothing. Refused once
+   * delivered (`already_delivered`) or for a message that goes to no
+   * session (`not_addressed`). Whether that session's connection can do it
+   * is the server's check, before this is called.
+   */
+  requestDeliverNow(messageId: string): InboxMessage {
+    const message = this.messages.get(messageId);
+    if (!message) throw new InboxError("message_not_found", `No message ${messageId}.`);
+    if (!this.recipientOf(message)) {
+      throw new InboxError("not_addressed", "Only your reply or message to an agent session can be sent now.");
+    }
+    if (message.delivery) throw new InboxError("already_delivered", "That session already took this.", { delivery: message.delivery });
+    if (message.deliver_now_at) return message;
+    const at = this.stamp();
+    const next: InboxMessage = { ...message, deliver_now_at: at };
+    this.appendMessage(next, at);
+    return next;
+  }
+
+  /**
+   * The session's connection could not put a Send now reply into the running
+   * turn (the engine refused it): the mark goes, so the window reads it as
+   * queued again and the reply waits for idle as before. Only the session it
+   * goes to may say so; a delivered reply or one without the mark is left as
+   * it is.
+   */
+  clearDeliverNow(messageId: string, session: string): InboxMessage {
+    const message = this.messages.get(messageId);
+    if (!message) throw new InboxError("message_not_found", `No message ${messageId}.`);
+    if (!this.isFor(message, session)) throw new InboxError("validation_error", "session: this message goes to another session.", { field: "session" });
+    if (message.delivery || !message.deliver_now_at) return message;
+    const at = this.stamp();
+    const next: InboxMessage = { ...message, deliver_now_at: null };
+    this.appendMessage(next, at);
+    return next;
   }
 
   /** The blobs the store's messages use (attachments and guided reviews): the upload sweep keeps them. */
@@ -2565,13 +2863,30 @@ export class InboxStore {
     to: InboxAddressee | null;
     idempotency_key: unknown;
     attachments?: InboxAttachment[];
+    /** The thread's name (its chip), when the person gave one: checked by the thread-name rules; an agent never replaces it. */
+    thread_name?: unknown;
+    /**
+     * `true` when `thread_name` is compose's suggestion the person left as it
+     * was: best effort, so a name that is not valid or another open thread
+     * already has is dropped (no refusal), and the first agent that may name
+     * the thread replaces it.
+     */
+    thread_name_auto?: unknown;
   }): { message: InboxMessage; replayed: boolean } {
     const key = typeof input.idempotency_key === "string" ? input.idempotency_key.trim() : "";
     if (!key) throw new InboxError("validation_error", "idempotency_key: required on a Send.", { field: "idempotency_key" });
     const body = typeof input.body === "string" ? input.body.trim() : "";
+    const auto = input.thread_name_auto === true;
+    let threadName: string | null = null;
+    if (input.thread_name !== undefined && input.thread_name !== null && !(typeof input.thread_name === "string" && input.thread_name.trim() === "")) {
+      const checked = checkInboxThreadName(input.thread_name);
+      if (checked.ok) threadName = checked.name;
+      else if (!auto) throw new InboxError("validation_error", `thread_name: ${checked.message}`, { field: "thread_name" });
+    }
     for (const message of this.messages.values()) {
       if (!message.started_by_person || message.idempotency_key !== key) continue;
-      if (message.body !== body) {
+      // A retry is the same Send: the same body and the same name the person typed (compose's suggestion is the body's own).
+      if (message.body !== body || (message.named_by?.kind === "person" ? message.thread_name : null) !== (auto ? null : threadName)) {
         throw new InboxError("idempotency_key_reused", "This idempotency_key was already used for a different message.", { message_id: message.id });
       }
       return { message, replayed: true };
@@ -2581,6 +2896,14 @@ export class InboxStore {
     }
     if (!body) throw new InboxError("validation_error", "body: write a message.", { field: "body" });
     if (!this.projectsById.has(input.project_id)) throw new InboxError("project_not_found", `No project ${input.project_id}.`);
+    if (threadName && auto && this.threadNameTaken(input.project_id, threadName, null)) threadName = null;
+    if (threadName && this.threadNameTaken(input.project_id, threadName, null)) {
+      throw new InboxError(
+        "thread_name_taken",
+        `Another open thread in this project is already named "${threadName}". Pick another name, or leave it empty.`,
+        { field: "thread_name" },
+      );
+    }
     const at = this.stamp();
     const id = inboxId("msg");
     const message: InboxMessage = {
@@ -2589,7 +2912,7 @@ export class InboxStore {
       thread_id: id,
       reply_to: null,
       author: { kind: "person" },
-      subject: deriveInboxSubject(body, []),
+      subject: derivePersonThreadSubject(body, { files: (input.attachments ?? []).map((attachment) => attachment.name) }),
       subject_question: null,
       body,
       created_at: at,
@@ -2597,6 +2920,7 @@ export class InboxStore {
       idempotency_key: key,
       to: { host: input.to.host, session: input.to.session },
       started_by_person: true,
+      ...(threadName ? { thread_name: threadName, named_by: { kind: auto ? ("auto" as const) : ("person" as const), at } } : {}),
       ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments.map((attachment) => ({ ...attachment, sent_at: at })) } : {}),
     };
     this.appendMessage(message, at);

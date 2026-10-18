@@ -19,12 +19,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
-import { INBOX_REMINDER_TEXT, INBOX_WAKE_INSTRUCTION, inboxWakeText } from "@plannotator/shared/inbox/connection";
+import { INBOX_NAME_THREAD_LINE, INBOX_NEW_THREAD_INSTRUCTION, INBOX_REMINDER_TEXT, INBOX_WAKE_INSTRUCTION, inboxWakeText } from "@plannotator/shared/inbox/connection";
 import {
   createInboxWorld,
   destroyInboxWorld,
   gate,
   listedThreads,
+  personComposes,
   personSends,
   QUESTION,
   registry,
@@ -37,6 +38,7 @@ import {
   worldEnv,
   type InboxWorld,
 } from "../../tests/helpers/inbox-world";
+import { expectMeasuredCost } from "../../tests/helpers/inbox-tool-cost";
 import { lastMessage, messageText, startScriptedModel, type ScriptedModel, type ScriptedRequest, type ScriptedTurn } from "../../tests/helpers/scripted-model";
 
 const opencodeBin = process.env.OPENCODE2_BIN;
@@ -323,6 +325,33 @@ describe.skipIf(!opencodeBin || !tarball)("OpenCode 2 ↔ Plannotator Inbox (the
     w.proof("the reminder rides the system prompt once, identical on the session's next request");
   }, 900_000);
 
+  test("the tool's cost per request, measured on what OpenCode 2 sends: the same prompt with the tool off and on (no reminder) differs by the tool alone, and that is the number the window shows", async () => {
+    const w = createInboxWorld("plannotator-inbox-oc2-", "01a-tool-cost", "opencode2");
+    worlds.push(w);
+    const m = model(() => null);
+    startInbox(w);
+    const turn = async (): Promise<ScriptedRequest> => {
+      const from = m.requests.length;
+      const host = await openOpenCode(w, m);
+      const session = await newSession(host);
+      await type(host, session, "hello");
+      await waitFor("the model turn", () => m.requests.slice(from).some((request) => request.tools.length > 0), 60_000);
+      await idle(host, session);
+      await host.stop();
+      return m.requests.slice(from).filter((request) => request.tools.length > 0).at(-1)!;
+    };
+    knob(w, false);
+    const without = await turn();
+    writeFileSync(path.join(w.dataDir, "config.json"), JSON.stringify({ inboxTool: { opencode: true }, inboxReminder: { opencode: false } }));
+    const withTool = await turn();
+    expect(withTool.tools).toContain("plannotator_inbox");
+    const entry = withTool.toolBytes.plannotator_inbox!;
+    // The request grows by the tool's entry and the comma before it, nothing else.
+    expect(withTool.bodyBytes - without.bodyBytes).toBe(entry + 1);
+    expectMeasuredCost("opencode", withTool.toolJson.plannotator_inbox!);
+    w.proof(`OpenCode 2 request without the tool: ${without.bodyBytes} bytes; with it: ${withTool.bodyBytes} bytes; the plannotator_inbox entry: ${entry} bytes`);
+  }, 900_000);
+
   test("send_message lands a thread; the person's Send is queued into the idle session once (never steer), Delivered to OpenCode; a typed prompt goes first and takes the wake's turn over", async () => {
     const w = createInboxWorld("plannotator-inbox-oc2-", "02-wake-queue-and-take-over", "opencode2");
     worlds.push(w);
@@ -398,11 +427,12 @@ describe.skipIf(!opencodeBin || !tarball)("OpenCode 2 ↔ Plannotator Inbox (the
     knob(w, true);
     startInbox(w);
     const personTurn = gate();
-    // In B the agent reads the project's decisions through the tool, then its turn is held.
+    // In B the agent lists its threads through the tool (read_thread's "N threads in <project>."), then its turn is held.
+    const listed = (text: string) => /\b\d+ threads? in /.test(text);
     const m = model((request) => {
       const last = lastMessage(request);
-      if (last.role === "user" && last.text === "Refactor the webhook handler.") return { toolCall: { name: "plannotator_inbox", arguments: { action: "list_decisions" } } };
-      if (last.role === "tool" && last.text.includes("decision")) return { text: "Refactoring.", hold: personTurn.promise };
+      if (last.role === "user" && last.text === "Refactor the webhook handler.") return { toolCall: { name: "plannotator_inbox", arguments: { action: "read_thread" } } };
+      if (last.role === "tool" && listed(last.text)) return { text: "Refactoring.", hold: personTurn.promise };
       return null;
     });
     // A and B share one OpenCode home and database: one session, two processes.
@@ -416,7 +446,7 @@ describe.skipIf(!opencodeBin || !tarball)("OpenCode 2 ↔ Plannotator Inbox (the
 
     // The person works in B (its turn held at the model); A sits idle.
     await type(b, session, "Refactor the webhook handler.");
-    await waitFor("B's held turn at the model", () => m.requests.some((request) => lastMessage(request).role === "tool" && lastMessage(request).text.includes("decision")), 60_000);
+    await waitFor("B's held turn at the model", () => m.requests.some((request) => lastMessage(request).role === "tool" && listed(lastMessage(request).text)), 60_000);
     const replyId = await personSends(w, asked.message_id, "Retry with the same key.");
     await Bun.sleep(8_000);
     expect(wakeRequests(m)).toEqual([]);
@@ -433,5 +463,39 @@ describe.skipIf(!opencodeBin || !tarball)("OpenCode 2 ↔ Plannotator Inbox (the
     const delivered = (await thread(w, asked.thread_id)).messages.find((message) => message.id === replyId)?.delivery;
     expect(delivered).toMatchObject({ state: "delivered", host: "opencode", session });
     w.proof(`B's turn ended: the reply was queued in B, once (wake rows A 0, B 1; delivered at ${delivered?.at})`);
+  }, 900_000);
+
+  test("a thread the person starts: the wake asks the session to name it, and the name its reply passes becomes the thread's chip", async () => {
+    const w = createInboxWorld("plannotator-inbox-oc2-", "04-compose-name-the-thread", "opencode2");
+    worlds.push(w);
+    knob(w, true);
+    startInbox(w);
+    // The scripted model does what the wake asks: when it says to name the thread, its reply passes `thread`.
+    const m = model((request) => {
+      const last = lastMessage(request);
+      const wake = /^Plannotator Inbox: .* \((msg_[^)]+)\)$/.exec(last.text.split("\n", 1)[0] ?? "");
+      if (last.role !== "user" || !wake) return null;
+      const name = last.text.includes(INBOX_NAME_THREAD_LINE) ? { thread: "Relay retry budget" } : {};
+      return { toolCall: { name: "plannotator_inbox", arguments: { action: "send_message", body: "On it.", reply_to: wake[1], ...name } } };
+    });
+    const host = await openOpenCode(w, m);
+    const session = await newSession(host);
+    // A run makes the session's wake (and its poll) start.
+    await type(host, session, "hello");
+    await waitFor("the first model turn", () => m.requests.some((request) => request.tools.length > 0), 60_000);
+    await idle(host, session);
+    const { port } = registry(w);
+    await waitFor("the session live in the Inbox", async () => {
+      const model = (await (await fetch(`http://127.0.0.1:${port}/api/inbox/sessions`)).json()) as { projects: { sessions: { session: string }[] }[] };
+      return model.projects.some((group) => group.sessions.some((s) => s.session === session));
+    }, 60_000);
+
+    const rootId = await personComposes(w, { host: "opencode", session }, "Idea: a retry budget for the relay. Five a minute should do.");
+    const wake = await waitFor("the new-thread wake at the model", () => wakeRequests(m)[0], 60_000);
+    expect(wake.split("\n").slice(1, 3)).toEqual([INBOX_NEW_THREAD_INSTRUCTION, INBOX_NAME_THREAD_LINE]);
+    const named = await waitFor("the thread named", async () => (await thread(w, rootId)).thread_name ?? null, 60_000);
+    expect(named).toBe("Relay retry budget");
+    expect((await thread(w, rootId)).subject).toBe("Idea: a retry budget for the relay");
+    w.proof(`the wake:\n${wake}\n\nthe agent's reply named the thread "${named}"`);
   }, 900_000);
 });

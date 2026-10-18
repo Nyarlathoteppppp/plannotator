@@ -90,7 +90,7 @@ function refuse(status: number, code: string, error: string, details: Record<str
  * door path outside it is `404 device_route_not_found`; the window, `/mcp`,
  * the bridge, control, settings, restart, the raw text route
  * (`attachments/<id>`; text reaches the phone through `view`), project
- * deletion, decision retire and replace, drafts, recent searches, "Open in",
+ * deletion, drafts, recent searches, "Open in",
  * pairing and the device list are never on it. An attachment's bytes reach
  * the phone only through the window's own `image` and `download` routes, so
  * the dotenv refusal, the size checks and the headers are the window's. The
@@ -125,7 +125,7 @@ const ALLOWLIST: readonly DoorRoute[] = [
   { method: "POST", route: /^threads\/([^/]+)\/(read|unread)$/, window: (m) => `/api/inbox/threads/${m[1]}/${m[2]}` },
   { method: "GET", route: /^events$/, window: () => "/api/inbox/events" },
   // `to`: Send to another session (7.41), a person message no session took yet. `ack`: 👍 Looks good and its Undo (7.56).
-  { method: "POST", route: /^messages\/([^/]+)\/(picks|reply|resolve|to|ack)$/, window: (m) => `/api/inbox/messages/${m[1]}/${m[2]}` },
+  { method: "POST", route: /^messages\/([^/]+)\/(picks|reply|resolve|to|ack|send-now)$/, window: (m) => `/api/inbox/messages/${m[1]}/${m[2]}` },
   { method: "POST", route: /^threads\/([^/]+)\/delete$/, window: (m) => `/api/inbox/threads/${m[1]}/delete` },
   { method: "GET", route: /^threads\/([^/]+)\/attachments$/, window: (m) => `/api/inbox/threads/${m[1]}/attachments` },
   { method: "GET", route: /^attachments\/([^/]+)\/view$/, window: (m) => `/api/inbox/attachments/${m[1]}/view` },
@@ -147,8 +147,6 @@ const ALLOWLIST: readonly DoorRoute[] = [
   { method: "POST", route: /^messages\/([^/]+)\/guide\/reviewed$/, window: (m) => `/api/inbox/messages/${m[1]}/guide/reviewed` },
   // A comment on a guided review's diff (7.53), new or edited (same annotation id); removed through annotations/:id/remove.
   { method: "POST", route: /^messages\/([^/]+)\/guide\/annotations$/, window: (m) => `/api/inbox/messages/${m[1]}/guide/annotations` },
-  { method: "POST", route: /^messages\/([^/]+)\/decision$/, window: (m) => `/api/inbox/messages/${m[1]}/decision` },
-  { method: "GET", route: /^decisions$/, window: () => "/api/inbox/decisions" },
   { method: "GET", route: /^threads\/([^/]+)\/sessions$/, window: (m) => `/api/inbox/threads/${m[1]}/sessions` },
   { method: "POST", route: /^threads\/([^/]+)\/message$/, window: (m) => `/api/inbox/threads/${m[1]}/message` },
   // Compose (7.39, 7.40): every live session, and a thread the person starts (the body's key is also the store's own).

@@ -21,6 +21,7 @@ import { middleCutInboxName, type InboxSearchGroupId, type InboxSearchRow } from
 import { saveRecentSearch, searchInbox, type SearchModel } from '../api';
 
 import { HostMark, Icon } from '../icons';
+import { isTextCut, ProjectTipText, Tip } from '../components/Tip';
 import { actionLabel, busyWord, namesActionWord, startedLine, type ComposeAction } from '../compose/model';
 import {
   FROM_OPTIONS,
@@ -33,6 +34,7 @@ import {
   markedRuns,
   moreLabel,
   resultTarget,
+  rowThreadChip,
   scopeWords,
   searchTime,
   searchGroups,
@@ -40,6 +42,7 @@ import {
   type SearchFilters,
   type SearchGroupView,
   type SearchOption,
+  type RowThreadChip,
 } from './model';
 
 /** How long typing settles before a query goes out. */
@@ -129,18 +132,86 @@ function Secondary({ parts }: { parts: readonly (ReactNode | null | false)[] }) 
   );
 }
 
+/**
+ * The thread chip, the list's own (`.ib-key` / `.ib-keyt`): the thread's name
+ * in the list's monospace face, or, for a thread with no name, its subject in
+ * the row's face. Its tooltip and accessible words carry the whole thread:
+ * "Thread nightly-deploy: Investigate why…" (always for a named thread, whose
+ * subject is not on screen; a subject chip only while it is cut).
+ */
+function ThreadChip({ chip }: { chip: RowThreadChip }) {
+  const whole = chip.kind === 'name' && chip.subject ? `${chip.text}: ${chip.subject}` : chip.text;
+  const named = chip.kind === 'name' && Boolean(chip.subject);
+  return (
+    <Tip content={`Thread: ${whole}`} when={named ? undefined : (trigger) => isTextCut(trigger.querySelector('.ib-keyt'))}>
+      <span className={`ib-key ib-sp-key${chip.kind === 'subject' ? ' ib-sp-key-subj' : ''}`} data-result-thread={chip.kind}>
+        <span className="ib-sr">Thread: </span>
+        <bdi className="ib-keyt" dir="auto">
+          {chip.text}
+        </bdi>
+        {chip.kind === 'name' && chip.subject && <span className="ib-sr">, {chip.subject}</span>}
+        <span className="ib-sr">, </span>
+      </span>
+    </Tip>
+  );
+}
+
+/**
+ * A result's second line: the thread chip first (where a phone's list row
+ * draws it, ahead of what the thread holds), then what the result is (its
+ * author or folder), the project, the section, the time, apart
+ * by "·" (", " for a screen reader). One line: the project and the chip give way
+ * together; the lead, the section and the time keep their place. Each
+ * user-written part is a `<bdi dir="auto">` cut at its own end, its whole
+ * text in the DOM and in a tooltip while it is cut.
+ */
+function MetaLine({ chip, lead, project, section, at }: { chip: RowThreadChip | null; lead?: ReactNode; project: string; section?: string | null; at?: string | null }) {
+  const parts: { node: ReactNode; className: string }[] = [];
+  if (lead) parts.push({ node: lead, className: 'ib-sp-lead' });
+  parts.push({
+    node: (
+      <Tip content={project} when={(trigger) => isTextCut(trigger.closest('.ib-sp-pj'))}>
+        <bdi dir="auto">{project}</bdi>
+      </Tip>
+    ),
+    className: 'ib-sp-pj',
+  });
+  if (section) parts.push({ node: section, className: 'ib-sp-sec' });
+  if (at) parts.push({ node: at, className: 'ib-sp-at' });
+  return (
+    <span className="ib-sp-s ib-sp-tl">
+      {chip && <ThreadChip chip={chip} />}
+      {parts.map((part, i) => (
+        <span key={i} className={part.className}>
+          {i > 0 && (
+            <>
+              <span className="ib-sp-sep" aria-hidden="true">
+                ·
+              </span>
+              <span className="ib-sr">, </span>
+            </>
+          )}
+          {part.node}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function RowBody({ row, phone, projectName }: { row: InboxSearchRow; phone: boolean; projectName: string }) {
-  const project = <bdi title={projectName}>{projectName}</bdi>;
+  const chip = rowThreadChip(row);
   switch (row.type) {
     case 'thread': {
       const label = row.archived || row.section === 'stopped' ? null : sectionLabel(row.section);
       return (
         <>
           <span className="ib-sp-rs">
-            <span className="ib-sp-p" dir="auto" title={row.title}>
-              <Marked text={row.title} marks={row.title_marks} />
-            </span>
-            <Secondary parts={[project, row.thread_name && <bdi title={row.thread_name}>{row.thread_name}</bdi>, label, searchTime(row.at)]} />
+            <Tip content={row.title} cut>
+              <span className="ib-sp-p" dir="auto">
+                <Marked text={row.title} marks={row.title_marks} />
+              </span>
+            </Tip>
+            <MetaLine chip={chip} project={projectName} section={label} at={searchTime(row.at)} />
           </span>
           {row.archived ? <span className="ib-sp-chip">Archived</span> : row.section === 'stopped' ? <span className="ib-sp-chip ib-sp-warn">Stopped</span> : null}
         </>
@@ -150,10 +221,12 @@ function RowBody({ row, phone, projectName }: { row: InboxSearchRow; phone: bool
       return (
         <>
           <span className="ib-sp-rs">
-            <span className="ib-sp-p ib-sp-snip" dir="auto" title={row.snippet.text}>
-              <Marked text={row.snippet.text} marks={row.snippet.marks} />
-            </span>
-            <Secondary parts={[row.author.kind === 'me' ? 'You' : row.author.name, <bdi title={row.title}>{row.title}</bdi>, project, searchTime(row.at)]} />
+            <Tip content={row.snippet.text} cut>
+              <span className="ib-sp-p ib-sp-snip" dir="auto">
+                <Marked text={row.snippet.text} marks={row.snippet.marks} />
+              </span>
+            </Tip>
+            <MetaLine chip={chip} lead={row.author.kind === 'me' ? 'You' : <bdi dir="auto">{row.author.name}</bdi>} project={projectName} at={searchTime(row.at)} />
           </span>
           {row.question && <span className="ib-sp-chip">Question</span>}
           {row.question?.replaced && <span className="ib-sp-chip">Replaced</span>}
@@ -166,35 +239,30 @@ function RowBody({ row, phone, projectName }: { row: InboxSearchRow; phone: bool
       return (
         <>
           <span className="ib-sp-rs">
-            <span className="ib-sp-p" dir="auto" title={row.name}>
-              <Marked text={cut.text} marks={cut.marks} />
-            </span>
-            <Secondary parts={[<bdi>{row.type === 'guide' ? 'Guided review' : row.folder ? `${row.folder}/` : 'File'}</bdi>, <bdi title={row.title}>{row.title}</bdi>, project]} />
+            {/* The name is cut in its middle here (JS): the whole name whenever it is cut, either way. */}
+            <Tip content={row.name} when={(trigger) => cut.text !== row.name || isTextCut(trigger)}>
+              <span className="ib-sp-p" dir="auto">
+                <Marked text={cut.text} marks={cut.marks} />
+              </span>
+            </Tip>
+            <MetaLine chip={chip} lead={<bdi dir="auto">{row.type === 'guide' ? 'Guided review' : row.folder ? `${row.folder}/` : 'File'}</bdi>} project={projectName} />
           </span>
           <span className="ib-sp-chip ib-sp-kind">{row.kind}</span>
           {row.archived && <span className="ib-sp-chip">Archived</span>}
         </>
       );
     }
-    case 'decision':
-      return (
-        <>
-          <span className="ib-sp-rs">
-            <span className="ib-sp-p" dir="auto" title={row.text}>
-              <Marked text={row.text} marks={row.text_marks} />
-            </span>
-            <Secondary parts={[row.state === 'current' ? 'Settled' : row.state === 'replaced' ? 'Replaced' : 'Retired', project, searchTime(row.at)]} />
-          </span>
-          {row.state !== 'current' && <span className="ib-sp-chip">{row.state === 'replaced' ? 'Replaced' : 'Retired'}</span>}
-        </>
-      );
     case 'project':
       return (
         <span className="ib-sp-rs">
-          <span className="ib-sp-p" dir="auto" title={row.root}>
-            <Marked text={row.name} marks={row.name_marks} />
-          </span>
-          <Secondary parts={['Project', <bdi title={row.root}>{row.root}</bdi>]} />
+          {/* The folder is the project's whole identity; the name may be cut. */}
+          <Tip content={<ProjectTipText name={row.name} root={row.root} />}>
+            <span className="ib-sp-p" dir="auto">
+              <Marked text={row.name} marks={row.name_marks} />
+            </span>
+          </Tip>
+          {/* The name's tooltip names the whole folder. */}
+          <Secondary parts={['Project', <bdi>{row.root}</bdi>]} />
         </span>
       );
   }
@@ -563,21 +631,22 @@ export default function SearchPalette(props: SearchPaletteProps) {
     const set = filters[kind] !== null;
     const label = chipText(kind, filters, projectName);
     const button = (
-      <button
-        type="button"
-        className="ib-sp-fchip"
-        data-chip={kind}
-        data-set={set ? '' : undefined}
-        aria-haspopup="menu"
-        aria-expanded={menu?.kind === kind}
-        title={label}
-        onClick={() => openMenu(kind)}
-      >
-        <span className="ib-sp-fl" dir="auto">
-          {label}
-        </span>
-        <Icon name="chevD" />
-      </button>
+      <Tip content={label} when={(trigger) => isTextCut(trigger.querySelector('.ib-sp-fl'))}>
+        <button
+          type="button"
+          className="ib-sp-fchip"
+          data-chip={kind}
+          data-set={set ? '' : undefined}
+          aria-haspopup="menu"
+          aria-expanded={menu?.kind === kind}
+          onClick={() => openMenu(kind)}
+        >
+          <span className="ib-sp-fl" dir="auto">
+            {label}
+          </span>
+          <Icon name="chevD" />
+        </button>
+      </Tip>
     );
     if (!set) return <span key={kind} className="ib-sp-fcell">{button}</span>;
     return (
@@ -615,9 +684,11 @@ export default function SearchPalette(props: SearchPaletteProps) {
               onClick={() => pick(menu.kind, item.value)}
             >
               <span className="ib-sp-mck">{checked && <Icon name="check" />}</span>
-              <span className="ib-sp-ml" dir="auto" title={item.label}>
-                {item.label}
-              </span>
+              <Tip content={item.label} cut>
+                <span className="ib-sp-ml" dir="auto">
+                  {item.label}
+                </span>
+              </Tip>
             </div>
           );
         })}
@@ -664,7 +735,7 @@ export default function SearchPalette(props: SearchPaletteProps) {
       );
     }
     if (options.length === 0) {
-      if (!answered.q && !filtered) return <div className="ib-sp-empty ib-sp-quiet">Type to search threads, messages, files and decisions.</div>;
+      if (!answered.q && !filtered) return <div className="ib-sp-empty ib-sp-quiet">Type to search threads, messages and files.</div>;
       const scope = scopeWords(filters, projectName);
       return (
         <div className="ib-sp-empty" data-search-none="">
@@ -728,9 +799,11 @@ export default function SearchPalette(props: SearchPaletteProps) {
                 <div key={`q-${option.q}`} className="ib-sp-row" {...common} data-recent-search="">
                   <Icon name="clock" className="ib-sp-mk" />
                   <span className="ib-sp-rs">
-                    <span className="ib-sp-p" dir="auto" title={option.q}>
-                      {option.q}
-                    </span>
+                    <Tip content={option.q} cut>
+                      <span className="ib-sp-p" dir="auto">
+                        {option.q}
+                      </span>
+                    </Tip>
                   </span>
                 </div>
               );
@@ -814,8 +887,8 @@ export default function SearchPalette(props: SearchPaletteProps) {
           aria-autocomplete="list"
           aria-controls={listId}
           aria-activedescendant={hl !== null && options[hl] ? optionId(hl) : undefined}
-          placeholder="Search threads, messages, files and decisions"
-          aria-label="Search threads, messages, files and decisions"
+          placeholder="Search threads, messages and files"
+          aria-label="Search threads, messages and files"
           dir="auto"
           maxLength={400}
           value={q}
@@ -867,3 +940,4 @@ export default function SearchPalette(props: SearchPaletteProps) {
     </dialog>
   );
 }
+

@@ -90,6 +90,7 @@ import {
   INBOX_BRIDGE_POLL_MAX_MS,
   INBOX_BRIDGE_POLL_PATH,
   INBOX_MAX_REQUEST_BYTES,
+  INBOX_SEND_NOW_POLL_FIELD,
   type InboxReplyCommand,
 } from "@plannotator/shared/inbox/connection";
 import {
@@ -104,13 +105,6 @@ import { openBrowser } from "./browser";
 import { isAddressInUseError } from "./remote";
 import { createRequestHostGuard } from "./request-host-guard";
 import { createInboxMcpServer } from "./inbox-mcp";
-import {
-  handleInboxDecisionRoute,
-  INBOX_DECISION_ERROR_STATUS,
-  recordDecisionsForReply,
-  threadDecisions,
-  waitingDecisionCount,
-} from "./inbox-decisions";
 import { inboxGuideRoute } from "./inbox-guides";
 import { createInboxRepoCache } from "./inbox-repos";
 import { createInboxProjectRoots, nearestProjectHolding, type InboxGitRunner } from "./inbox-project-root";
@@ -128,14 +122,18 @@ import { createInboxRelay } from "./inbox-relay";
 import type { TailscaleRunner } from "@plannotator/shared/tailscale";
 import { createInboxTailscale, PHONES_TAILNET_HTTPS_PORT, type InboxTailscale } from "./inbox-tailscale";
 import { createInboxUpdates, type InboxUpdatesOptions } from "./inbox-updates";
+import { inboxCanonicalBaseUrl, inboxCanonicalRedirect } from "./inbox-canonical";
+import { createInboxWindows, parseWindowId, parseWindowOrigin, parseWindowPermission } from "./inbox-windows";
 import {
   agentSpec,
+  claudeCodeModOn,
   connectInboxAgents,
   createAgentEnvironment,
   createAgentEnvironmentFor,
   displayPath,
   inboxAgentReach,
   inboxConnectDisabled,
+  inboxPluginStatus,
   readInboxAgents,
   setInboxAgentReach,
   setInboxTool,
@@ -228,6 +226,8 @@ export interface InboxServerOptions {
    * tests): `/` answers a one-line page saying so.
    */
   htmlContent?: string;
+  /** Tests: how long a window's record outlives its last event stream (default `WINDOW_GRACE_MS`). */
+  windowGraceMs?: number;
   /**
    * The argv that runs this CLI (the compiled binary's absolute path, or bun
    * plus the entry script), so the window's connect snippets name a command
@@ -348,7 +348,6 @@ const ERROR_STATUS: Record<string, number> = {
   // The project menu: a batch_id already answered another project or action.
   batch_id_reused: 409,
   config_not_saved: 500,
-  ...INBOX_DECISION_ERROR_STATUS,
   // Attachments and annotations (step 2).
   attachment_not_found: 404,
   attachment_missing: 404,
@@ -368,9 +367,13 @@ const ERROR_STATUS: Record<string, number> = {
   guide_not_found: 404,
   // New message (step 8).
   session_not_live: 409,
+  // Send now: the session's connection does not poll now, or cannot deliver into a running turn.
+  send_now_unavailable: 409,
   // Compose: a new thread the person starts (packages/server/inbox-compose.ts).
   already_delivered: 409,
   not_addressed: 422,
+  // A thread name another open thread of the project already has.
+  thread_name_taken: 409,
   draft_conflict: 409,
   upload_refused: 422,
   upload_too_large: 413,
@@ -502,7 +505,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     (timer as { unref?: () => void }).unref?.();
     setAsideTimers.add(timer);
   };
-  // 👍 Looks good: agents see an ack once the same Undo window has passed with it standing.
+  // 👍 Looks good: once the same Undo window has passed with it standing, the ack is sent to the agent (a note, delivered like a reply).
   const settleAcks = () => {
     try {
       store.settleAcks(setAsideDelayMs);
@@ -527,6 +530,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
   let baseUrl = "";
   let portChanged = false;
   const statusListeners = new Set<() => void>();
+  // The Inbox windows open now and whether any can show a notification (inbox-windows.ts).
+  const windows = createInboxWindows({ graceMs: options.windowGraceMs });
   const binaryPath = options.binaryPath !== undefined ? options.binaryPath : version !== "dev" ? process.execPath : null;
   // The sidebar's Update button (packages/server/inbox-updates.ts): the daily
   // release check, the binary on disk, Update now, Remind me tomorrow.
@@ -600,7 +605,15 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     { legacy: "stateless", maxRequestBodySize: INBOX_MAX_REQUEST_BYTES },
   );
 
-  const health = (): InboxHealth => ({ ok: true, app: INBOX_APP_ID, version, serverSession, pid: process.pid, update: updates.current() });
+  const health = (): InboxHealth => ({
+    ok: true,
+    app: INBOX_APP_ID,
+    version,
+    serverSession,
+    pid: process.pid,
+    update: updates.current(),
+    notify_reach: windows.reach(notificationsState().enabled),
+  });
 
   /**
    * The sidebar's folders: every project, with its thread and unread counts,
@@ -668,8 +681,6 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       // Quiet included, and Settings lists them (GET /api/inbox/threads/archived).
       // Without it they stay in Quiet, as an older window and the phone expect.
       sections: inboxListSections(archived === "exclude" ? scoped.filter((row) => !inboxRowArchived(row)) : scoped),
-      /** Questions in every project that record a decision once answered and sent: the sidebar's Decisions count. */
-      decisions_waiting: waitingDecisionCount(store),
     };
   };
 
@@ -770,12 +781,25 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         const reach = await inboxAgentReach(id, options);
         const host = (INBOX_TOOL_HOSTS as readonly string[]).includes(id) ? (id as InboxToolHost) : null;
         // The Inbox tool switch of the three Plannotator hosts stays reachable whether or not the agent was found.
-        const tool = host ? { on: resolveInboxTool(config, env, host), locked: toolEnv !== undefined } : null;
-        const reminder = host ? { on: resolveInboxReminder(config, env, host), locked: toolEnv !== undefined, needs_tool: !resolveInboxTool(config, env, host) } : null;
+        // chosen_off: config.json turns it off by name (the person's choice, e.g. Settings' switch), not the host default.
+        // Claude Code's tool comes from its plugin's mod: with the mod off (PLANNOTATOR_CLAUDE_MOD / claudeCodeMod) there is none.
+        const modOff = id === "claude-code" && !claudeCodeModOn(agentEnvironment);
+        const tool = host
+          ? {
+              on: !modOff && resolveInboxTool(config, env, host),
+              locked: toolEnv !== undefined,
+              chosen_off: toolEnv === undefined && configuredInboxTool(config, host) === false,
+              ...(modOff ? { mod_off: true } : {}),
+            }
+          : null;
+        // No tool (the inboxTool switch, or Claude Code's mod off): no reminder.
+        const reminder = host
+          ? { on: !modOff && resolveInboxReminder(config, env, host), locked: toolEnv !== undefined, needs_tool: modOff || !resolveInboxTool(config, env, host) }
+          : null;
         // With PLANNOTATOR_INBOX_NOTES=0 only a note already written is listed, so it can still be turned off.
         const status = (INBOX_NOTE_AGENT_IDS as readonly string[]).includes(id) ? noteStatus(id as InboxNoteAgentId, dataDir, agentEnvironment) : null;
         const note = status && (!notesOff || status.state === "added" || status.state === "edited") ? status : null;
-        return { id, label: INBOX_AGENT_LABELS[id], detected, reach, tool, reminder, note };
+        return { id, label: INBOX_AGENT_LABELS[id], detected, reach, tool, reminder, note, plugin: inboxPluginStatus(id, agentEnvironment) };
       }),
     );
     return {
@@ -1112,6 +1136,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     data_dir: dataDir,
     inbox_tool: inboxToolState(),
     notifications: notificationsState(),
+    /** Whether a notification can reach the person now: the windows open and how many may notify. */
+    notify_reach: windows.reach(notificationsState().enabled),
     /** The question sound: the Settings row, and whether the one-time dialog was shown. */
     sound: soundState(),
     /** Settings → About: update notices and automatic updates. */
@@ -1165,17 +1191,25 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       case "question":
         // The store's one question state: a question an agent asked after the archive line is live (notifications, the sound).
         return { seq: line.seq, kind: line.kind, id: line.id, question: store.questionWire(line.record) };
-      case "decision":
-        return { seq: line.seq, kind: line.kind, id: line.id, decision: line.record };
       case "annotation":
         return { seq: line.seq, kind: line.kind, id: line.id, annotation: line.record };
     }
   };
 
-  const eventStream = (req: Request, url: URL): Response => {
-    const raw = url.searchParams.get("cursor") ?? req.headers.get("last-event-id");
-    const parsed = raw === null ? null : Number(raw);
-    const cursor = parsed !== null && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+  const eventStream = (req: Request, url: URL, via: RequestVia): Response => {
+    // A reconnect: EventSource sends the last id it saw, while its URL still
+    // carries the cursor it first opened with. The last id wins, so a tab that
+    // slept or lost its connection catches up from where it was (and raises
+    // what it missed) instead of replaying everything since it loaded.
+    // Only a usable id counts (a non-negative whole number): an empty or
+    // malformed header falls back to the URL's cursor, never to a full replay
+    // or to none.
+    const seqOf = (raw: string | null): number | null => {
+      if (raw === null || !/^\d+$/.test(raw.trim())) return null;
+      const value = Number(raw.trim());
+      return Number.isSafeInteger(value) ? value : null;
+    };
+    const cursor = seqOf(req.headers.get("last-event-id")) ?? seqOf(url.searchParams.get("cursor"));
     const encoder = new TextEncoder();
     let cleanup = () => {};
     const stream = new ReadableStream<Uint8Array>({
@@ -1194,11 +1228,27 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         // `updated` (additive): the "What's new in X" link appears or goes once its notes are fetched or cannot be.
         const onStatus = () => send(`event: status\ndata: ${JSON.stringify({ update: updates.current(), updated: updates.updated() })}\n\n`);
         statusListeners.add(onStatus);
+        // An Inbox window (not the phone's door): counted while its stream is open, with what it reported.
+        const windowId = parseWindowId(url.searchParams.get("window"));
+        const leave = windowId
+          ? windows.connect(windowId, {
+              permission: parseWindowPermission(url.searchParams.get("permission")),
+              origin: parseWindowOrigin(url.searchParams.get("origin")),
+              via,
+            })
+          : () => {};
+        // Whether a notification can reach the person: every window's Settings shows it live.
+        // Windows only: the phone's door (contract 7.9) gets hello, record, status and the heartbeat.
+        const sendReach = () => send(`event: reach\ndata: ${JSON.stringify(windows.reach(notificationsState().enabled))}\n\n`);
+        const stopReach = windowId ? windows.subscribe(sendReach) : () => {};
+        if (windowId) sendReach();
         const heartbeat = setInterval(() => send(": ping\n\n"), SSE_HEARTBEAT_MS);
         cleanup = () => {
           clearInterval(heartbeat);
           unsubscribe();
           statusListeners.delete(onStatus);
+          stopReach();
+          leave();
         };
         req.signal.addEventListener("abort", () => {
           cleanup();
@@ -1232,7 +1282,13 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
   // out again on every poll until it is delivered or an agent read it, and it
   // survives an Inbox restart.
   const threadPageUrl = (base: string, threadId: string) => `${base}#thread=${threadId}`;
-  const replyCommand = (reply: InboxMessage): InboxReplyCommand => {
+  /** The session a person's message without `to` goes to: the author of the message it answers. */
+  const recipientOf = (reply: InboxMessage): string | null => {
+    const parent = reply.reply_to ? store.message(reply.reply_to) : null;
+    return parent?.author.kind === "agent" ? parent.author.session : null;
+  };
+  /** `sendNow`: the polling connection said it can deliver into a running turn; only then does a Send now reply carry `now`. */
+  const replyCommand = (reply: InboxMessage, sendNow = false): InboxReplyCommand => {
     // A reply the person sent to another session because the one that asked
     // had ended: the wake says so, naming the agent that asked.
     const asked = reply.to && reply.reply_to ? store.message(reply.reply_to) : null;
@@ -1267,6 +1323,12 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       // A thread the person started: the wake says so (INBOX_NEW_THREAD_INSTRUCTION).
       ...(reply.started_by_person && reply.thread_id === reply.id ? { new_thread: true } : {}),
       ...(continues && !redirected ? { continues_thread: true } : {}),
+      // Send now: the connection delivers it at once, into the running turn when one runs.
+      ...(reply.deliver_now_at && sendNow ? { now: true } : {}),
+      // A thread the person started with no name yet, handed to a session that may name it: the wake asks it to.
+      ...(!reply.ack_of && store.canNameThread(reply.thread_id, reply.to?.session ?? recipientOf(reply)) ? { name_thread: true } : {}),
+      // The person's 👍 Looks good (amended 2026-10-16): the wake is the one ack line.
+      ...(reply.ack_of ? { ack_of: reply.ack_of } : {}),
     };
   };
 
@@ -1284,7 +1346,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     const waitMs = Math.min(Math.max(requested, 0), INBOX_BRIDGE_POLL_MAX_MS);
     // Step 8: a polling session is live (New message can reach it) while its poll is held.
     const answered = await live.pollStarted(session, bridgeHost(body), body);
-    const commands = () => store.pendingReplies(session).map(replyCommand);
+    const sendNow = body[INBOX_SEND_NOW_POLL_FIELD] === true;
+    const commands = () => store.pendingReplies(session).map((reply) => replyCommand(reply, sendNow));
     const now = commands();
     if (now.length > 0 || waitMs === 0) {
       answered();
@@ -1322,6 +1385,11 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     const host = bridgeHost(body);
     if (body.type === "state") {
       live.stateChanged(session, host, body);
+      return json({ ok: true });
+    }
+    // Send now could not go into the running turn: the reply reads as queued again and waits for idle.
+    if (body.type === "send_now_failed" && typeof body.id === "string") {
+      store.clearDeliverNow(body.id, session);
       return json({ ok: true });
     }
     if (body.type !== "delivered" || typeof body.id !== "string") {
@@ -1506,7 +1574,19 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       if (path === "/api/inbox/threads" && req.method === "GET") return json(listModel(projectFilterOf(url), archivedModeOf(url)));
       if (path === "/api/inbox/threads/archived" && req.method === "GET") return json(archivedModel(url));
       if (path === "/api/inbox/projects" && req.method === "GET") return json({ serverSession, cursor: store.cursor(), projects: projectFolders() });
-      if (path === "/api/inbox/events" && req.method === "GET") return eventStream(req, url);
+      if (path === "/api/inbox/events" && req.method === "GET") return eventStream(req, url, via);
+      // A window's report: its browser's notification permission for its own origin changed (inbox-windows.ts).
+      if (path === "/api/inbox/window") {
+        if (req.method !== "POST") return json({ error: "Use POST." }, 405);
+        const body = await readBody(req);
+        if (checkServerSession(body, serverSession) === "mismatch") return json(serverSessionMismatchBody(INBOX_SERVER_SESSION_MISMATCH_ERROR), 409);
+        const windowId = parseWindowId(body.window);
+        const permission = parseWindowPermission(body.permission);
+        if (!windowId) throw new InboxError("validation_error", "window: 8 to 64 letters, digits, - or _.", { field: "window" });
+        if (!permission) throw new InboxError("validation_error", "permission: granted, default, denied or unsupported.", { field: "permission" });
+        windows.report(windowId, { permission, origin: parseWindowOrigin(body.origin), via });
+        return json({ notify_reach: windows.reach(notificationsState().enabled) });
+      }
       if (path === "/api/inbox/restart") {
         if (req.method !== "POST") return json({ error: "Use POST." }, 405);
         const body = await readBody(req);
@@ -1656,10 +1736,9 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         if (store.thread(threadMatch[1]!)) imageCapture.schedule(threadMatch[1]!);
         const thread = store.windowThread(threadMatch[1]!);
         if (!thread) return json({ error: "No such thread.", code: "thread_not_found" }, 404);
-        const decisionIds = thread.messages.flatMap((m) => (m.questions ?? []).map((q) => q.decision_id));
         const withRepo = { ...thread, project: { ...thread.project, repo: repos.get(thread.project.root) } };
         // `row` (additive): the thread's list row, also for an archived thread, which the window's list leaves out.
-        return json({ serverSession, cursor: store.cursor(), thread: withRepo, decisions: threadDecisions(store, decisionIds), row: store.listRow(thread.thread_id) });
+        return json({ serverSession, cursor: store.cursor(), thread: withRepo, row: store.listRow(thread.thread_id) });
       }
 
       const seenMatch = /^\/api\/inbox\/threads\/([A-Za-z0-9_]+)\/seen$/.exec(path);
@@ -1815,23 +1894,18 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
               // A skip-only target whose questions closed meanwhile: a no-op, so
               // the rest of a multi-message Send still goes.
               if (error instanceof InboxError && error.code === "nothing_to_send") {
-                return json({ message_id: messageId, questions: store.questionsOf(messageId), reply: null, replayed: false, nothing_to_send: true, decisions: [], decisions_refused: [] });
+                return json({ message_id: messageId, questions: store.questionsOf(messageId), reply: null, replayed: false, nothing_to_send: true });
               }
               throw error;
             }
             if (result.replayed) removeInboxAttachmentFiles(store.dir, attachments);
             // Sent: the uploads are the reply's attachments now.
             else if (attachments.length > 0) removeInboxUploads(store.dir, uploads.filter((id): id is string => typeof id === "string"));
-            // Step 3: the sent answers whose decision switch is on become
-            // decisions, after the reply landed; a refused one never undoes it.
-            const decisions = recordDecisionsForReply(store, result.reply.id);
             return json({
               message_id: messageId,
               questions: store.questionsOf(messageId),
               reply: result.reply,
               replayed: result.replayed,
-              decisions: decisions.recorded,
-              decisions_refused: decisions.refused,
             });
           }
           case "resolve": {
@@ -1846,17 +1920,10 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         }
       }
 
-      // ── Step 3: decisions (packages/server/inbox-decisions.ts) ──
-      const decisionResponse = await handleInboxDecisionRoute(req, url, {
-        store,
-        serverSession,
-        readBody,
-        json,
-        staleTab: (body) => (checkServerSession(body, serverSession) === "mismatch" ? json(serverSessionMismatchBody(INBOX_SERVER_SESSION_MISMATCH_ERROR), 409) : null),
-      });
-      if (decisionResponse) return decisionResponse;
-
       if (path === "/" && (req.method === "GET" || req.method === "HEAD")) {
+        // One origin: notification permission is per origin (inbox-canonical.ts).
+        const canonical = inboxCanonicalRedirect(req, url, port, via);
+        if (canonical) return canonical;
         const page = options.htmlContent ?? NOT_BUILT_PAGE;
         return new Response(req.method === "HEAD" ? null : page, {
           headers: {
@@ -1922,7 +1989,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
   server = started.server;
   portChanged = started.portChanged;
   port = server.port as number;
-  baseUrl = `http://localhost:${port}/`;
+  baseUrl = inboxCanonicalBaseUrl(port);
 
   const registry: InboxRegistryEntry = {
     v: 1,
@@ -2023,6 +2090,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     if (stopped) return;
     stopped = true;
     clearInterval(dataCheck);
+    windows.stop();
     for (const timer of setAsideTimers) clearTimeout(timer);
     setAsideTimers.clear();
     connectStop.abort();

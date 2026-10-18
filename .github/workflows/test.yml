@@ -116,6 +116,7 @@ jobs:
           packages/ui/utils/inputMethod.test.ts
           packages/ui/utils/vimNavigation.test.ts
           packages/ui/utils/clipboard.test.ts
+          packages/ui/utils/pasteInsert.test.ts
           apps/vscode-extension/src/vscode-theme.test.ts
           packages/ui/utils/vimScroll.test.ts
           packages/ui/components/InlineMarkdown.resolveLinkedDoc.test.tsx
@@ -127,6 +128,7 @@ jobs:
           packages/ui/components/DiagramBlock.askAI.test.tsx
           packages/ui/components/Viewer.askAISelectionLine.test.tsx
           packages/ui/components/ImageLightbox.test.tsx
+          packages/ui/components/HostTitle.dom.test.tsx
           packages/inbox/images.test.tsx
           packages/inbox/inlineImages.test.tsx
           packages/inbox/codeAttachment.test.tsx
@@ -141,11 +143,13 @@ jobs:
           packages/inbox/pasteTarget.test.ts
           packages/inbox/seenOnSight.test.tsx
           packages/inbox/projectList.test.tsx
+          packages/inbox/softQuietRows.test.tsx
           packages/inbox/sidebarQuiet.test.tsx
           packages/inbox/connectPromptRow.test.tsx
           packages/inbox/soundIntro.test.tsx
           packages/inbox/soundSettings.test.tsx
           packages/inbox/notifyHook.test.tsx
+          packages/inbox/notificationStates.test.tsx
           packages/inbox/attachmentStepping.test.tsx
           packages/inbox/fullView.test.tsx
           packages/inbox/fullScreenThread.test.tsx
@@ -154,6 +158,7 @@ jobs:
           packages/inbox/endedSession.test.tsx
           packages/inbox/compose.test.tsx
           packages/inbox/composeThread.test.tsx
+          packages/inbox/sendNow.test.tsx
           packages/inbox/pasteFiles.test.tsx
           packages/inbox/markRead.test.tsx
           packages/inbox/ack.test.tsx
@@ -161,16 +166,17 @@ jobs:
           packages/inbox/projectMenu.test.tsx
           packages/inbox/fileBack.test.tsx
           packages/inbox/archived.test.tsx
-          packages/inbox/decisionsPicker.test.tsx
           packages/inbox/openStaysPut.test.tsx
           packages/inbox/phoneList.test.tsx
           packages/inbox/listLabels.test.tsx
+          packages/inbox/componentTooltips.test.tsx
           packages/inbox/toast.test.tsx
           packages/inbox/attachmentsHeader.test.tsx
           packages/inbox/sentQuestionLocked.test.tsx
           packages/inbox/themeToggle.test.tsx
           packages/inbox/agentNoteDialog.test.tsx
           packages/inbox/agentsSettings.test.tsx
+          packages/inbox/connectNextStep.test.tsx
           packages/inbox/settingsSections.test.tsx
           packages/inbox/searchPalette.test.tsx
           packages/inbox/searchShortcut.test.tsx

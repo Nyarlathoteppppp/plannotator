@@ -13,6 +13,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseInboxQuestionBlocks } from '@plannotator/core/inbox-questions';
 import type { InboxAuthor, InboxMessageWire, InboxProject, InboxQuestion, InboxThread } from '@plannotator/core/inbox-types';
+import { sized, tooltipOf } from './testing/tooltip';
 
 const hasDom = typeof document !== 'undefined';
 // Viewer pulls in web-highlighter, which reads `window` at module-eval time.
@@ -76,7 +77,6 @@ function questionsOf(messageId: string, body: string): InboxQuestion[] {
     choices: q.parsed.choices,
     recommendation: null,
     suggested_text: null,
-    decision_on_answer: false,
     stopped: q.stopped,
     holds_up: q.holds_up,
     asked_by_agent_id: 'ses_a',
@@ -88,10 +88,7 @@ function questionsOf(messageId: string, body: string): InboxQuestion[] {
     picked_by: null,
     picked_at: null,
     sent_reply_id: null,
-    decision_id: null,
     message_id: messageId,
-    decision_recording: false,
-    decision_draft: null,
     superseded_by: null,
   }));
 }
@@ -194,8 +191,6 @@ function pane(thread: InboxThread, lookSeq?: number | null) {
         onQuestions={() => {}}
         onChanged={async () => {}}
         onClose={() => {}}
-        decisions={[]}
-        onOpenDecisionPage={() => {}}
         file={null}
         onOpenFile={() => {}}
         onOpenGuide={() => {}}
@@ -260,9 +255,10 @@ test.skipIf(!hasDom)("a folded line's snippet is the person's answers when every
   act(() => (el.querySelector('[data-middle-fold] button') as HTMLButtonElement).click());
   const snippet = (id: string) => article(el, id)!.querySelector('[data-snippet]')!;
   expect(snippet('msg_A1').getAttribute('data-snippet')).toBe('answers');
-  // A prompt over 40 characters is cut at a word, so the answer stays on the line; the whole prompt is the title.
+  // A prompt over 40 characters is cut at a word, so the answer stays on the line; the whole prompt is in the tooltip while the line is cut.
   expect(snippet('msg_A1').textContent).toBe('Which search index should the docs site… → Pagefind · Which sections go in the index → Guides, API reference');
-  expect(snippet('msg_A1').getAttribute('title')).toBe('Which search index should the docs site use: Pagefind; Which sections go in the index: Guides, API reference');
+  sized(snippet('msg_A1'), 600, 200);
+  expect(await tooltipOf(snippet('msg_A1'))).toBe('Which search index should the docs site use: Pagefind; Which sections go in the index: Guides, API reference');
   expect(snippet('msg_A3').getAttribute('data-snippet')).toBe('words');
   // Markdown marks gone, link text kept.
   expect(snippet('msg_A3').textContent).toBe('Both notes are in: results show the section path. Ready for a read.');
@@ -594,7 +590,7 @@ test.skipIf(!hasDom)('typing in the reply box measures nothing: the chrome and t
   expect(measured).toBe(0);
 });
 
-test.skipIf(!hasDom)('the thread box shrinking (the reply box opening below it) brings the pill back without a scroll or a window resize', async () => {
+test.skipIf(!hasDom)('the thread box changing size (the reply box opening or closing below it) re-measures the pill without a scroll or a window resize; a message once on screen never brings it back', async () => {
   // A fake ResizeObserver the test drives, standing in for the browser's.
   const observers: { callback: ResizeObserverCallback; observed: Element[]; connected: boolean }[] = [];
   stub(globalThis, 'ResizeObserver', {
@@ -614,8 +610,8 @@ test.skipIf(!hasDom)('the thread box shrinking (the reply box opening below it) 
       }
     },
   });
-  // The new message's top is at 700; the thread box ends at 800, then at 600 once the foot grows.
-  let bottom = 800;
+  // The new message's top is at 700; the thread box ends at 600 while the reply box is open, at 800 once it closes.
+  let bottom = 600;
   stub(HTMLElement.prototype, 'getBoundingClientRect', {
     value(this: HTMLElement) {
       const y = this.classList.contains('ib-pbody') ? 0 : this.hasAttribute('data-new') ? 700 : 0;
@@ -628,10 +624,14 @@ test.skipIf(!hasDom)('the thread box shrinking (the reply box opening below it) 
   const watcher = observers.find((o) => o.observed.includes(body))!;
   expect(watcher).toBeDefined();
   const pill = el.querySelector<HTMLButtonElement>('[data-new-pill]')!;
+  expect(pill.hasAttribute('data-off')).toBe(false);
+  bottom = 800;
+  act(() => watcher.callback([], {} as ResizeObserver));
   expect(pill.hasAttribute('data-off')).toBe(true);
+  // The reply box opens again and covers it: it was on screen, so the pill stays away.
   bottom = 600;
   act(() => watcher.callback([], {} as ResizeObserver));
-  expect(pill.hasAttribute('data-off')).toBe(false);
+  expect(pill.hasAttribute('data-off')).toBe(true);
   act(() => root!.unmount());
   root = null;
   expect(watcher.connected).toBe(false);
@@ -658,8 +658,6 @@ async function renderWithSent(thread: InboxThread, sent: { at: string; checked_a
           onQuestions={() => {}}
           onChanged={async () => {}}
           onClose={() => {}}
-          decisions={[]}
-          onOpenDecisionPage={() => {}}
           file={null}
           onOpenFile={() => {}}
           onOpenGuide={() => {}}
