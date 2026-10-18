@@ -140,7 +140,7 @@ The project menu's batches (design record "inbox-project-menu", approved 2026-10
 - **Held order** (`packages/inbox/held.ts`): the rows on screen change only on the person's action; agent activity waits behind "N new". While a thread is open, the person's own writes show in place and never reorder the list. The open thread is never held: its row takes its state in place (bold on an arrival, not bold once seen), it is never in "N new", and when the thread closes it settles where its state puts it, an unseen arrival included (New, or Waiting when it asks).
 - Toasts, the sound's arming and burst state, the sidebar and list widths (cookies), the Grid or Clean look.
 
-Stored, on disk: looks, reads, archives, picks, sends, annotations and settings. (Decisions were removed in 2026-10; an older store's decisions are left on disk and never read.)
+Stored, on disk: looks, reads, archives, picks, sends, annotations and settings. (Decisions were removed in 2026-10; an older store's decisions.jsonl is left on disk, kept only so sequence numbers are never reused.)
 
 ## Fixed violations
 

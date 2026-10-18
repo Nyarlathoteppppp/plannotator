@@ -467,9 +467,11 @@ const matchRecommendation = (
 export interface ParseQuestionBlockOptions {
   /** Read `Decision:` lines (`decisionOnAnswer`, `decision`). Default true.
    *  False: a `Decision:` line is ordinary prose (context after the prompt),
-   *  and the result never carries `decisionOnAnswer` or `decision`. Neither
-   *  setting changes the prompt or the key. The Plannotator Inbox passes
-   *  false: it records no decisions. */
+   *  and the result never carries `decisionOnAnswer` or `decision`. A line
+   *  the default parse reads still ends the choice, bullet or recommendation
+   *  above it, so the prompt, key and choices are always the default parse's
+   *  (an answer stored against either parse matches the other). The
+   *  Plannotator Inbox passes false: it records no decisions. */
   decisionLines?: boolean;
 }
 
@@ -575,13 +577,18 @@ export const parseQuestionBlock = (
       promptLine = i;
       continue;
     }
-    const decisionLine = readDecisionLines ? line.match(DECISION_RE) : null;
+    // A `Decision:` line the default parse reads (the first flag, the first
+    // link) ends the choice, bullet or recommendation before it. Without
+    // decision lines it does exactly the same and is kept as context, so the
+    // choices are always the default parse's (a stored answer still matches).
+    const decisionLine = line.match(DECISION_RE);
     if (decisionLine) {
       if (!decisionFlag && DECISION_FLAG_RE.test(decisionLine[1])) {
         decisionFlag = true;
         lastChoice = -1;
         openBullet = null;
         recommendationOpen = false;
+        if (!readDecisionLines) pushContext(line.trim());
         continue;
       }
       const link = decision ? null : parseDecisionLink(decisionLine[1]);
@@ -590,6 +597,7 @@ export const parseQuestionBlock = (
         lastChoice = -1;
         openBullet = null;
         recommendationOpen = false;
+        if (!readDecisionLines) pushContext(line.trim());
         continue;
       }
     }
@@ -708,7 +716,7 @@ export const parseQuestionBlock = (
     ...(recommendation ? { recommendation } : {}),
     ...(suggestedText ? { suggestedText } : {}),
     key: questionKey(kind, prompt),
-    ...(decision ? { decision } : decisionFlag ? { decisionOnAnswer: true as const } : {}),
+    ...(!readDecisionLines ? {} : decision ? { decision } : decisionFlag ? { decisionOnAnswer: true as const } : {}),
     ...(replaces.length > 0 ? { replaces } : {}),
   };
 };

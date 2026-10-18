@@ -6,7 +6,7 @@
  *     projects/<key>/project.json      one line: the project snapshot
  *     projects/<key>/messages.jsonl    messages and replies
  *     projects/<key>/questions.jsonl   one record per question block
- *     projects/<key>/decisions.jsonl   an older store's decisions: never read,
+ *     projects/<key>/decisions.jsonl   an older store's decisions: never applied,
  *                                      only its highest seq counts (Decisions
  *                                      were removed in 2026-10)
  *     projects/<key>/annotations.jsonl the person's annotations on attachments

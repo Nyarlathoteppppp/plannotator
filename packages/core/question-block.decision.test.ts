@@ -190,3 +190,49 @@ describe("{ decisionLines: false } (a host with no decisions)", () => {
     expect(indexed!.question.context).toContain("Decision: when answered");
   });
 });
+
+describe("{ decisionLines: false } keeps the default parse's choices for every shape", () => {
+  // What regresses if this fails: a `Decision:` line right under a choice is
+  // folded into it (a plain bullet's lazy continuation, a task-list choice's
+  // indented description), so the window's label ("SQLite Decision: when
+  // answered") no longer matches the stored one ("SQLite") and the Inbox
+  // refuses the pick (422).
+  const shapes: Record<string, string> = {
+    "plain bullets, the line right under them": "Which database?\n- Postgres\n- SQLite\nDecision: when answered",
+    "plain bullets, after a blank line": "Which database?\n\n- Postgres\n- SQLite\n\nDecision: when answered",
+    "plain bullets, an indented line under the last": "Which database?\n- Postgres\n- SQLite\n  Decision: when answered",
+    "task-list choices, the line right under them": "Which database?\n- [ ] Postgres\n- [ ] SQLite\nDecision: when answered",
+    "task-list choices, an indented line under one": "Which database?\n- [ ] Postgres\n  Decision: when answered\n- [ ] SQLite",
+    "a link line right under plain bullets": "Which database?\n- Postgres\n- SQLite\nDecision: [Use SQLite](https://x.test/d/2)",
+    "a recommendation, then the line": "Which database?\n\n- [ ] Postgres\n- [ ] SQLite\n\nRecommended: SQLite\nDecision: when answered",
+    "a second flag line (prose to both parses)": "Which database?\nDecision: when answered\n- Postgres\n- SQLite\nDecision: when answered",
+  };
+  for (const [name, body] of Object.entries(shapes)) {
+    test(name, () => {
+      const byDefault = parseQuestionBlock("question", body)!;
+      const plain = parseQuestionBlock("question", body, { decisionLines: false })!;
+      expect(plain.choices).toEqual(byDefault.choices);
+      expect(plain.key).toBe(byDefault.key);
+      expect(plain.recommendation).toBe(byDefault.recommendation);
+      expect(plain.decisionOnAnswer).toBeUndefined();
+      expect(plain.decision).toBeUndefined();
+      // An indented line is never a decision line (it must start the line), so both parses keep it under its
+      // choice; a line at the start is context here.
+      if (!name.includes("indented")) expect(plain.context).toContain("Decision:");
+    });
+  }
+
+  test("the labels stay whole: no Decision: text in any choice", () => {
+    const plain = parseQuestionBlock("question", shapes["plain bullets, the line right under them"]!, { decisionLines: false })!;
+    expect(plain.choices.map((c) => c.label)).toEqual(["Postgres", "SQLite"]);
+    const task = parseQuestionBlock("question", shapes["task-list choices, an indented line under one"]!, { decisionLines: false })!;
+    expect(task.choices.map((c) => c.label)).toEqual(["Postgres", "SQLite"]);
+  });
+
+  test("the default parse is unchanged", () => {
+    const q = parseQuestionBlock("question", shapes["plain bullets, the line right under them"]!)!;
+    expect(q.choices.map((c) => c.label)).toEqual(["Postgres", "SQLite"]);
+    expect(q.decisionOnAnswer).toBe(true);
+    expect(q.context).not.toContain("Decision");
+  });
+});

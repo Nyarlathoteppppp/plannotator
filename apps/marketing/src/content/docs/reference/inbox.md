@@ -267,7 +267,7 @@ Everything lives under `~/.plannotator/inbox/` (or `$PLANNOTATOR_DATA_DIR/inbox/
 |------|---------------|
 | `inbox.json` | The registry: port, URL, version, process id, and a token that changes at every start. Owner-only |
 | `inbox.log` | The output of an Inbox started with `--background` |
-| `projects/<name>-<hash>/` | One folder per project: `project.json`, plus `messages.jsonl`, `questions.jsonl` and `annotations.jsonl`, which grow by appending lines (a `decisions.jsonl` an older Inbox wrote, when it kept decisions, stays as it was; nothing reads it) |
+| `projects/<name>-<hash>/` | One folder per project: `project.json`, plus `messages.jsonl`, `questions.jsonl` and `annotations.jsonl`, which grow by appending lines (a `decisions.jsonl` an older Inbox wrote, when it kept decisions, stays as it was; it is kept only so sequence numbers are never reused, and its decisions are never shown) |
 | `blobs/<sha256>` | The version of each attached file as it was sent, a copy of each image a message shows, and each guided review |
 | `markups/<sha256>.png` | The images you marked up when commenting on an image attachment, and the frames your video comments carry (`.jpg`) |
 | `seq.json` | The highest event number ever written, kept across deletions |
