@@ -16,7 +16,7 @@ import { isAbsolute } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import { QUESTION_AUTHORING_GUIDE } from "@plannotator/core/question-block";
-import { INBOX_NAME_THIS_THREAD_HINT, INBOX_SECTIONS, INBOX_THREAD_NAME_MAX, type InboxGuideRef, type InboxSectionId, type InboxLine, type InboxMessage, type InboxProject } from "@plannotator/core/inbox-types";
+import { INBOX_NAME_THIS_THREAD_HINT, INBOX_SECTIONS, isInboxNote, INBOX_THREAD_NAME_MAX, type InboxGuideRef, type InboxSectionId, type InboxLine, type InboxMessage, type InboxProject } from "@plannotator/core/inbox-types";
 import { INBOX_WAKES_META_KEY } from "@plannotator/shared/inbox/connection";
 import { inboxBodyForAgent } from "@plannotator/shared/inbox/uploads";
 import { bodyShowsLocalImages, captureInboxInlineImages, type InlineImageFailure } from "@plannotator/shared/inbox/inline-images";
@@ -343,7 +343,7 @@ export type AgentSendInput = {
 /** The project a send lands in: reply_to's, else the one at project_path. */
 export async function sendProject(context: InboxMcpContext, input: { reply_to?: string; project_path?: string; thread?: string }): Promise<InboxProject> {
   // Before anything resolves (resolving a path makes its project): a refused send writes nothing.
-  refuseIdShapedThread(input.thread);
+  refuseIdShapedThread(input.thread, input.reply_to);
   if (input.reply_to) {
     const parent = context.store.message(input.reply_to);
     if (!parent) throw new InboxError("message_not_found", `No message ${input.reply_to}.`);
@@ -470,16 +470,23 @@ const MESSAGE_ID_SHAPE = /^msg_[0-9A-HJKMNP-TV-Z]{26}$/i;
 /**
  * `thread` is a name. A value shaped like a message id is an agent that meant
  * reply_to: refused, instead of silently starting a new thread named after
- * the id.
+ * the id. Beside reply_to (which already places the message) it is refused
+ * too, because there `thread` may name a thread the person started, and an id
+ * is never a name; the refusal then says to leave `thread` out.
  */
-export function refuseIdShapedThread(thread: string | undefined): void {
+export function refuseIdShapedThread(thread: string | undefined, replyTo?: string): void {
   const value = thread?.trim();
-  if (value && MESSAGE_ID_SHAPE.test(value)) {
+  if (!value || !MESSAGE_ID_SHAPE.test(value)) return;
+  if (replyTo?.trim()) {
     throw new InboxError(
       "validation_error",
-      `thread: "${value}" is a message id, and thread takes a name. To write in an existing thread, pass reply_to ${value} instead.`,
+      `thread: "${value}" is a message id, and thread takes a name. You passed reply_to, which already places this message: leave thread out (or, to name a thread the person started, pass a few words).`,
     );
   }
+  throw new InboxError(
+    "validation_error",
+    `thread: "${value}" is a message id, and thread takes a name. To write in an existing thread, pass reply_to ${value} instead.`,
+  );
 }
 
 /** An agent's message into `project`, routed by the store (send_message, submit_guide). */
@@ -491,7 +498,7 @@ export async function sendAgentMessage(
   wakes = false,
 ): Promise<{ structured: Record<string, unknown>; replayed: boolean; questions: number; attachments: number; superseded: number; imagesNotShown: ImageNotShown[]; naming: InboxSendResult["naming"] | null }> {
   const { store } = context;
-  refuseIdShapedThread(input.thread);
+  refuseIdShapedThread(input.thread, input.reply_to);
   let attachments: InboxAttachment[] | undefined;
   if (input.attachments && input.attachments.length > 0) {
     if (!context.recordAttachments) throw new InboxError("validation_error", "attachments: not taken by this Inbox.");
@@ -609,12 +616,25 @@ export interface InboxAgentThreadRow {
   questions: { open: number; picked: number; prompt: string | null };
   last_author: InboxListRow["last_author"];
   last_at: string;
-  /** The person's last message in the thread (their reply, a New message, a set-aside note), or null when they wrote none. */
+  /**
+   * The person's last message in the thread (a reply, a New message), or null
+   * when they wrote none. The Inbox's own notes (Mark read's set-aside note,
+   * the reopened note, the 👍 note) are not the person's words and never count.
+   */
   last_person_at: string | null;
   last_person_message_id: string | null;
-  /** The person wrote something in it for you that no agent has read yet (read_thread or wait_for_reply reads it). */
+  /**
+   * The person wrote something in it for you that no agent has read yet: a
+   * reply after the thread's agent-read mark (any agent's read_thread or
+   * wait_for_reply reads it), or a message addressed to you (`to`) not yet
+   * delivered (only your wake or your own wait_for_reply delivers it; a
+   * read_thread does not). The Inbox's own notes never count.
+   */
   unread: boolean;
-  /** Only on a resolved (archived) thread, with include_resolved. */
+  /**
+   * Only on a resolved (archived) thread: listed with include_resolved, or
+   * listed anyway because an agent wrote in it after the archive.
+   */
   resolved_at?: string;
 }
 
@@ -628,7 +648,8 @@ function personFacts(store: InboxStore, threadId: string, caller: string | null)
   let unread = false;
   let last: InboxMessage | null = null;
   for (const message of store.thread(threadId)?.messages ?? []) {
-    if (message.author.kind !== "person") continue;
+    // The Inbox's own notes are not the person's words.
+    if (message.author.kind !== "person" || isInboxNote(message)) continue;
     last = message;
     if (message.to) {
       if (message.to.session === caller && !message.delivery) unread = true;

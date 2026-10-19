@@ -28,12 +28,12 @@ afterEach(async () => {
 
 type Result = { isError?: boolean; content: { text: string }[]; structuredContent: Record<string, any> };
 
-async function world(rounds = 30) {
+async function world(rounds = 30, options: { setAsideDelayMs?: number } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "plannotator-inbox-mcp-size-")));
   roots.push(root);
   const project = join(root, "api");
   mkdirSync(project, { recursive: true });
-  const server = await startInboxServer({ dataDir: join(root, "data") });
+  const server = await startInboxServer({ dataDir: join(root, "data"), ...options });
   servers.push(server);
   const client = new Client({ name: "inbox-mcp-size-test", version: "1.0.0" });
   await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${server.port}/mcp`)));
@@ -101,6 +101,23 @@ test("send_message refuses a thread shaped like a message id, and says to use re
   expect(guide.content[0]!.text).toStartWith(`validation_error: thread: "${seeded.threadId}" is a message id`);
 });
 
+test("beside reply_to, an id-shaped thread is refused too, and the refusal says to leave thread out (not to pass reply_to again)", async () => {
+  const { client, project, server, seeded } = await world(1);
+  const cursor = server.store.cursor();
+  const result = (await client.callTool({
+    name: "send_message",
+    arguments: { project_path: project, body: "More on this.", reply_to: seeded.lastAgentMessageId, thread: seeded.threadId, agent_session: "ses_long" },
+  })) as Result;
+  expect(result.isError).toBe(true);
+  expect(result.content[0]!.text).toBe(
+    `validation_error: thread: "${seeded.threadId}" is a message id, and thread takes a name. You passed reply_to, which already places this message: leave thread out (or, to name a thread the person started, pass a few words).`,
+  );
+  expect(server.store.cursor()).toBe(cursor);
+  // Without the id-shaped thread the same reply lands in the thread.
+  const sent = await call(client, "send_message", { project_path: project, body: "More on this.", reply_to: seeded.lastAgentMessageId, agent_session: "ses_long" });
+  expect(sent.structuredContent.thread_id).toBe(seeded.threadId);
+});
+
 test("read_thread's list is one short row per thread, with the caller's unread", async () => {
   const { client, project, server, seeded } = await world(2);
   // The person's reply to the second round is unread until an agent reads it.
@@ -149,6 +166,38 @@ test("read_thread's list is one short row per thread, with the caller's unread",
   const all = (await call(client, "read_thread", { project_path: project, agent_session: "ses_long", include_resolved: true })).structuredContent.threads as Record<string, any>[];
   expect(all.find((r) => r.thread_id === seeded.threadId)!.resolved_at).toEqual(expect.any(String));
   expect(server.store.message(seeded.threadId)!.resolved_at).not.toBeNull();
+});
+
+test("the Inbox's own notes are not the person's last message and never make a row unread (Mark read through the real route)", async () => {
+  const { client, project, server, seeded } = await world(1, { setAsideDelayMs: 50 });
+  // Mark read closes the open questions; after the Undo window the agent gets one set-aside note.
+  const read = await fetch(`http://127.0.0.1:${server.port}/api/inbox/threads/${seeded.threadId}/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverSession: server.serverSession }),
+  });
+  expect(read.status).toBe(200);
+  const deadline = Date.now() + 5000;
+  const noteOf = () => server.store.thread(seeded.threadId)!.messages.find((m) => m.author.kind === "person" && (m.set_aside?.length ?? 0) > 0);
+  while (!noteOf() && Date.now() < deadline) await Bun.sleep(25);
+  expect(noteOf()).toBeDefined();
+  const row = ((await call(client, "read_thread", { project_path: project, agent_session: "ses_long" })).structuredContent.threads as Record<string, any>[]).find(
+    (r) => r.thread_id === seeded.threadId,
+  )!;
+  expect(row).toMatchObject({ last_person_at: null, last_person_message_id: null, unread: false });
+
+  // A real reply after the note is the person's last message, and unread until read.
+  const reply = await fetch(`http://127.0.0.1:${server.port}/api/inbox/messages/${seeded.lastAgentMessageId}/reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idempotency_key: "after-note", words: "Actually, one more thing." }),
+  });
+  expect(reply.status).toBe(200);
+  const replyId = ((await reply.json()) as { reply: { id: string } }).reply.id;
+  const after = ((await call(client, "read_thread", { project_path: project, agent_session: "ses_long" })).structuredContent.threads as Record<string, any>[]).find(
+    (r) => r.thread_id === seeded.threadId,
+  )!;
+  expect(after).toMatchObject({ last_person_message_id: replyId, unread: true });
 });
 
 test("read_thread's list stays small: under 400 bytes a thread as the hosts render it", async () => {
