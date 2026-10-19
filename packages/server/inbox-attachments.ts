@@ -28,7 +28,10 @@
 
 import { checkServerSession, INBOX_SERVER_SESSION_MISMATCH_ERROR, serverSessionMismatchBody } from "@plannotator/core/server-session";
 import type { FileHandle } from "node:fs/promises";
-import { basename } from "node:path";
+import { constants as fsConstants } from "node:fs";
+import { open, realpath } from "node:fs/promises";
+import { basename, dirname, resolve as resolvePath } from "node:path";
+import { htmlAssetPathRefused, isWithinDirectory } from "@plannotator/shared/html-assets-node";
 import { HTML_ASSET_DOCUMENT_CSP, htmlAssetDocumentHeaders, MAX_HTML_ASSET_DOCUMENT_BYTES, refusesHiddenHtmlAssetPath } from "@plannotator/shared/html-assets";
 import { INBOX_ANNOTATION_CURRENT, isInboxTextKind, readInboxAttachmentKind, type InboxAttachment } from "@plannotator/core/inbox-types";
 import {
@@ -91,6 +94,58 @@ export const inboxRefusesAssetPath = refusesHiddenHtmlAssetPath;
 
 /** A nested document in an attached page runs scripts but reaches no network. */
 export const INBOX_HTML_DOCUMENT_CSP = `${HTML_ASSET_DOCUMENT_CSP}; connect-src 'none'`;
+
+/**
+ * The page `relativePath` names in the folder of the attached HTML page at
+ * `attachedPath` (its realpath): its realpath and text. Refused (InboxError)
+ * when the path is not a plain relative path, names a hidden segment or a
+ * dotenv file (as requested or by where it leads), is not `.html`/`.htm`,
+ * leads outside that folder, is not a regular file, or is over 2 MB.
+ */
+export async function readInboxLinkedPage(attachedPath: string, relativePath: string | null): Promise<{ path: string; text: string }> {
+  const rel = (relativePath ?? "").replace(/\\/g, "/");
+  if (!rel || rel.length > 2048 || /[\u0000-\u001f\u007f]/.test(rel) || rel.startsWith("/") || /^[a-z]:/i.test(rel)) {
+    throw new InboxError("validation_error", "path: a path relative to the attached page's folder.", { field: "path" });
+  }
+  const segments = rel.split("/").filter((s) => s !== "" && s !== ".");
+  if (segments.length === 0 || segments.includes("..")) {
+    throw new InboxError("linked_page_outside", "Only pages in the attached page's own folder open here.");
+  }
+  const clean = segments.join("/");
+  const name = segments[segments.length - 1]!;
+  if (!/\.html?$/i.test(name)) throw new InboxError("linked_page_not_html", `${name} is not an HTML page.`);
+  const root = dirname(attachedPath);
+  const target = resolvePath(root, clean);
+  if (!isWithinDirectory(target, root)) throw new InboxError("linked_page_outside", "Only pages in the attached page's own folder open here.");
+  if (htmlAssetPathRefused(root, clean, inboxRefusesAssetPath)) {
+    throw new InboxError("linked_page_refused", "Plannotator does not open hidden files or .env files.");
+  }
+  let real: string;
+  try {
+    real = await realpath(target);
+  } catch {
+    throw new InboxError("linked_page_missing", `${name} is not there.`);
+  }
+  // Judged again on the path that is opened, so a link swapped in between cannot lead out.
+  if (!isWithinDirectory(real, root)) throw new InboxError("linked_page_outside", "Only pages in the attached page's own folder open here.");
+  // The handle is opened on the realpath without following a link, and checked against it.
+  let handle: FileHandle;
+  try {
+    handle = await open(real, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  } catch {
+    throw new InboxError("linked_page_missing", `${name} could not be read.`);
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new InboxError("linked_page_missing", `${name} is not a file.`);
+    if (stat.size > MAX_HTML_ASSET_DOCUMENT_BYTES) throw new InboxError("linked_page_too_large", `${name} is too large to show here (over 2 MB).`);
+    const bytes = await handle.readFile();
+    if (bytes.byteLength > MAX_HTML_ASSET_DOCUMENT_BYTES) throw new InboxError("linked_page_too_large", `${name} is too large to show here (over 2 MB).`);
+    return { path: real, text: bytes.toString("utf8") };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
 
 /** A request another site (or another localhost port) made: refused before anything is read. */
 function crossSite(req: Request): boolean {
@@ -215,6 +270,31 @@ export function createInboxAttachmentRoutes(context: InboxAttachmentRoutesContex
       const html = htmlAssets.rewriteHtml((await readVersion(store, attachment, version)).toString("utf8"), attachment.path);
       return new Response(req.method === "HEAD" ? null : html, {
         headers: { ...htmlAssetDocumentHeaders(INBOX_HTML_DOCUMENT_CSP), ...BYTE_GUARD_HEADERS, "Referrer-Policy": "no-referrer" },
+      });
+    }
+
+    // Another page an attached HTML page links to (`<a href="B-cards.html">`), not
+    // attached itself: shown read-only in the same pane. Reached by the attachment's
+    // id plus a path relative to the attached page's own folder (never an absolute
+    // path), with the asset route's rules: inside that folder by realpath, no hidden
+    // segment or dotenv name, `.html`/`.htm`, at most 2 MB.
+    const linked = /^\/api\/inbox\/attachments\/(att_[A-Za-z0-9]+)\/linked-page$/.exec(path);
+    if (linked) {
+      if (req.method !== "GET") return json({ error: "Use GET." }, 405);
+      if (crossSite(req)) return json(CROSS_SITE_BODY, 403);
+      const { attachment } = attachmentOf(linked[1]!);
+      if (readInboxAttachmentKind(attachment.kind) !== "html") {
+        throw new InboxError("attachment_not_html", `${attachment.name} is not an HTML page.`);
+      }
+      const page = await readInboxLinkedPage(attachment.path, url.searchParams.get("path"));
+      return json({
+        serverSession,
+        path: page.path,
+        name: basename(page.path),
+        // The page as annotate serves it: a <base href> at its own folder's asset route.
+        html: htmlAssets.rewriteHtml(page.text, page.path),
+        // Open in new tab: the file at its folder's asset URL, under the document CSP.
+        url: htmlAssets.documentUrl(page.path),
       });
     }
 

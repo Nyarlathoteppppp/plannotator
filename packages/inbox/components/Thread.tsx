@@ -2646,6 +2646,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
         steps={steps}
         // A step keeps the frame the person is in, and replaces the route.
         onStep={(attachmentId, version) => onOpenFile({ id: attachmentId, version, focus: null }, { replace: true })}
+        // A link in an attached HTML page to another file of the thread: a new entry, so Back returns to the page; the frame stays.
+        onOpenLinked={(attachmentId) => onOpenFile({ id: attachmentId, version: 'current', focus: null })}
         onToggleFull={() => setFull(!full)}
         focusId={file!.focus}
         focusRequest={paneFocus}
