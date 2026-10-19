@@ -3325,11 +3325,11 @@ svg.ib-ic.ib-glyph { stroke: currentColor; fill: none; stroke-width: 1.6; stroke
 .ib-rw-steps[hidden] { display: none; }
 .ib-rw-steps ol { margin: 0; padding-left: 18px; list-style: decimal; display: flex; flex-direction: column; gap: 6px; }
 .ib-rw-steps li::marker { color: var(--muted-foreground); }
-.ib-rw-steps code, .ib-rw-cmd code { font-family: var(--font-mono); font-size: 12px; }
+.ib-rw-steps code, .ib-rw-cmd code { font-family: var(--font-mono); font-size: var(--ib-fs-12, 12px); }
 .ib-rw-steps .ib-rw-after { margin: 8px 0 0; color: var(--muted-foreground); }
 .ib-rw-cmd { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 6px 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); min-width: 0; }
 .ib-rw-cmd code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--foreground); }
-.pn-inbox .ib-rw-copy { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.pn-inbox .ib-rw-copy { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font-size: var(--ib-fs-12, 12px); font-weight: 500; cursor: pointer; white-space: nowrap; }
 .pn-inbox .ib-rw-copy .ib-ic { width: 14px; height: 14px; }
 .pn-inbox .ib-rw-copy:hover { background: var(--muted); }
 .pn-inbox .ib-rw-copy[data-copied] { color: var(--success); border-color: color-mix(in oklch, var(--success) 45%, transparent); }
@@ -3344,7 +3344,7 @@ svg.ib-ic.ib-glyph { stroke: currentColor; fill: none; stroke-width: 1.6; stroke
 .ib-rw-sw { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ib-rw-srow .ib-rw-sp { font-weight: 550; color: var(--foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ib-rw-srow .ib-rw-sm { color: var(--muted-foreground); min-width: 0; overflow-wrap: anywhere; }
-.ib-agrow .ib-agsub.ib-agwarn code { font-family: var(--font-mono); font-size: 12px; }
+.ib-agrow .ib-agsub.ib-agwarn code { font-family: var(--font-mono); font-size: var(--ib-fs-12, 12px); }
 
 /* After an update: the sidebar row under What's new. */
 .pn-inbox .ib-rw-restart { color: var(--foreground); }
