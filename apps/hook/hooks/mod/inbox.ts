@@ -48,7 +48,7 @@
  * delivered (it quit while the turn waited) is said once, with a toast.
  */
 
-import type { Host, HttpResult } from './host'
+import type { Host, HttpResult, LoadedPluginInfo } from './host'
 import {
   INBOX_BRIDGE_EVENT_PATH,
   INBOX_BRIDGE_POLL_PATH,
@@ -90,6 +90,17 @@ export function engineHasSessionAppend(version: string | null | undefined): bool
     if (have[i]! !== min[i]!) return have[i]! > min[i]!
   }
   return true
+}
+
+/** plugin.json's `version` (the plugin this process loaded); null when unreadable. */
+export function pluginVersionOf(text: string | null): string | null {
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text) as { version?: unknown }
+    return typeof parsed?.version === 'string' && parsed.version.trim() && parsed.version.length <= 64 ? parsed.version.trim() : null
+  } catch {
+    return null
+  }
 }
 
 /** The host this connection names on its messages and deliveries. */
@@ -345,6 +356,8 @@ export class InboxLink {
   private noSteer = new Set<string>()
   /** The engine refused a row once (an engine without `$.session.append`): stop offering Send now. */
   private steerRefused = false
+  /** What this process loaded, read once (`loadedNow`). */
+  private loaded: Promise<{ plugin: LoadedPluginInfo | null; engine: string | null }> | null = null
 
   constructor(private readonly options: InboxLinkOptions) {
     this.host = options.host
@@ -551,6 +564,15 @@ export class InboxLink {
     return this.options.steerableTurn?.() ?? null
   }
 
+  /** What this process loaded (plugin and engine), asked once and remembered: it never changes while the process runs. */
+  private async loadedNow(): Promise<{ plugin: LoadedPluginInfo | null; engine: string | null }> {
+    this.loaded ??= (async () => ({
+      plugin: this.host.loadedPlugin ? await this.host.loadedPlugin().catch(() => null) : null,
+      engine: this.host.engineVersion ? await this.host.engineVersion().catch(() => null) : null,
+    }))()
+    return this.loaded
+  }
+
   /** A main-loop model request of `turnId` is going out: the replies put into that turn are in it. */
   onMainStep(turnId: string): void {
     for (const entry of this.sentNow) if (entry.turnId === turnId) entry.stepped = true
@@ -614,6 +636,7 @@ export class InboxLink {
    */
   private async pendingNow(waitMs: number): Promise<InboxReplyCommand[] | null> {
     const cwd = this.options.cwd ? await this.options.cwd().catch(() => '') : ''
+    const loaded = await this.loadedNow()
     const response = await this.bridge(INBOX_BRIDGE_POLL_PATH, {
       waitMs,
       ...(cwd ? { project_path: cwd } : {}),
@@ -621,6 +644,9 @@ export class InboxLink {
       ...(this.busy === null ? {} : { busy: this.busy, idle_since: this.idleSince }),
       // Send now: this engine can put a reply into a running turn (`$.session.append`).
       ...((await this.sendNowNow()) ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
+      // What this process loaded (additive): the Inbox says when a restart would load a newer plugin.
+      ...(loaded.plugin ? { plugin: loaded.plugin } : {}),
+      ...(loaded.engine ? { engine: loaded.engine } : {}),
     })
     return response && response.status === 200 ? parseInboxBridgeCommands(response.text) : null
   }

@@ -60,8 +60,8 @@
 
 import { PlannotatorMod } from './controller'
 import { resolveAgentToolEnabled, resolveClaudeModEnabled, resolveInboxReminderEnabled, resolveInboxToolEnabled } from './enabled'
-import type { Host } from './host'
-import { discoverInboxTools, engineHasSessionAppend, inboxRegistryPathOf, withInboxReminder } from './inbox'
+import type { Host, LoadedPluginInfo } from './host'
+import { discoverInboxTools, engineHasSessionAppend, inboxRegistryPathOf, pluginVersionOf, withInboxReminder } from './inbox'
 import { inboxAgentTool, type InboxToolInfo } from './inbox-contract'
 import { INBOX_DEFAULT_TOOLS } from './inbox-default-tools'
 import { COMMANDS, dataDirOf, debugAppendArgv, isModCommand, waitArgv } from './launch'
@@ -90,6 +90,42 @@ let debugTag: string | null = null
 
 /** This plugin's name: what `$.prompt.submit` stamps as the origin of our prompts. */
 const PLUGIN_NAME = 'plannotator'
+
+/**
+ * When this module loaded: the plugin a restart would replace was loaded then.
+ * The Inbox compares it with the plugin registry's `lastUpdated`, which is the
+ * only sign of an update that kept the version and the folder.
+ */
+const MODULE_LOADED_AT = Date.now()
+
+/** The plugin this process loaded (plugin.json's version, its folder, the load time), read once. */
+let loadedPlugin: Promise<LoadedPluginInfo | null> | null = null
+function readLoadedPlugin($: Engine): Promise<LoadedPluginInfo | null> {
+  loadedPlugin ??= (async () => {
+    const raw: unknown = $.plugin.root
+    const root = typeof raw === 'string' ? raw.replace(/\/+$/, '') : ''
+    if (!root) return null
+    // `$.plugin.root` is the folder holding `.claude-plugin/plugin.json`.
+    const text = (await $.fs.read(`${root}/.claude-plugin/plugin.json`).catch(() => null)) ?? (await $.fs.read(`${root}/plugin.json`).catch(() => null))
+    return { version: pluginVersionOf(typeof text === 'string' ? text : null), root, loaded_at: MODULE_LOADED_AT }
+  })()
+  return loadedPlugin
+}
+
+/** Claude Code's own version, read once (`$.session.version()`'s `base`). */
+let engineVersion: Promise<string | null> | null = null
+function readEngineVersion($: Engine): Promise<string | null> {
+  engineVersion ??= (async () => {
+    try {
+      const version = await $.session.version()
+      const base = version?.base ?? version?.version
+      return typeof base === 'string' && base ? base : null
+    } catch {
+      return null
+    }
+  })()
+  return engineVersion
+}
 
 /** Every closure over `$` the logic uses. `debugPath` set: lines go to that file. */
 function hostOf($: Engine, debugPath: string | null): Host {
@@ -131,6 +167,8 @@ function hostOf($: Engine, debugPath: string | null): Host {
         return false
       }
     },
+    loadedPlugin: () => readLoadedPlugin($),
+    engineVersion: () => readEngineVersion($),
     suggest: async (text) => {
       await $.prompt.suggest({ text })
     },

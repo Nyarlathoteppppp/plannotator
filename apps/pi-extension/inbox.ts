@@ -47,6 +47,7 @@ import {
 } from "./generated/inbox/agent-link.ts";
 import { INBOX_REMINDER_TEXT, inboxAgentTool, type InboxReplyCommand } from "./generated/inbox/connection.ts";
 import { isCtxAlive } from "./current-pi-session.ts";
+import { piExtensionVersion } from "./server/update-advert.ts";
 import { PI_INBOX_REMINDER_CUSTOM_TYPE } from "./pi-session-bridge.ts";
 
 /**
@@ -253,6 +254,8 @@ function registerPiInbox(pi: InboxPi, connection: InboxAgentConnection, options:
 				// The session is gone: the reply stays readable in the Inbox.
 			}
 		},
+		// The extension version this process loaded: the Inbox says when it is behind (`pi update --extensions`, then /reload).
+		pluginVersion: () => piExtensionVersion(),
 		// The session's working folder, so the Inbox lists it under its project from its first poll.
 		projectPath: () => {
 			const current = ctx;
