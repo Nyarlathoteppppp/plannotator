@@ -170,7 +170,10 @@ test('a word double-clicked in the message (selected, nothing to comment on) doe
     // A double-click on a word of the agent's message selects it, as people do while reading.
     const word = await wordRect(p, 'I checked the 409 row.', 'checked');
     await p.mouse.dblclick(word.x, word.y);
-    expect(await p.evaluate(() => document.getSelection()?.toString().trim() ?? '')).not.toBe('');
+    // The word is drawn as the comment toolbar's pending highlight (approval "inbox-message-comments"):
+    // the toolbar is an offer, so the dictation still follows the reply box.
+    await expect(p.locator('section.ib-pane .ib-body mark.annotation-highlight')).toHaveText('checked');
+    await expect(p.locator('.annotation-toolbar')).toBeVisible();
     await expect(box).not.toBeFocused();
     await dictate(p, 'Then this.');
     await expect(box).toHaveValue('Reading first. Then this.');

@@ -332,6 +332,22 @@ test.skipIf(!hasDom)("a document's selection toolbar showing (the words drawn as
   expect(document.activeElement).toBe($('#reply'));
 });
 
+test.skipIf(!hasDom)("words selected in a thread message (its toolbar showing, approval \"inbox-message-comments\"): the paste still follows the field", () => {
+  page(
+    `<textarea id="reply"></textarea><div class="ib-body"><p>The backoff is <mark class="annotation-highlight" data-highlight-id="p1">2, 4 and 8</mark> seconds.</p></div>` +
+      `<div class="toolbar"><div data-pn-annotation-toolbar-row="true"><button id="comment">Comment</button></div></div><button id="b">x</button>`,
+  );
+  $<HTMLTextAreaElement>('#reply').focus();
+  $<HTMLButtonElement>('#b').focus();
+  commandV();
+  expect(document.activeElement).toBe($('#reply'));
+  // A saved comment's mark is not a pending selection: a file's toolbar showing still holds the paste.
+  $('mark').classList.add('comment');
+  $<HTMLButtonElement>('#b').focus();
+  commandV();
+  expect(document.activeElement).toBe($('#b'));
+});
+
 test.skipIf(!hasDom)('a field out of view, out of the window or out of its pane, is left alone', () => {
   page(`<div id="pane"><textarea id="note"></textarea></div><div id="beside"></div><button id="b">x</button>`);
   const note = $<HTMLTextAreaElement>('#note');

@@ -354,6 +354,7 @@ function lineRangeLabel(start: number, end: number): string {
 /** The small tag beside a row in the chip's list: the element, diagram part, or a guided-review comment's lines. */
 export function recordTag(record: InboxAnnotationRecord): string | null {
   if (record.guide) return lineRangeLabel(record.guide.line_start, record.guide.line_end);
+  if (record.message) return null;
   return annotationTag(annotationOf(record));
 }
 
@@ -469,6 +470,52 @@ export function exportFileLabel(
   return `${label} (image in ${whose} ${second} message ${place})`;
 }
 
+/** A comment on the text of an agent's message (approval "inbox-message-comments"), or false for any other annotation. */
+export function isMessageComment(record: InboxAnnotationRecord): boolean {
+  return record.message !== undefined;
+}
+
+/** A comment on a file (not a guided review's diff, not a message's text): what the file viewers list. */
+export function isFileComment(record: InboxAnnotationRecord): boolean {
+  return !record.guide && !record.message;
+}
+
+export const MESSAGE_FEEDBACK_HEADING = {
+  title: 'Feedback on your messages',
+  intro: 'The following feedback is on the text of your messages in this thread, one section per message. Each quote is the exact text I selected in your message.',
+  subject: 'message',
+};
+
+/** A message comment's section heading: "Feedback on your message from 2:58 PM (msg_…)", the time in the person's own time zone. */
+export function messageFeedbackLabel(record: Pick<InboxAnnotationRecord, 'message_id' | 'message'>, time: (iso: string) => string = whenTime): string {
+  const at = record.message ? time(record.message.at) : '';
+  return `Feedback on your message${at ? ` from ${at}` : ''} (${record.message_id})`;
+}
+
+/**
+ * The comments on the text of agents' messages, as the feedback text a Send
+ * carries (approval "inbox-message-comments"): one section per message,
+ * oldest message first, each comment as Plannotator's export writes a
+ * comment on selected text (the exact words quoted, then the comment). No
+ * line numbers: the words are what find the place.
+ */
+export function messageFeedback(records: readonly InboxAnnotationRecord[], time: (iso: string) => string = whenTime): string {
+  const messages = records.filter((record) => record.message);
+  if (messages.length === 0) return '';
+  const byMessage = new Map<string, { at: string; annotations: Annotation[] }>();
+  for (const record of messages) {
+    const entry = byMessage.get(record.message_id) ?? { at: record.message!.at, annotations: [] };
+    const { exportLocation: _dropped, ...annotation } = annotationOf(record) as Annotation & { exportLocation?: unknown };
+    entry.annotations.push(annotation as Annotation);
+    byMessage.set(record.message_id, entry);
+  }
+  const ordered = [...byMessage].sort(([idA, a], [idB, b]) => a.at.localeCompare(b.at) || idA.localeCompare(idB));
+  const entries = new Map(
+    ordered.map(([id, entry]) => [messageFeedbackLabel({ message_id: id, message: { at: entry.at } }, time), { annotations: entry.annotations, globalAttachments: [] }]),
+  );
+  return exportLinkedDocAnnotations(entries, MESSAGE_FEEDBACK_HEADING).trim();
+}
+
 export const ATTACHMENT_FEEDBACK_HEADING = {
   title: 'Feedback on the attached files',
   intro: 'The following feedback is on the files you attached, one section per file and version.',
@@ -481,8 +528,9 @@ export const ATTACHMENT_AND_IMAGE_FEEDBACK_HEADING = {
 };
 
 /**
- * The feedback text a Send carries after the picks: Plannotator's export of
- * the annotations (the same entry renderer `exportAnnotations` uses), one
+ * The feedback text a Send carries after the picks: the comments on the text
+ * of agents' messages (`messageFeedback`), then Plannotator's export of the
+ * files' annotations (the same entry renderer `exportAnnotations` uses), one
  * section per file and version, then the comments on guided reviews' diffs
  * (`guideFeedback`). `texts` holds each version's text, keyed
  * `<attachment id>\0<version>`, so line numbers name the lines the person read.
@@ -496,11 +544,12 @@ export function attachmentFeedback(
   options: { personMessageIds?: ReadonlySet<string> } = {},
 ): string {
   if (records.length === 0) return '';
+  const messages = messageFeedback(records);
   let inlineImages = false;
   const groups = new Map<string, { annotations: Annotation[]; markdown?: string; blocks: Block[]; video?: { durationMs?: number } }>();
   for (const record of records) {
-    // Comments on a guided review's diff go in their own section, after the files'.
-    if (record.guide) continue;
+    // Comments on a guided review's diff go in their own section, after the files'; a message's text has its own, before them.
+    if (record.guide || record.message) continue;
     const attachment = attachments.find((a) => a.id === record.attachment_id) ?? attachments.find((a) => a.path === record.path);
     const sent = record.version !== 'current';
     if (!attachment) {
@@ -547,6 +596,6 @@ export function attachmentFeedback(
     }
   }
   const entries = new Map([...groups].map(([label, group]) => [label, { annotations: group.annotations, globalAttachments: [], blocks: group.blocks }]));
-  const files = records.some((record) => !record.guide) ? exportLinkedDocAnnotations(entries, inlineImages ? ATTACHMENT_AND_IMAGE_FEEDBACK_HEADING : ATTACHMENT_FEEDBACK_HEADING).trim() : '';
-  return [files, guideFeedback(records)].filter(Boolean).join('\n\n');
+  const files = records.some(isFileComment) ? exportLinkedDocAnnotations(entries, inlineImages ? ATTACHMENT_AND_IMAGE_FEEDBACK_HEADING : ATTACHMENT_FEEDBACK_HEADING).trim() : '';
+  return [messages, files, guideFeedback(records)].filter(Boolean).join('\n\n');
 }

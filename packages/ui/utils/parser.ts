@@ -1410,6 +1410,8 @@ export interface LinkedDocAnnotationEntry {
 export interface LinkedDocExportHeading {
   title: string;
   intro: string;
+  /** What each section is, in "I've reviewed this <subject>…" (default "document"). */
+  subject?: string;
 }
 
 export const LINKED_DOC_EXPORT_HEADING: LinkedDocExportHeading = {
@@ -1432,6 +1434,7 @@ export const exportLinkedDocAnnotations = (
   heading: LinkedDocExportHeading = LINKED_DOC_EXPORT_HEADING,
 ): string => {
   let output = `\n# ${heading.title}\n\n${heading.intro}\n\n`;
+  const subject = heading.subject ?? 'document';
 
   // One injection per export, across all linked documents.
   const injectedSkills = new Set<string>();
@@ -1462,10 +1465,10 @@ export const exportLinkedDocAnnotations = (
     const sortedAnns = sortAnnotationsInDocumentOrder(annotations, docBlocks);
 
     if (annotations.length > 0 || answers.length === 0) {
-      output += `I've reviewed this document and have ${annotations.length} piece${annotations.length !== 1 ? 's' : ''} of feedback:\n\n`;
+      output += `I've reviewed this ${subject} and have ${annotations.length} piece${annotations.length !== 1 ? 's' : ''} of feedback:\n\n`;
     }
 
-    output += renderAnnotationEntries(sortedAnns, docBlocks, { subject: 'document', level: 3, injectedSkills });
+    output += renderAnnotationEntries(sortedAnns, docBlocks, { subject, level: 3, injectedSkills });
     output += labelSummaryBlock(sortedAnns, 3);
   }
 

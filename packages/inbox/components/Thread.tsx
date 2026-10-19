@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Viewer } from '@plannotator/ui/components/Viewer';
+import { Viewer, type ViewerHandle } from '@plannotator/ui/components/Viewer';
+import type { Annotation } from '@plannotator/ui/types';
+import { annotationOwnsHighlight } from '@plannotator/ui/utils/annotationOwnsHighlight';
 import { ImageLightbox } from '@plannotator/ui/components/ImageLightbox';
 import { parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
 import type { InboxListRow, InboxMessageWire, InboxProjectRepo, InboxQuestion, InboxThread, InboxUpload } from '@plannotator/core/inbox-types';
@@ -9,7 +11,7 @@ import { isInboxNote, isInboxTextKind, readInboxAttachmentKind, type InboxAnnota
 import type { LocalLinkResolver } from '@plannotator/ui/components/LocalLinkContext';
 import { NOT_ATTACHED_TITLE, attachmentDeepLink, attachmentDisplayPath, attachmentForLink, openAttachmentTitle, useRefRepo } from '../links';
 import { InboxApiError, inboxApi, type AttachmentsModel } from '../api';
-import { annotationOf, attachmentFeedback } from '../attachments';
+import { annotationOf, attachmentFeedback, isFileComment } from '../attachments';
 import { AttachmentTiles, AttachmentsCount, changedCount } from './AttachmentTiles';
 import { AttachmentPane, type AttachmentPaneHandle } from './AttachmentPane';
 import type { OpenInSurface } from './OpenIn';
@@ -51,6 +53,7 @@ import { paintSkillReferences } from '../skillHighlight';
 import { INBOX_REPLY_SKILL_AUDIENCE, annotationSkillTexts, inboxSkillsBlock, withSkillsBlock } from '../skills';
 import { splitInboxSkillsBlock } from '@plannotator/core/skill-reference-block';
 import { Tip } from './Tip';
+import { selectionToolbarShowing } from '../selectionToolbar';
 
 const noop = () => {};
 /** The agent superseded the question this call named (`422 question_superseded`). */
@@ -245,6 +248,7 @@ export function MessageBody({
   footerFor,
   renderReplacedCard,
   renderReplacesLine,
+  comments,
 }: {
   message: InboxMessageWire;
   /** The thread's project root: relative links start there or at the message's own folder. */
@@ -263,6 +267,21 @@ export function MessageBody({
   renderReplacedCard?: (key: string, number: number) => React.ReactNode | undefined;
   /** The "Replaces …" line under a question's prompt, or null. */
   renderReplacesLine?: (key: string) => React.ReactNode;
+  /**
+   * Comments on the text (an agent's message that can still be answered;
+   * approval "inbox-message-comments"): the person's comments on this message
+   * waiting for a Send, drawn as highlights, and a selection opens the
+   * comment-only toolbar. `onSave` stores a new one (false: it was refused,
+   * and its highlight goes). `onUnanchored` hears which could not be found by
+   * their words; `onPainted` that highlights were drawn (the DOM changed).
+   * Absent: the text takes no comments.
+   */
+  comments?: {
+    annotations: readonly Annotation[];
+    onSave: (annotation: Annotation) => Promise<boolean>;
+    onUnanchored?: (report: { attempted: readonly string[]; unanchored: readonly string[] }) => void;
+    onPainted?: () => void;
+  };
 }) {
   // A person's message ends with the skills block the window pasted when it
   // was sent: folded behind one quiet line (SkillsLine). An agent's message
@@ -413,6 +432,51 @@ export function MessageBody({
     [message.questions],
   );
 
+  // ── Comments on the text (approval "inbox-message-comments") ──────────────
+  // The highlights are drawn once per mount for the comments already saved;
+  // a new comment paints itself (the selection becomes its mark), and one the
+  // person removes elsewhere (the reply box's list) leaves the text.
+  const viewerRef = useRef<ViewerHandle>(null);
+  const commentList = useMemo<Annotation[]>(() => (comments ? [...comments.annotations] : NO_ANNOTATIONS), [comments?.annotations]);
+  const commentsRef = useRef(comments);
+  commentsRef.current = comments;
+  const painted = useRef<Set<string>>(new Set());
+  const [selectedComment, setSelectedComment] = useState<string | null>(null);
+  const selectComment = useCallback((id: string | null) => setSelectedComment((current) => (current === id ? null : id)), []);
+  const addComment = useCallback((annotation: Annotation) => {
+    painted.current.add(annotation.id);
+    void commentsRef.current?.onSave(annotation).then((saved) => {
+      if (saved) return;
+      painted.current.delete(annotation.id);
+      viewerRef.current?.removeHighlight(annotation.id);
+    });
+  }, []);
+  const restoreReport = useCallback((report: { attempted: readonly string[]; unanchored: readonly string[] }) => commentsRef.current?.onUnanchored?.(report), []);
+  useEffect(() => {
+    if (!comments) return;
+    const ids = new Set(commentList.map((a) => a.id));
+    for (const id of [...painted.current]) {
+      if (ids.has(id)) continue;
+      painted.current.delete(id);
+      viewerRef.current?.removeHighlight(id);
+    }
+    const fresh = commentList.filter((a) => !painted.current.has(a.id) && annotationOwnsHighlight(a));
+    if (fresh.length === 0) return;
+    for (const a of fresh) painted.current.add(a.id);
+    // After the Viewer's highlighter is ready (the attachment pane's rule).
+    let done = false;
+    const frame = requestAnimationFrame(() => {
+      done = true;
+      viewerRef.current?.applySharedAnnotations(fresh);
+      commentsRef.current?.onPainted?.();
+    });
+    return () => {
+      if (done) return;
+      cancelAnimationFrame(frame);
+      for (const a of fresh) painted.current.delete(a.id);
+    };
+  }, [comments !== undefined, commentList]);
+
   // The whole card, per question: only an open or picked question can be
   // answered. A sent one, one a Mark read or the archive closed, and a
   // replaced one draw read-only (no ticks, no Accept recommended, no Skip),
@@ -421,10 +485,12 @@ export function MessageBody({
   // window does not offer it (adr/implementation/inbox-thread-state.md, Pick).
   const answerLocked = useCallback(
     (question: IndexedQuestion) => {
+      // A message whose questions take no answers now (all sent, none, or closed): every card locked.
+      if (readOnly) return true;
       const wire = message.questions?.find((q) => q.key === question.question.key);
       return wire !== undefined && wire.state !== 'open' && wire.state !== 'picked';
     },
-    [message.questions],
+    [message.questions, readOnly],
   );
 
   // A pick not sent yet tags its card "Not sent", not "Answered" (the footer says when it was picked);
@@ -439,14 +505,18 @@ export function MessageBody({
   );
 
   return (
-    <div className="ib-body" data-message-id={message.id} ref={bodyRef}>
+    <div className="ib-body" data-message-id={message.id} data-text-comments={comments ? '' : undefined} ref={bodyRef}>
       <Viewer
+        ref={viewerRef}
         blocks={blocks}
         markdown={shown}
-        annotations={NO_ANNOTATIONS}
-        onAddAnnotation={noop}
-        onSelectAnnotation={noop}
-        selectedAnnotationId={null}
+        annotations={commentList}
+        onAddAnnotation={comments ? addComment : noop}
+        onSelectAnnotation={comments ? selectComment : noop}
+        selectedAnnotationId={comments ? selectedComment : null}
+        textComments={comments !== undefined}
+        allowImages={false}
+        onRestoreReport={comments ? restoreReport : undefined}
         mode="selection"
         taterMode={false}
         maxWidth={null}
@@ -457,7 +527,8 @@ export function MessageBody({
         resolveLocalLink={resolveLocalLink}
         refRepo={refRepo}
         answerOnly
-        readOnly={readOnly}
+        // `readOnly` is about the question cards (answerLocked locks them); with comments on, the text still takes them.
+        readOnly={readOnly && !comments}
         questionAnswers={answers}
         onAnswerQuestion={(_blockId, answer, key) => onPick(key, answer)}
         renderQuestionFooter={renderFooter}
@@ -928,6 +999,20 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
   // API, cleared on the first click or key in the thread.
   const landedOn = useRef<string | null>(null);
   const clearHits = useRef<(() => void) | null>(null);
+  /** The message and words the landing highlight is on, while it lasts. */
+  const landedHits = useRef<{ messageId: string; terms: readonly string[] } | null>(null);
+  /**
+   * Drawing comment highlights wraps words in marks, which moves the text the
+   * landing highlight's ranges are in: paint it again over the new text.
+   */
+  const repaintHits = useCallback((messageId: string) => {
+    const hits = landedHits.current;
+    if (!hits || hits.messageId !== messageId || !clearHits.current) return;
+    const article = bodyRef.current?.querySelector<HTMLElement>(`[data-message-article="${CSS.escape(messageId)}"]`);
+    if (!article) return;
+    clearHits.current();
+    clearHits.current = highlightSearchHits(article, hits.terms).clear;
+  }, []);
   const landingRef = useRef(landing);
   landingRef.current = landing;
   const onLandedRef = useRef(onLanded);
@@ -968,6 +1053,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
       }, 1400);
       clearHits.current?.();
       clearHits.current = highlightSearchHits(article, target.terms).clear;
+      landedHits.current = { messageId: target.messageId, terms: target.terms };
       onLandedRef.current?.();
     };
     // A folded message opens first, then the landing measures it.
@@ -986,6 +1072,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
     const clear = () => {
       clearHits.current?.();
       clearHits.current = null;
+      landedHits.current = null;
     };
     section.addEventListener('pointerdown', clear, true);
     section.addEventListener('keydown', clear, true);
@@ -1044,7 +1131,42 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
     setNewMessage(sessions.length === 0 ? { kind: 'none' } : sessions.length === 1 ? { kind: 'compose', target: sessions[0]! } : { kind: 'pick' });
   };
 
-  const fileRecords = useMemo(() => records.filter((r) => !r.guide), [records]);
+  const fileRecords = useMemo(() => records.filter(isFileComment), [records]);
+  // Comments on the text of agents' messages (approval "inbox-message-comments"), by message.
+  const messageComments = useMemo(() => {
+    const byMessage = new Map<string, Annotation[]>();
+    for (const record of records) {
+      if (!record.message) continue;
+      byMessage.set(record.message_id, [...(byMessage.get(record.message_id) ?? []), annotationOf(record)]);
+    }
+    return byMessage;
+  }, [records]);
+  /** Comments whose words were not found in their message (the reply box's list marks them). */
+  const [unanchoredComments, setUnanchoredComments] = useState<ReadonlySet<string>>(NO_IDS);
+  const noteUnanchored = useCallback((report: { attempted: readonly string[]; unanchored: readonly string[] }) => {
+    setUnanchoredComments((current) => {
+      const next = new Set(current);
+      for (const id of report.attempted) next.delete(id);
+      for (const id of report.unanchored) next.add(id);
+      return next.size === current.size && [...next].every((id) => current.has(id)) ? current : next;
+    });
+  }, []);
+  /** A message comment's row in the reply box's list: "Claude Code's message, 2:58 PM". */
+  const messageCommentName = (record: InboxAnnotationRecord) => {
+    const message = thread.messages.find((m) => m.id === record.message_id);
+    const who = message ? agentName(message.author) : 'Agent';
+    return `${who}'s message, ${whenTime(record.message?.at ?? message?.created_at ?? '')}`;
+  };
+  const saveMessageComment = async (messageId: string, annotation: Annotation): Promise<boolean> => {
+    try {
+      const result = await inboxApi.saveMessageAnnotation(messageId, annotation);
+      saveRecord(result.annotation);
+      return true;
+    } catch (cause) {
+      setError(cause instanceof InboxApiError ? cause.message : 'The comment was not saved.');
+      return false;
+    }
+  };
   /** Something here takes annotations: an attached file, or a guided review's diffs. */
   const takesAnnotations = allFiles.length > 0 || records.length > 0 || thread.messages.some((m) => m.guide);
   /**
@@ -1080,6 +1202,27 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
       onOpenGuide(record.message_id);
       return;
     }
+    // A comment on a message's text: that message, its passage brought into view and rung.
+    if (record.message) {
+      const show = () => {
+        const mark = bodyRef.current?.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(record.message_id)}"] [data-bind-id="${CSS.escape(record.id)}"], [data-message-id="${CSS.escape(record.message_id)}"] [data-highlight-id="${CSS.escape(record.id)}"]`,
+        );
+        const target = mark ?? articleOf(record.message_id);
+        if (!target) return;
+        target.scrollIntoView?.({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+        target.classList.remove('ib-q-target-out');
+        target.classList.add('ib-q-target');
+        setTimeout(() => {
+          target.classList.add('ib-q-target-out');
+          target.classList.remove('ib-q-target');
+          setTimeout(() => target.classList.remove('ib-q-target-out'), 700);
+        }, 1400);
+      };
+      if (unfold(record.message_id)) requestAnimationFrame(() => requestAnimationFrame(show));
+      else show();
+      return;
+    }
     const attachment = allFiles.find((a) => a.id === record.attachment_id);
     if (!attachment) return;
     const go = () => openFile(attachment, record.version === 'current' ? 'current' : 'sent', record.id);
@@ -1100,7 +1243,11 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
   const editRecord = async (record: InboxAnnotationRecord, text: string) => {
     try {
       const next = { ...annotationOf(record), text };
-      const result = record.guide ? await inboxApi.saveGuideAnnotation(record.message_id, next) : await inboxApi.saveAnnotation(record.attachment_id, record.version, next);
+      const result = record.guide
+        ? await inboxApi.saveGuideAnnotation(record.message_id, next)
+        : record.message
+          ? await inboxApi.saveMessageAnnotation(record.message_id, next)
+          : await inboxApi.saveAnnotation(record.attachment_id, record.version, next);
       saveRecord(result.annotation);
     } catch (cause) {
       setError(cause instanceof InboxApiError ? cause.message : 'The annotation was not saved.');
@@ -1118,8 +1265,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
   const buildFeedback = async (pending: readonly InboxAnnotationRecord[]): Promise<string> => {
     const texts = new Map<string, string>();
     for (const record of pending) {
-      // A guided-review comment carries its own file and lines.
-      if (record.guide) continue;
+      // A guided-review comment carries its own file and lines; a message comment quotes its words.
+      if (record.guide || record.message) continue;
       const attachment = allFiles.find((a) => a.id === record.attachment_id) ?? allFiles.find((a) => a.path === record.path);
       if (!attachment) continue;
       const key = `${attachment.id}\0${record.version}`;
@@ -1336,6 +1483,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
       if (event.key !== 'j' && event.key !== 'k' && event.key !== 'n') return;
+      // Words selected in a message: its toolbar takes the letters (a comment starting with them).
+      if (selectionToolbarShowing()) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (target) {
         if (target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
@@ -2172,6 +2321,16 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
                   footerFor={footerFor(message)}
                   renderReplacedCard={replacedCard}
                   renderReplacesLine={replacesLine}
+                  comments={
+                    isAgent && liveMessage(message)
+                      ? {
+                          annotations: messageComments.get(message.id) ?? NO_ANNOTATIONS,
+                          onSave: (annotation) => saveMessageComment(message.id, annotation),
+                          onUnanchored: noteUnanchored,
+                          onPainted: () => repaintHits(message.id),
+                        }
+                      : undefined
+                  }
                 />
                 {/* An agent's files, and the person's own (compose): the same tiles and viewers. */}
                 {(message.attachments?.length ?? 0) > 0 && (
@@ -2371,7 +2530,15 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
                     </Tip>
                   )}
                   {takesAnnotations && (
-                    <AnnotationsChip records={records} attachments={allFiles} onEdit={editRecord} onRemove={removeRecord} onOpen={openRecord} />
+                    <AnnotationsChip
+                      records={records}
+                      attachments={allFiles}
+                      onEdit={editRecord}
+                      onRemove={removeRecord}
+                      onOpen={openRecord}
+                      messageName={messageCommentName}
+                      unanchored={unanchoredComments}
+                    />
                   )}
                 </div>
               )}
