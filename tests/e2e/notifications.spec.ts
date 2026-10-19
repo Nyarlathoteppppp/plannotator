@@ -267,9 +267,10 @@ test('the ask appears when the first thread arrives, never on first paint, and s
   // Beside an open thread the list is a 380 px column. The words keep the line's width and the buttons go on
   // a row under them, never squeezing the words into a narrow column between the icon and the buttons.
   await page.locator(`[data-thread-id="${sent.thread_id}"]`).click();
-  await expect(page.locator('[data-thread-id]').first()).toBeVisible();
+  await expect(page.locator('.ib-listcol.ib-narrow')).toBeVisible();
   const line = page.locator('[data-notification-ask="ask"]');
   await expect(line).toBeVisible();
+  await expect.poll(async () => (await line.boundingBox())?.width ?? Infinity).toBeLessThan(420);
   const [lineBox, textBox, actsBox] = await Promise.all([
     line.boundingBox(),
     line.locator('.ib-ask-text').boundingBox(),

@@ -1941,8 +1941,9 @@ button.ib-vtime:hover { background: color-mix(in oklch, var(--primary) 22%, tran
   .ib-group + .ib-group { margin-top: 0; }
   .ib-notice { height: auto; min-height: 44px; margin: 10px 12px; width: calc(100% - 24px); }
   .ib-askline { margin: 10px 12px; }
-  /* The phone's buttons are 44 px with 12 px padding (below). */
-  .ib-askline.ib-askquiet .ib-ask-acts { margin-inline-start: -12px; }
+  /* The phone's buttons are 44 px with 12 px padding (below); pulled back only in the narrow layout, where the
+     actions sit under the words (a phone on its side can be wide, actions at the row's end). */
+  @container ib-ask (width < 640px) { .ib-askline.ib-askquiet .ib-ask-acts { margin-inline-start: -12px; } }
   .ib-portline { margin: 10px 12px; }
   .ib-mrow { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 64px; padding: 11px 16px 12px; border-bottom: 1px solid var(--ib-hair); text-align: left; }
   .ib-mrow:active { background: color-mix(in oklch, var(--muted) 50%, transparent); }
