@@ -313,10 +313,14 @@ test('an image the agent overwrites says it changed since it was sent, and opens
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await page.keyboard.press(']');
   await expectAt(page, 3, 'checkout-c-drawer.png');
-  // Full screen: the changed line is the chip at the top left (its title the whole sentence).
+  // Full screen: the changed line is the chip at the top left; the whole sentence is its tooltip (ui's Tooltip, never a native title).
   const line = pane().locator('[data-full-view-changed]');
   await expect(line).toContainText('Changed since sent');
-  await expect(line).toHaveAttribute('title', /^Changed since Claude sent it/);
+  await expect(line).not.toHaveAttribute('title', /./);
+  await line.locator('.ib-fvver-t').hover();
+  await expect(page.locator('[data-side].bg-popover')).toHaveText(/^Changed since Claude sent it/);
+  await page.mouse.move(700, 600);
+  await expect(page.locator('[data-side].bg-popover')).toHaveCount(0);
   await shot(page, '05-inline-image-changed');
   await line.getByRole('button', { name: 'Open the version it sent' }).click();
   await expect(pane()).toHaveAttribute('data-version', 'sent');
