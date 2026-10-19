@@ -157,6 +157,17 @@ test("refused: the person's own message, an unknown message, a deletion or empty
   await refused(route, comment({ originalText: "x".repeat(20_001) }), 422, "validation_error");
   await refused(route, comment({ id: "has a space" }), 422, "validation_error");
   await refused(route, comment({ text: 4 }), 422, "validation_error");
+  // A comment has words, at most 10,000 characters (so the agent never reads `> undefined`).
+  await refused(route, comment({ text: undefined }), 422, "validation_error");
+  await refused(route, comment({ text: "  " }), 422, "validation_error");
+  await refused(route, comment({ text: "x".repeat(10_001) }), 422, "validation_error");
+  expect((await post(server, route, { annotation: comment({ id: "ann-long", text: "x".repeat(10_000) }) })).status).toBe(200);
+  expect((await post(server, "/api/inbox/annotations/ann-long/remove", {})).status).toBe(200);
+  // Words only: no images, element, page or reply thread.
+  await refused(route, comment({ images: [{ path: "/tmp/a.png", name: "a" }] }), 422, "validation_error");
+  await refused(route, comment({ elementContext: { tag: "div" } }), 422, "validation_error");
+  await refused(route, comment({ pageUrl: "/admin" }), 422, "validation_error");
+  await refused(route, comment({ inReplyTo: "ann-other" }), 422, "validation_error");
   await refused(route, [comment()], 422, "validation_error");
   await refused("/api/inbox/messages/msg_00000000000000000000000000/annotations", comment(), 404, "message_not_found");
   await refused(route, comment(), 403, "cross_origin", { Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" });
@@ -209,7 +220,7 @@ test("Send carries the comments quoted under 'Feedback on your message from <tim
   const sent = await sendMessage(client, project, { attachments: ["notes.md"] });
   const route = `/api/inbox/messages/${sent.message_id}/annotations`;
   expect((await post(server, route, { annotation: comment() })).status).toBe(200);
-  expect((await post(server, route, { annotation: comment({ id: "ann-msg-2", originalText: "a 429 waits for Retry-After", text: "Good.", blockId: "block-1", startOffset: 40 }) })).status).toBe(200);
+  expect((await post(server, route, { annotation: comment({ id: "ann-msg-2", originalText: "I moved the retry loop into the client.\n\nThe backoff is now", text: "Good.", blockId: "block-0", startOffset: 0 }) })).status).toBe(200);
   // A file comment too: both ride the same Send.
   expect(
     (
@@ -242,8 +253,9 @@ test("Send carries the comments quoted under 'Feedback on your message from <tim
     "I've reviewed this message and have 2 pieces of feedback:",
     'Feedback on: "2, 4 and 8 seconds"',
     "> Cap the total wait too.",
-    'Feedback on: "a 429 waits for Retry-After"',
-    "> Good.",
+    // Words across paragraphs: fenced under the heading, so nothing in them reads as markdown.
+    "### 1. Feedback on:\n```\nI moved the retry loop into the client.\n\nThe backoff is now\n```\n> Good.",
+    '### 2. Feedback on: "2, 4 and 8 seconds"',
     "Make it Thursday.",
   ]) {
     expect(body).toContain(part);

@@ -232,6 +232,9 @@ export function installPasteFollowsField(win: Window = window, mod?: (e: { metaK
     // Read before focus(): a range the person selected earlier, no longer visible, would otherwise
     // be what the paste replaces.
     const caret = carets.get(field);
+    // Words selected in a message, left for the field: their pending highlight and toolbar go, as a
+    // press on the field would close them (ui's toolbar closes on a mousedown outside it).
+    if (messageSelectionPending(doc)) field.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 1 }));
     field.focus({ preventScroll: true });
     if (doc.activeElement !== field) return;
     if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {

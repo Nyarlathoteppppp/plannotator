@@ -34,6 +34,13 @@ const BODY = [
   '',
   'The backoff is now **two, four and eight seconds**, and a 429 waits for its `Retry-After` header before it tries again. After the third failure the job goes to the dead-letter queue.',
   '',
+  'Run this once after you pull:',
+  '',
+  '```bash',
+  '# Feedback on the attached files',
+  'echo ```hi',
+  '```',
+  '',
   'Nothing needs you yet. I will wire the admin retry view next.',
 ].join('\n');
 
@@ -61,9 +68,11 @@ async function shot(page: Page, name: string): Promise<void> {
 }
 
 /** Drag across `phrase` in the message the way a person does, from its first letter to its last. */
-async function dragSelect(page: Page, messageId: string, phrase: string): Promise<void> {
+async function dragSelect(page: Page, messageId: string, phrase: string, to?: string): Promise<void> {
+  // A pane may still be sliding in: measure once nothing moves.
+  await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
   const points = await page.evaluate(
-    ({ id, words }) => {
+    ({ id, words, until }) => {
       const root = document.querySelector(`[data-message-id="${id}"]`);
       if (!root) return null;
       // The phrase may span inline elements (bold, code): walk the text and find where it starts and ends.
@@ -73,6 +82,9 @@ async function dragSelect(page: Page, messageId: string, phrase: string): Promis
       const whole = nodes.map((n) => n.data).join('');
       const start = whole.indexOf(words);
       if (start < 0) return null;
+      const stop = until ? whole.indexOf(until, start) : start;
+      if (stop < 0) return null;
+      const lastIndex = until ? stop + until.length - 1 : start + words.length - 1;
       const at = (offset: number): [Text, number] => {
         let left = offset;
         for (const node of nodes) {
@@ -89,42 +101,16 @@ async function dragSelect(page: Page, messageId: string, phrase: string): Promis
         return range.getBoundingClientRect();
       };
       const first = rectOf(start);
-      const last = rectOf(start + words.length - 1);
+      const last = rectOf(lastIndex);
       return { x1: first.left + 1, y1: first.top + first.height / 2, x2: last.right - 1, y2: last.top + last.height / 2 };
     },
-    { id: messageId, words: phrase },
+    { id: messageId, words: phrase, until: to ?? null },
   );
   expect(points, `"${phrase}" in ${messageId}`).not.toBeNull();
   await page.mouse.move(points!.x1, points!.y1);
   await page.mouse.down();
   await page.mouse.move(points!.x2, points!.y2, { steps: 8 });
   await page.mouse.up();
-}
-
-/** Select `phrase` in the message as a long press leaves it, then let the viewer hear the touch end. */
-async function selectAsTouch(page: Page, messageId: string, phrase: string): Promise<void> {
-  const ok = await page.evaluate(
-    ({ id, words }) => {
-      const root = document.querySelector(`[data-message-id="${id}"]`);
-      if (!root) return false;
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
-        const at = n.data.indexOf(words);
-        if (at < 0) continue;
-        const range = document.createRange();
-        range.setStart(n, at);
-        range.setEnd(n, at + words.length);
-        const selection = window.getSelection()!;
-        selection.removeAllRanges();
-        selection.addRange(range);
-        (n.parentElement!.closest('article') ?? root).dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-        return true;
-      }
-      return false;
-    },
-    { id: messageId, words: phrase },
-  );
-  expect(ok, `"${phrase}" in ${messageId}`).toBe(true);
 }
 
 const toolbar = (page: Page) => page.locator('.annotation-toolbar');
@@ -196,12 +182,21 @@ test("a comment on words in an agent's message: toolbar, composer, highlight, ch
   await page.mouse.click(5, 5);
   await shot(page, '03-desktop-highlighted');
 
-  // The reply box's chip lists it under the message.
+  // Words across three blocks (a paragraph, a code block holding "# Feedback on the attached files" and
+  // "echo ```hi", another paragraph): the agent gets them fenced, nothing in them read as markdown.
+  await dragSelect(page, id, 'Run this once', 'Nothing needs you');
+  await toolbar(page).getByRole('button', { name: 'Comment' }).click();
+  await page.locator('[data-comment-popover] textarea').fill('Why a manual step? Put it in the setup script.');
+  await page.locator('[data-comment-popover] textarea').press('ControlOrMeta+Enter');
+  await expect(page.locator('[data-comment-popover]')).toHaveCount(0);
+  await page.mouse.click(5, 5);
+
+  // The reply box's chip lists them under the message.
   await page.locator('section.ib-pane .ib-pfoot').getByRole('button', { name: /^(Reply|Edit the reply)$/ }).first().click();
   const chip = page.locator('[data-annotations-chip]');
-  await expect(chip).toHaveText('1 annotation');
+  await expect(chip).toHaveText('2 annotations');
   await chip.click();
-  const row = page.locator('.ib-annpop [data-annotation-row]');
+  const row = page.locator('.ib-annpop [data-annotation-row]').filter({ hasText: 'two, four and eight seconds' });
   await expect(row).toContainText("Claude Code's message, ");
   await expect(row).toContainText('"two, four and eight seconds"');
   await expect(row).toContainText('Cap the total wait too, say 30 seconds.');
@@ -220,6 +215,16 @@ test("a comment on words in an agent's message: toolbar, composer, highlight, ch
   expect(body).toMatch(new RegExp(`## Feedback on your message from \\d{1,2}:\\d{2} [AP]M \\(${id}\\)`));
   expect(body).toContain('Feedback on: "two, four and eight seconds"');
   expect(body).toContain('> Cap the total wait too, say 30 seconds.');
+  // The words across blocks: under "Feedback on:", in a fence longer than any backtick run in them.
+  const across = /### \d\. Feedback on:\n(`{4,})\n([\s\S]*?)\n\1\n> Why a manual step\? Put it in the setup script\./.exec(body);
+  expect(across, body).not.toBeNull();
+  expect(across![2]).toContain('Run this once after you pull:');
+  expect(across![2]).toContain('# Feedback on the attached files');
+  expect(across![2]).toContain('echo ```hi');
+  expect(across![2]).toContain('Nothing needs you');
+  // Outside the fence, the only top-level headings are the export's own.
+  const outside = body.replace(across![0], '');
+  expect(outside.split('\n').filter((line) => /^# /.test(line))).toEqual(['# Feedback on your messages']);
   await renderReceived(page, body, '05-desktop-agent-received');
   await page.reload();
   // Sent: the comment no longer waits (no chip), and no highlight is drawn any more.
@@ -270,9 +275,7 @@ test('on a phone-wide window: the same toolbar, composer, highlight and chip, in
     const id = sent.message_id as string;
     await page.goto(`${world.url}#thread=${sent.thread_id}`);
     await expect(page.locator(`[data-message-id="${id}"]`)).toContainText('dead-letter queue');
-    // A phone selects by touch, which a mouse drag in a narrow headless Chromium does not reproduce:
-    // the words are selected as a long press leaves them, and the viewer hears the touch end.
-    await selectAsTouch(page, id, 'dead-letter queue');
+    await dragSelect(page, id, 'dead-letter queue');
     await expect(toolbar(page)).toBeVisible();
     const bar = (await toolbar(page).boundingBox())!;
     expect(bar.x).toBeGreaterThanOrEqual(0);

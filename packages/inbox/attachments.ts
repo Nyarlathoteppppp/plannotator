@@ -482,8 +482,7 @@ export function isFileComment(record: InboxAnnotationRecord): boolean {
 
 export const MESSAGE_FEEDBACK_HEADING = {
   title: 'Feedback on your messages',
-  intro: 'The following feedback is on the text of your messages in this thread, one section per message. Each quote is the exact text I selected in your message.',
-  subject: 'message',
+  intro: 'The following feedback is on the text of your messages in this thread, one section per message. Each quote is the words I selected (as shown on screen) in your message.',
 };
 
 /** A message comment's section heading: "Feedback on your message from 2:58 PM (msg_…)", the time in the person's own time zone. */
@@ -493,11 +492,38 @@ export function messageFeedbackLabel(record: Pick<InboxAnnotationRecord, 'messag
 }
 
 /**
+ * One comment on a message's text: "Feedback on" the words selected, then
+ * the comment, every line of it quoted. The words are the rendered text, so
+ * they can span paragraphs and hold anything a message can (a code block, a
+ * line starting with `#`): words on one line sit inline in quotes, words on
+ * several lines go in a fenced block no line of theirs can close
+ * (`codeFenceFor`, as the guided-review export quotes code), so nothing in
+ * them reads as a heading or leaves a fence open.
+ */
+function messageCommentEntry(annotation: Annotation, number: number): string {
+  const words = annotation.originalText ?? '';
+  const label = annotation.isQuickLabel && annotation.text ? `[${annotation.text}] ` : '';
+  const multiline = /[\r\n]/.test(words);
+  let out = `### ${number}. ${label}Feedback on${multiline ? ':' : `: "${words}"`}\n`;
+  if (multiline) {
+    const fence = codeFenceFor(words);
+    out += `${fence}\n${words.replace(/\r\n?/g, '\n')}\n${fence}\n`;
+  }
+  if (!annotation.isQuickLabel && annotation.text) out += `${annotation.text.split(/\r\n|\r|\n/).map((line) => `> ${line}`).join('\n')}\n`;
+  return `${out}\n`;
+}
+
+/** Comments in the order their words come in the message: by block, then by where in it. */
+function compareInMessage(a: Annotation, b: Annotation): number {
+  return String(a.blockId ?? '').localeCompare(String(b.blockId ?? ''), undefined, { numeric: true }) || (a.startOffset ?? 0) - (b.startOffset ?? 0);
+}
+
+/**
  * The comments on the text of agents' messages, as the feedback text a Send
  * carries (approval "inbox-message-comments"): one section per message,
- * oldest message first, each comment as Plannotator's export writes a
- * comment on selected text (the exact words quoted, then the comment). No
- * line numbers: the words are what find the place.
+ * oldest message first, under "Feedback on your message from <time> (<id>)",
+ * each comment quoting the words selected, then the comment. No line
+ * numbers: the words are what find the place.
  */
 export function messageFeedback(records: readonly InboxAnnotationRecord[], time: (iso: string) => string = whenTime): string {
   const messages = records.filter((record) => record.message);
@@ -505,15 +531,20 @@ export function messageFeedback(records: readonly InboxAnnotationRecord[], time:
   const byMessage = new Map<string, { at: string; annotations: Annotation[] }>();
   for (const record of messages) {
     const entry = byMessage.get(record.message_id) ?? { at: record.message!.at, annotations: [] };
-    const { exportLocation: _dropped, ...annotation } = annotationOf(record) as Annotation & { exportLocation?: unknown };
-    entry.annotations.push(annotation as Annotation);
+    entry.annotations.push(annotationOf(record));
     byMessage.set(record.message_id, entry);
   }
   const ordered = [...byMessage].sort(([idA, a], [idB, b]) => a.at.localeCompare(b.at) || idA.localeCompare(idB));
-  const entries = new Map(
-    ordered.map(([id, entry]) => [messageFeedbackLabel({ message_id: id, message: { at: entry.at } }, time), { annotations: entry.annotations, globalAttachments: [] }]),
-  );
-  return exportLinkedDocAnnotations(entries, MESSAGE_FEEDBACK_HEADING).trim();
+  let out = `# ${MESSAGE_FEEDBACK_HEADING.title}\n\n${MESSAGE_FEEDBACK_HEADING.intro}\n\n`;
+  for (const [id, entry] of ordered) {
+    const list = [...entry.annotations].sort(compareInMessage);
+    out += `## ${messageFeedbackLabel({ message_id: id, message: { at: entry.at } }, time)}\n\n`;
+    out += `I've reviewed this message and have ${list.length} piece${list.length === 1 ? '' : 's'} of feedback:\n\n`;
+    list.forEach((annotation, index) => {
+      out += messageCommentEntry(annotation, index + 1);
+    });
+  }
+  return `${out}---`;
 }
 
 export const ATTACHMENT_FEEDBACK_HEADING = {

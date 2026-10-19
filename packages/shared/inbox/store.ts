@@ -76,6 +76,7 @@ import { sanitizeTag } from "@plannotator/core/project";
 import {
   INBOX_ANNOTATION_CURRENT,
   INBOX_MESSAGE_COMMENT_QUOTE_MAX,
+  INBOX_MESSAGE_COMMENT_TEXT_MAX,
   isInboxAnnotationId,
   isInboxAnnotationVersion,
   isInboxAnnotatableKind,
@@ -2491,7 +2492,16 @@ export class InboxStore {
     if (typeof quote !== "string" || quote.trim() === "" || quote.length > INBOX_MESSAGE_COMMENT_QUOTE_MAX) {
       throw new InboxError("validation_error", `annotation.originalText: the words selected (1 to ${INBOX_MESSAGE_COMMENT_QUOTE_MAX} characters).`, { field: "annotation.originalText" });
     }
-    if (fields.text !== undefined && typeof fields.text !== "string") throw new InboxError("validation_error", "annotation.text: a string.", { field: "annotation.text" });
+    // The comment itself: a quick label (👍) carries its label as its text, so every comment has words to send.
+    const text = fields.text;
+    if (typeof text !== "string" || text.trim() === "" || text.length > INBOX_MESSAGE_COMMENT_TEXT_MAX) {
+      throw new InboxError("validation_error", `annotation.text: the comment (1 to ${INBOX_MESSAGE_COMMENT_TEXT_MAX} characters).`, { field: "annotation.text" });
+    }
+    // A comment on a message's words is words: no images, no element or page it points at, no reply thread.
+    for (const field of ["images", "elementContext", "pageUrl", "inReplyTo"] as const) {
+      const value = fields[field];
+      if (value !== undefined && value !== null && !(Array.isArray(value) && value.length === 0)) throw new InboxError("validation_error", `annotation.${field}: a comment on a message's text takes none.`, { field: `annotation.${field}` });
+    }
     if (this.closedByArchive(message)) throw new InboxError("thread_resolved", "This thread is resolved; reopen it to annotate.");
     const existing = this.annotations.get(id);
     if (existing && (!existing.message || existing.message_id !== message.id)) {

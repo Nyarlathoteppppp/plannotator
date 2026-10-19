@@ -88,14 +88,14 @@ const BODY = [
 ].join('\n');
 
 /** An agent writes a new thread (its own session); returns the message id (also the thread id) and the session. */
-async function agentWrites(body = BODY): Promise<{ id: string; session: string }> {
+async function agentWrites(body = BODY, replyTo?: string): Promise<{ id: string; session: string }> {
   sessions += 1;
   const session = `ses_comments_${sessions}`;
-  const { sent } = await command<{ sent: string }>({ send: { project: world.project, session, body } });
+  const { sent } = await command<{ sent: string }>({ send: { project: world.project, session, body, ...(replyTo ? { reply_to: replyTo } : {}) } });
   return { id: sent, session };
 }
 
-const TESTS = 4;
+const TESTS = 5;
 
 beforeAll(async () => {
   if (!hasDom) return;
@@ -370,4 +370,37 @@ test.skipIf(!hasDom)('a refused save takes its highlight away and says why', asy
   expect(await pending(message.id)).toHaveLength(0);
   const thread = await api<{ thread: { messages: InboxMessageWire[] } }>(`/api/inbox/threads/${message.id}`);
   expect(thread.thread.messages).toHaveLength(1);
+}, 30_000);
+
+test.skipIf(!hasDom)("two sessions wrote: a comment on A's message reaches A, not B, whose reply carries the words", async () => {
+  const a = await agentWrites();
+  const b = await agentWrites('Also: I added jitter to the backoff.', a.id);
+  const el = await renderApp(`#thread=${a.id}`);
+  await until(() => messageBody(a.id)?.textContent?.includes('Retry-After') === true, "A's message");
+  await commentOn(a.id, 'two, four and eight seconds', 'Cap the total wait too.');
+  await until(async () => (await pending(a.id)).length === 1, 'the comment saved');
+  openReply(el);
+  await settle();
+  await type(el.querySelector('.ib-rbox textarea') as HTMLTextAreaElement, 'Jitter is fine.');
+  act(() => button(el, 'Send').click());
+  await until(async () => (await pending(a.id)).length === 0, 'the Send');
+  const replies = posted.filter((p) => p.path.endsWith('/reply'));
+  expect(replies.map((p) => p.path)).toEqual([`/api/inbox/messages/${a.id}/reply`, `/api/inbox/messages/${b.id}/reply`]);
+  expect(replies[0]!.body).toMatchObject({ words: '' });
+  expect(replies[1]!.body).toMatchObject({ words: 'Jitter is fine.' });
+  expect(replies[1]!.body.annotation_ids).toBeUndefined();
+
+  // Each session's connection is handed only the replies to its own messages (the bridge's pendingReplies).
+  const bodyOf = async (id: string) => (await api<{ thread: { messages: InboxMessageWire[] } }>(`/api/inbox/threads/${a.id}`)).thread.messages.find((m) => m.id === id)!.body;
+  const { delivered: toA } = await command<{ delivered: string[] }>({ deliver: { session: a.session } });
+  expect(toA).toHaveLength(1);
+  const bodyA = await bodyOf(toA[0]!);
+  expect(bodyA).toContain('Feedback on: "two, four and eight seconds"');
+  expect(bodyA).toContain('> Cap the total wait too.');
+  expect(bodyA).not.toContain('Jitter is fine.');
+  const { delivered: toB } = await command<{ delivered: string[] }>({ deliver: { session: b.session } });
+  expect(toB).toHaveLength(1);
+  const bodyB = await bodyOf(toB[0]!);
+  expect(bodyB).toContain('Jitter is fine.');
+  expect(bodyB).not.toContain('Feedback on your messages');
 }, 30_000);

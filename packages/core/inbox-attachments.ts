@@ -213,6 +213,9 @@ export const INBOX_ANNOTATION_CURRENT = "current";
 /** The most of an agent's message one comment can quote (the words selected), in characters. */
 export const INBOX_MESSAGE_COMMENT_QUOTE_MAX = 20_000;
 
+/** The longest comment on a message's text, in characters. */
+export const INBOX_MESSAGE_COMMENT_TEXT_MAX = 10_000;
+
 /**
  * The largest text the window reads whole (the `view` and raw routes). A
  * text or code file over it is attached as a `file` (a download), and a text

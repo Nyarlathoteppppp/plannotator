@@ -54,6 +54,9 @@ import { INBOX_REPLY_SKILL_AUDIENCE, annotationSkillTexts, inboxSkillsBlock, wit
 import { splitInboxSkillsBlock } from '@plannotator/core/skill-reference-block';
 import { Tip } from './Tip';
 import { selectionToolbarShowing } from '../selectionToolbar';
+import { routeSendAnnotations, sendTargetsOf, type SendTarget } from '../sendTargets';
+
+export { routeSendAnnotations, sendTargetsOf, type SendTarget };
 
 const noop = () => {};
 /** The agent superseded the question this call named (`422 question_superseded`). */
@@ -154,33 +157,6 @@ function HoldingChips({ holdings }: { holdings: Holding[] }) {
   );
 }
 
-/**
- * The agent messages a Send answers, in thread order: each one with picks
- * waiting, and (`skip`, unless Keep open) each with questions left open,
- * which the Send skips on the reply to that message. The person's words
- * (which ride the last reply) go to the agent that wrote most recently,
- * never to an older asker: when the latest agent message comes from another
- * session than the last pick or skip answers, it comes last, with no picks
- * of its own; when the same session wrote both, the words ride the last
- * pick or skip, so one Send is one reply to that session.
- */
-export function sendTargetsOf(
-  thread: InboxThread,
-  skip = true,
-): { message: InboxMessageWire; questions: { key: string; revision: number }[]; skips: boolean }[] {
-  const targets = thread.messages
-    .filter((m) => m.author.kind === 'agent' && (m.questions ?? []).some((q) => q.state === 'picked' || (skip && q.state === 'open')))
-    .map((m) => ({
-      message: m,
-      questions: (m.questions ?? []).filter((q) => q.state === 'picked').map((q) => ({ key: q.key, revision: q.revision })),
-      skips: skip && (m.questions ?? []).some((q) => q.state === 'open'),
-    }));
-  const latest = thread.messages.filter((m) => m.author.kind === 'agent').at(-1) ?? thread.messages[0]!;
-  const last = targets.at(-1)?.message;
-  if (!last || (last.id !== latest.id && !sameSession(last, latest))) targets.push({ message: latest, questions: [], skips: false });
-  return targets;
-}
-
 /** The skip chip's state: the default, or the person's choice for this Send. */
 export type SkipChoice = 'auto' | 'skip' | 'keep';
 
@@ -211,12 +187,6 @@ export function sendAnswersAny(thread: InboxThread, pending: ReadonlyMap<string,
     }
   }
   return false;
-}
-
-/** Two agent messages one session wrote (a message with no session matches none). */
-function sameSession(a: InboxMessageWire, b: InboxMessageWire): boolean {
-  if (a.author.kind !== 'agent' || b.author.kind !== 'agent') return false;
-  return !!a.author.session && a.author.session === b.author.session && (a.author.host ?? '') === (b.author.host ?? '');
 }
 
 /**
@@ -808,7 +778,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
    * that carries them, so it is never answered as the earlier reply (which
    * may have gone through) and silently dropped.
    */
-  const sendContents = useRef<string | null>(null);
+  const sendContents = useRef<Map<string, string> | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<HTMLButtonElement>(null);
@@ -1151,6 +1121,15 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
       return next.size === current.size && [...next].every((id) => current.has(id)) ? current : next;
     });
   }, []);
+  // A comment sent or removed is no longer waiting: its unanchored mark goes with it.
+  useEffect(() => {
+    setUnanchoredComments((current) => {
+      if (current.size === 0) return current;
+      const waiting = new Set(records.map((r) => r.id));
+      const next = new Set([...current].filter((id) => waiting.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [records]);
   /** A message comment's row in the reply box's list: "Claude Code's message, 2:58 PM". */
   const messageCommentName = (record: InboxAnnotationRecord) => {
     const message = thread.messages.find((m) => m.id === record.message_id);
@@ -1701,31 +1680,45 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
       const carries = words !== '' || pendingAnnotations.length > 0 || uploads.length > 0;
       // The latest agent message rides last only to carry the words, the
       // annotations and the pasted files; with none, a target with nothing to send is left out.
-      const targets = sendTargetsOf(current, skip).filter((t, index, all) => t.questions.length > 0 || t.skips || (carries && index === all.length - 1));
+      const plain = sendTargetsOf(current, skip).filter((t, index, all) => t.questions.length > 0 || t.skips || (carries && index === all.length - 1));
+      // A comment on another session's message rides a reply to that message (routeSendAnnotations).
+      const { targets, carried } = routeSendAnnotations(current, plain, pendingAnnotations);
       total = targets.length;
       if (targets.length === 0) {
         setError('Write a reply or pick an answer first.');
         return;
       }
-      if (!sendKeys.current) sendKeys.current = new Map(targets.map((t) => [t.message.id, crypto.randomUUID()]));
-      // A retry whose words, files or annotations changed: the reply carrying them is a new one.
-      const contents = JSON.stringify([words, uploads, pendingAnnotations.map((r) => [r.id, r.updated_at])]);
-      if (sendContents.current !== null && sendContents.current !== contents) sendKeys.current.set(targets.at(-1)!.message.id, crypto.randomUUID());
+      const lastId = targets.at(-1)!.message.id;
+      if (!sendKeys.current) sendKeys.current = new Map();
+      for (const t of targets) if (!sendKeys.current.has(t.message.id)) sendKeys.current.set(t.message.id, crypto.randomUUID());
+      // A retry whose words, files or annotations changed: each reply carrying them is a new one.
+      const contents = new Map(
+        targets.map((t) => [
+          t.message.id,
+          JSON.stringify([t.message.id === lastId ? [words, uploads] : [], (carried.get(t.message.id) ?? []).map((r) => [r.id, r.updated_at])]),
+        ]),
+      );
+      if (sendContents.current) {
+        for (const [id, value] of contents) if (sendContents.current.has(id) && sendContents.current.get(id) !== value) sendKeys.current.set(id, crypto.randomUUID());
+      }
       sendContents.current = contents;
       // The words and the annotations ride the last reply, after its picks;
-      // the skills they reference ride it too, as one block at its end
-      // (skills.ts: a human-only skill's SKILL.md pasted in, its folder named).
-      const annotationsFeedback = pendingAnnotations.length > 0 ? await buildFeedback(pendingAnnotations) : '';
-      const skills = await inboxSkillsBlock([words, ...annotationSkillTexts(pendingAnnotations)], INBOX_REPLY_SKILL_AUDIENCE);
-      const feedback = withSkillsBlock(annotationsFeedback, skills);
+      // a comment on another session's message rides the reply to it. The
+      // skills each reply's words and comments reference ride it too, as one
+      // block at its end (skills.ts: a human-only skill's SKILL.md pasted in, its folder named).
       for (const [index, target] of targets.entries()) {
         const last = index === targets.length - 1;
+        const own = carried.get(target.message.id) ?? [];
+        const annotationsFeedback = own.length > 0 ? await buildFeedback(own) : '';
+        const skills = await inboxSkillsBlock([last ? words : '', ...annotationSkillTexts(own)], INBOX_REPLY_SKILL_AUDIENCE);
+        const feedback = withSkillsBlock(annotationsFeedback, skills);
         await inboxApi.reply(target.message.id, {
           idempotency_key: sendKeys.current.get(target.message.id) ?? crypto.randomUUID(),
           words: last ? words : '',
           questions: target.questions,
           skip_unanswered: skip,
-          ...(last && feedback ? { feedback, annotation_ids: pendingAnnotations.map((r) => r.id) } : {}),
+          ...(feedback ? { feedback } : {}),
+          ...(own.length > 0 ? { annotation_ids: own.map((r) => r.id) } : {}),
           // The pasted files ride the reply that carries the words, as attachments.
           ...(last && uploads.length > 0 ? { uploads } : {}),
           // Only a message the ended session asked goes to the session picked;
