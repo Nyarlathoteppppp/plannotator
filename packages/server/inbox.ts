@@ -604,6 +604,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
           recordInboxAttachments(store.dir, paths, { base, at: new Date().toISOString() }),
         // An open wait_for_reply keeps its session present (never "ended").
         presence: { seen: (session) => live.seenOverMcp(session), hold: (session) => live.holdOverMcp(session) },
+        // The agents' read-only search reads the window's own ⌘K index.
+        searchIndex: search.index,
       }),
     { legacy: "stateless", maxRequestBodySize: INBOX_MAX_REQUEST_BYTES },
   );

@@ -1,0 +1,558 @@
+/**
+ * read_thread's thread mode as an agent reads it (step 2 of the Inbox MCP
+ * size work; .product/drafts/inbox-mcp-size/FINDINGS.md): a window, not the
+ * whole thread.
+ *
+ * - The header: subject, name, who wrote, and every question still waiting
+ *   on the person (open or picked) with its key, state, prompt and choices.
+ * - The newest `limit` messages (default 6) in full.
+ * - The person's earlier messages in full, newest first, while they fit in
+ *   INBOX_EARLIER_PERSON_BYTES (12 KB); older ones become one line too.
+ * - Every other earlier message as one line: id, author, time, first words,
+ *   size, and each of its questions with its state and answer.
+ * - Bodies over INBOX_BODY_CUT_BYTES (16 KB) are cut with a marker that
+ *   names the `expand` call for the rest.
+ *
+ * No question state is ever lost: a question is in the header (open or
+ * picked), on a message shown in full, on a one-line message, or, for a
+ * message `before` / `after` left out, in `thread.questions`.
+ *
+ * The messages keep the field names of the full records (`id`, `author.kind`,
+ * `body`, `questions[].key/state/answer`, `attachments[].path`, `ack`), with
+ * the bookkeeping left out (sha256s, mtimes, revisions, idempotency keys,
+ * repeated project and thread ids, pickers, inline-image records).
+ * `format: "full"` returns the full records as before.
+ *
+ * The text the result carries is a complete transcript (ids, authors, times,
+ * bodies, every question's state and answer), so the result is marked
+ * INBOX_TEXT_COMPLETE_META_KEY: a current connection hands the model the
+ * text alone; an older one appends this trimmed JSON as well.
+ */
+
+import { inboxAgentName, type InboxMessageWire, type InboxQuestion } from "@plannotator/core/inbox-types";
+import { QUESTION_ANSWERS_HEADING, type QuestionAnswer } from "@plannotator/core/question-block";
+import { INBOX_TEXT_COMPLETE_META_KEY } from "@plannotator/shared/inbox/connection";
+import { InboxError } from "@plannotator/shared/inbox/schema";
+import { inboxSearchBodyText, inboxSearchReplyText } from "@plannotator/shared/inbox/search";
+import type { InboxStore } from "@plannotator/shared/inbox/store";
+
+/** Messages read_thread shows in full by default: the newest six. */
+export const INBOX_THREAD_WINDOW = 6;
+/** A body longer than this is cut, with a marker naming the `expand` call. */
+export const INBOX_BODY_CUT_BYTES = 16 * 1024;
+/**
+ * The person's earlier messages (before the window) shown in full, newest
+ * first, while their bodies total at most this; older ones become one line.
+ * 12 KB holds every person message of the longest thread measured (17
+ * replies, about 12 KB of their words in a 46-message thread), while a
+ * thread of hundreds of rounds still costs a bounded 3k tokens for them.
+ * The person's words are what agents re-read most (9 of 11 hand parses of a
+ * thread selected them); an agent's own earlier messages are one `expand`
+ * away.
+ */
+export const INBOX_EARLIER_PERSON_BYTES = 12 * 1024;
+/** First words of a one-line message. */
+export const INBOX_LINE_WORDS = 120;
+/**
+ * An answer's words in the transcript (a pick, Other, free text, a note).
+ * They are the person's words, and an earlier reply's answers section is left
+ * out, so they are kept whole in practice; the cap only bounds a pathological
+ * one (expand shows the reply as sent).
+ */
+export const INBOX_ANSWER_CHARS = 2000;
+/** At most this many ids in `expand`. */
+export const INBOX_EXPAND_MAX = 50;
+
+export const TEXT_COMPLETE_META = { [INBOX_TEXT_COMPLETE_META_KEY]: true } as const;
+
+/** An author as an agent reads it: the person, or an agent by the name the person sees. */
+export type AgentAuthor = { kind: "person" } | { kind: "agent"; name: string };
+
+/** A question's answer without the copies of its key, kind and prompt. */
+export interface AgentAnswer {
+  selected?: string[];
+  other?: string;
+  text?: string;
+  note?: string;
+  skipped?: true;
+  /** With skipped: the Inbox skipped it because a Send left it unanswered. */
+  by_reply?: true;
+}
+
+export interface AgentQuestionRef {
+  key: string;
+  /** Its number in the message, as the reply's "Answers to your questions" numbers it (Q1, Q2, …). */
+  q: number;
+  state: InboxQuestion["state"];
+  answer?: AgentAnswer;
+  /** `<message id>/<key>` of the question that replaced it, or `<message id>` when nothing did. */
+  superseded_by?: string;
+}
+
+export interface AgentQuestion extends AgentQuestionRef {
+  kind: InboxQuestion["kind"];
+  prompt: string;
+}
+
+export interface AgentOpenQuestion extends AgentQuestion {
+  message_id: string;
+  choices: string[];
+}
+
+export interface AgentMessage {
+  id: string;
+  author: AgentAuthor;
+  created_at: string;
+  reply_to: string | null;
+  body: string;
+  /** The body is not shown as sent (cut at INBOX_BODY_CUT_BYTES, or an earlier reply without its answers section): its full size in bytes; expand shows it whole. */
+  body_bytes?: number;
+  questions?: AgentQuestion[];
+  attachments?: { name: string; kind: string; size: number; path: string }[];
+  ack?: { label: string; at: string };
+  guide?: { title: string };
+}
+
+export interface AgentMessageLine {
+  id: string;
+  author: AgentAuthor;
+  created_at: string;
+  reply_to: string | null;
+  /** The first words, plain text. */
+  words: string;
+  /** The body's size in bytes. */
+  bytes: number;
+  questions?: AgentQuestionRef[];
+  attachments?: string[];
+  guide?: string;
+  ack?: true;
+}
+
+export interface ThreadReadInput {
+  limit?: number;
+  expand?: string[];
+  before?: string | number;
+  after?: string | number;
+  message_id?: string;
+}
+
+export interface ThreadWindowResult {
+  thread: {
+    thread_id: string;
+    subject: string | null;
+    thread_name: string | null;
+    resolved_at: string | null;
+    project: { id: string; name: string; root: string };
+    message_count: number;
+    participants: { kind: "person" | "agent"; name: string; messages: number }[];
+    /** Every question still waiting on the person (open, or picked and not sent). */
+    open_questions: AgentOpenQuestion[];
+    /** Shown in full, oldest first: the window, the person's earlier messages, and any expanded or asked-for message. */
+    messages: AgentMessage[];
+    /** Every other message in range, oldest first, one line each. */
+    earlier: AgentMessageLine[];
+    /** Questions of messages `before` / `after` left out, so no question's state is lost. */
+    questions?: (AgentQuestionRef & { message_id: string })[];
+  };
+  window: {
+    limit: number;
+    /** Messages shown in full, as one line, and left out by before / after. */
+    full: number;
+    lines: number;
+    left_out: number;
+    before?: string | number;
+    after?: string | number;
+  };
+  cursor: number;
+  url: string;
+}
+
+const byteLength = (text: string): number => Buffer.byteLength(text, "utf8");
+const ANSWERS_HEADING = new RegExp(`^#{1,6}\\s+${QUESTION_ANSWERS_HEADING}\\s*$`);
+
+/** "512 B", "12.3 KB". */
+export function sizeText(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+/** `2026-10-19 16:42Z`: minutes are enough to read a thread by. */
+export function shortTime(iso: string): string {
+  return /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(iso) ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z` : iso;
+}
+
+/** At most `max` UTF-8 bytes of `text`, never inside a character. */
+function cutToBytes(text: string, max: number): string {
+  if (byteLength(text) <= max) return text;
+  let out = "";
+  let used = 0;
+  for (const char of text) {
+    const size = byteLength(char);
+    if (used + size > max) break;
+    out += char;
+    used += size;
+  }
+  return out;
+}
+
+/** At most `max` characters, at a word boundary when one is near, with an ellipsis. */
+export function clip(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  const head = [...flat].slice(0, max).join("");
+  const space = head.lastIndexOf(" ");
+  return `${(space > max * 0.6 ? head.slice(0, space) : head).trimEnd()}…`;
+}
+
+export function agentAuthor(author: InboxMessageWire["author"]): AgentAuthor {
+  return author.kind === "person" ? { kind: "person" } : { kind: "agent", name: inboxAgentName(author) };
+}
+
+function authorName(author: AgentAuthor): string {
+  return author.kind === "person" ? "the person" : author.name;
+}
+
+export function agentAnswer(answer: QuestionAnswer | null | undefined): AgentAnswer | undefined {
+  if (!answer) return undefined;
+  const out: AgentAnswer = {};
+  if (answer.selected?.length) out.selected = [...answer.selected];
+  if (answer.other) out.other = answer.other;
+  if (answer.text) out.text = answer.text;
+  if (answer.note) out.note = answer.note;
+  if (answer.skipped) out.skipped = true;
+  if (answer.skipped && answer.by_reply) out.by_reply = true;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** A question's answer in words: `"Yes"; note: "…"`, `skipped`. */
+export function answerWords(answer: AgentAnswer | undefined, max: number): string {
+  if (!answer) return "";
+  if (answer.skipped) return answer.by_reply ? "skipped (not answered in the reply)" : "skipped";
+  const parts = (answer.selected ?? []).map((label) => `"${clip(label, max)}"`);
+  if (answer.other) parts.push(`Other: "${clip(answer.other, max)}"`);
+  if (answer.text) parts.push(`"${clip(answer.text, max)}"`);
+  if (answer.note) parts.push(`note: "${clip(answer.note, max)}"`);
+  return parts.join("; ");
+}
+
+/** Each question's number in its message: its rank by position, as the reply's answers section numbers it. */
+function numbering(questions: readonly InboxQuestion[]): Map<string, number> {
+  return new Map([...questions].sort((a, b) => a.position - b.position).map((q, i) => [q.key, i + 1]));
+}
+
+function questionRef(q: InboxQuestion, n: number): AgentQuestionRef {
+  const answer = agentAnswer(q.answer);
+  return {
+    key: q.key,
+    q: n,
+    state: q.state,
+    ...(answer ? { answer } : {}),
+    ...(q.superseded_by ? { superseded_by: q.superseded_by.key ? `${q.superseded_by.message_id}/${q.superseded_by.key}` : q.superseded_by.message_id } : {}),
+  };
+}
+
+export function agentQuestions(questions: readonly InboxQuestion[]): AgentQuestion[] {
+  const n = numbering(questions);
+  return questions.map((q) => ({ ...questionRef(q, n.get(q.key) ?? 1), kind: q.kind, prompt: q.prompt }));
+}
+
+/** One question in words: `Q1 q-abc sent: "Yes"`, `Q2 q-def open`, `Q3 q-… superseded by msg_…/q-…`. */
+export function questionWords(q: AgentQuestionRef, max: number): string {
+  const head = `Q${q.q} ${q.key}`;
+  if (q.state === "superseded") return `${head} ${q.superseded_by?.includes("/") ? `replaced by ${q.superseded_by}` : "no longer applies"}`;
+  const answer = answerWords(q.answer, max);
+  if (q.state === "picked") return `${head} picked, not sent${answer ? `: ${answer}` : ""}`;
+  if (q.state === "sent") return `${head} sent${answer ? `: ${answer}` : ""}`;
+  if (q.state === "closed") return `${head} closed${answer ? ` (${answer})` : ""}`;
+  return `${head} open`;
+}
+
+/**
+ * A reply's "Answers to your questions" section, left out: each answer is
+ * already on its question (the asking message's line or its full form, or
+ * the result's `thread.questions`), with its state. Used for the person's
+ * earlier messages only; a reply in the window, or expanded, is as sent.
+ */
+export function withoutAnswersSection(message: InboxMessageWire): string {
+  const lines = message.body.split("\n");
+  const at = lines.findIndex((line) => ANSWERS_HEADING.test(line.trim()));
+  if (at < 0) return message.body;
+  const level = /^#+/.exec(lines[at]!.trim())![0].length;
+  let end = at + 1;
+  while (end < lines.length) {
+    const heading = /^(#{1,6})\s/.exec(lines[end]!);
+    if (heading && heading[1]!.length <= level) break;
+    end += 1;
+  }
+  const marker = `[${QUESTION_ANSWERS_HEADING}: left out here; each answer is on its question above, and expand shows this reply as sent]`;
+  return [...lines.slice(0, at), marker, ...(end < lines.length ? ["", ...lines.slice(end)] : [])].join("\n").trimEnd();
+}
+
+/**
+ * How a message is shown in full: `window` (a body over 16 KB is cut),
+ * `earlier` (one of the person's earlier messages: also without its answers
+ * section), or `whole` (expanded or asked for: exactly as sent).
+ */
+export type AgentMessageForm = "window" | "earlier" | "whole";
+
+/** A message in full, as read_thread shows it. */
+export function agentMessage(message: InboxMessageWire, form: AgentMessageForm = "window"): AgentMessage {
+  const source = form === "earlier" ? withoutAnswersSection(message) : message.body;
+  const total = byteLength(message.body);
+  const over = form !== "whole" && byteLength(source) > INBOX_BODY_CUT_BYTES;
+  const body = over
+    ? `${cutToBytes(source, INBOX_BODY_CUT_BYTES)}\n\n[… cut: ${sizeText(INBOX_BODY_CUT_BYTES)} of ${sizeText(total)} shown; read_thread expand: ["${message.id}"] shows the rest]`
+    : source;
+  const ack = message.ack && typeof message.ack === "object" ? message.ack : null;
+  return {
+    id: message.id,
+    author: agentAuthor(message.author),
+    created_at: message.created_at,
+    reply_to: message.reply_to,
+    body,
+    ...(body !== message.body ? { body_bytes: total } : {}),
+    ...(message.questions?.length ? { questions: agentQuestions(message.questions) } : {}),
+    ...(message.attachments?.length ? { attachments: message.attachments.map((a) => ({ name: a.name, kind: a.kind, size: a.size, path: a.path })) } : {}),
+    ...(ack ? { ack: { label: ack.label, at: ack.at } } : {}),
+    ...(message.guide ? { guide: { title: message.guide.title } } : {}),
+  };
+}
+
+/** The first words of a message, plain: the person's own words in a reply, else the body's text. */
+function firstWords(message: InboxMessageWire): string {
+  let text = message.author.kind === "person" ? inboxSearchReplyText(message.body) : inboxSearchBodyText(message.body);
+  if (!text.trim()) text = message.body.split("\n").find((line) => line.trim() !== "") ?? "";
+  return clip(text, INBOX_LINE_WORDS);
+}
+
+export function agentMessageLine(message: InboxMessageWire): AgentMessageLine {
+  const n = numbering(message.questions ?? []);
+  return {
+    id: message.id,
+    author: agentAuthor(message.author),
+    created_at: message.created_at,
+    reply_to: message.reply_to,
+    words: firstWords(message),
+    bytes: byteLength(message.body),
+    ...(message.questions?.length ? { questions: message.questions.map((q) => questionRef(q, n.get(q.key) ?? 1)) } : {}),
+    ...(message.attachments?.length ? { attachments: message.attachments.map((a) => a.name) } : {}),
+    ...(message.guide ? { guide: message.guide.title } : {}),
+    ...(message.ack ? { ack: true as const } : {}),
+  };
+}
+
+/** A before / after bound as a seq: a cursor, digits, or a message id of this thread. */
+function boundOf(store: InboxStore, ids: ReadonlySet<string>, value: string | number | undefined, name: string): number | null {
+  if (value === undefined) return null;
+  if (typeof value === "number") return Math.floor(value);
+  const text = value.trim();
+  if (/^\d+$/.test(text)) return Number(text);
+  if (!ids.has(text)) throw new InboxError("validation_error", `${name}: ${text} is not a message of this thread (pass one of its message ids, or a cursor).`);
+  return store.messageCursor(text) ?? 0;
+}
+
+/**
+ * The windowed read of a thread (structured), from the thread as an agent
+ * reads it, and the order its shown messages came in (oldest first).
+ */
+export function windowedThread(store: InboxStore, threadId: string, input: ThreadReadInput, url: string): { result: ThreadWindowResult; order: string[] } {
+  const thread = store.agentThread(threadId);
+  if (!thread) throw new InboxError("thread_not_found", `No thread ${threadId}.`);
+  const all = thread.messages;
+  const ids = new Set(all.map((m) => m.id));
+  const seq = new Map(all.map((m) => [m.id, store.messageCursor(m.id) ?? 0]));
+  const limit = input.limit ?? INBOX_THREAD_WINDOW;
+
+  if ((input.expand?.length ?? 0) > INBOX_EXPAND_MAX) throw new InboxError("validation_error", `expand: at most ${INBOX_EXPAND_MAX} message ids.`);
+  const expand = new Set<string>();
+  for (const id of input.expand ?? []) {
+    const trimmed = id.trim();
+    if (!ids.has(trimmed)) throw new InboxError("validation_error", `expand: ${trimmed} is not a message of this thread.`);
+    expand.add(trimmed);
+  }
+  if (input.message_id && ids.has(input.message_id)) expand.add(input.message_id);
+
+  const after = boundOf(store, ids, input.after, "after");
+  const before = boundOf(store, ids, input.before, "before");
+  const inRange = all.filter((m) => (after === null || seq.get(m.id)! > after) && (before === null || seq.get(m.id)! < before));
+  const full = new Set(inRange.slice(-limit).map((m) => m.id));
+  for (const id of expand) full.add(id);
+
+  // The person's earlier messages, newest first, while they fit (each as `earlier` shows it).
+  const personEarlier = new Set<string>();
+  let used = 0;
+  for (const message of [...inRange].reverse()) {
+    if (full.has(message.id) || message.author.kind !== "person") continue;
+    const size = Math.min(byteLength(withoutAnswersSection(message)), INBOX_BODY_CUT_BYTES);
+    if (used + size > INBOX_EARLIER_PERSON_BYTES) break;
+    used += size;
+    full.add(message.id);
+    personEarlier.add(message.id);
+  }
+
+  const shown = new Set(inRange.map((m) => m.id));
+  for (const id of full) shown.add(id);
+  const formOf = (id: string): AgentMessageForm => (expand.has(id) ? "whole" : personEarlier.has(id) ? "earlier" : "window");
+  const messages = all.filter((m) => full.has(m.id)).map((m) => agentMessage(m, formOf(m.id)));
+  const earlier = inRange.filter((m) => !full.has(m.id)).map(agentMessageLine);
+  const leftOut = all.filter((m) => !shown.has(m.id));
+  const elsewhere = leftOut.flatMap((m) => {
+    const n = numbering(m.questions ?? []);
+    return (m.questions ?? []).map((q) => ({ message_id: m.id, ...questionRef(q, n.get(q.key) ?? 1) }));
+  });
+
+  const open_questions: AgentOpenQuestion[] = [];
+  for (const message of all) {
+    if (!message.questions?.length) continue;
+    const n = numbering(message.questions);
+    for (const q of message.questions) {
+      if (q.state !== "open" && q.state !== "picked") continue;
+      open_questions.push({
+        message_id: message.id,
+        ...questionRef(q, n.get(q.key) ?? 1),
+        kind: q.kind,
+        prompt: q.prompt,
+        choices: q.choices.map((c) => c.label),
+      });
+    }
+  }
+
+  const participants = new Map<string, { kind: "person" | "agent"; name: string; messages: number }>();
+  for (const message of all) {
+    const author = agentAuthor(message.author);
+    const name = authorName(author);
+    const entry = participants.get(`${author.kind}:${name}`) ?? { kind: author.kind, name, messages: 0 };
+    entry.messages += 1;
+    participants.set(`${author.kind}:${name}`, entry);
+  }
+
+  const result: ThreadWindowResult = {
+    thread: {
+      thread_id: thread.thread_id,
+      subject: thread.subject,
+      thread_name: thread.thread_name,
+      resolved_at: thread.resolved_at,
+      project: { id: thread.project.id, name: thread.project.name, root: thread.project.root },
+      message_count: all.length,
+      participants: [...participants.values()],
+      open_questions,
+      messages,
+      earlier,
+      ...(elsewhere.length > 0 ? { questions: elsewhere } : {}),
+    },
+    window: {
+      limit,
+      full: messages.length,
+      lines: earlier.length,
+      left_out: leftOut.length,
+      ...(input.before !== undefined ? { before: input.before } : {}),
+      ...(input.after !== undefined ? { after: input.after } : {}),
+    },
+    cursor: store.cursor(),
+    url,
+  };
+  const lineIds = new Set(earlier.map((line) => line.id));
+  return { result, order: all.filter((m) => full.has(m.id) || lineIds.has(m.id)).map((m) => m.id) };
+}
+
+/**
+ * What the message printed just before this one in a transcript says, so the
+ * next one can leave out what it repeats: the date (a time alone on the same
+ * day), and `reply to` when it answers that very message.
+ */
+export interface TranscriptContext {
+  previousId: string | null;
+  previousDate: string | null;
+  rootId: string;
+}
+
+function whenAndWhat(item: { id: string; created_at: string; reply_to: string | null }, context: TranscriptContext): string[] {
+  const date = item.created_at.slice(0, 10);
+  const time = shortTime(item.created_at);
+  const parts = [date === context.previousDate ? time.slice(11) : time];
+  if (item.reply_to && item.reply_to !== context.previousId) parts.push(`reply to ${item.reply_to}`);
+  else if (!item.reply_to && item.id !== context.rootId) parts.push("not a reply");
+  context.previousId = item.id;
+  context.previousDate = date;
+  return parts;
+}
+
+/** One message as one line of text. */
+export function messageLineText(line: AgentMessageLine, context: TranscriptContext): string {
+  const parts = [`- ${line.id}`, authorName(line.author), ...whenAndWhat(line, context)];
+  parts.push(`"${line.words}" (${sizeText(line.bytes)})`);
+  if (line.questions?.length) parts.push(line.questions.map((q) => questionWords(q, INBOX_ANSWER_CHARS)).join("; "));
+  if (line.attachments?.length) parts.push(`files: ${line.attachments.join(", ")}`);
+  if (line.guide) parts.push(`guided review: ${line.guide}`);
+  if (line.ack) parts.push("👍");
+  return parts.join(" · ");
+}
+
+/** One message in full as text: a heading line, the body, then its questions, files, guide and 👍. */
+export function messageText(message: AgentMessage, context: TranscriptContext): string {
+  const head = [message.id, authorName(message.author), ...whenAndWhat(message, context)];
+  const lines = [`[${head.join(" · ")}]`, message.body.trimEnd()];
+  if (message.questions?.length) lines.push(`Questions: ${message.questions.map((q) => questionWords(q, INBOX_ANSWER_CHARS)).join("; ")}`);
+  if (message.attachments?.length) {
+    lines.push(`Files: ${message.attachments.map((a) => `${a.name} (${a.kind}, ${sizeText(a.size)}): ${a.path}`).join("; ")}`);
+  }
+  if (message.guide) lines.push(`Guided review: ${message.guide.title}`);
+  if (message.ack) lines.push(`👍 ${message.ack.label} (${shortTime(message.ack.at)}): the person read it and needs nothing more.`);
+  return lines.join("\n");
+}
+
+/** The whole windowed read as text: complete for an agent (the JSON adds nothing it needs). */
+export function windowedThreadText(result: ThreadWindowResult, order: readonly string[], extra = ""): string {
+  const { thread, window } = result;
+  const persons = thread.participants.filter((p) => p.kind === "person").reduce((sum, p) => sum + p.messages, 0);
+  const out: string[] = [];
+  out.push(
+    `Thread ${thread.thread_id}${thread.subject ? ` (${thread.subject})` : ""}: ${thread.message_count} message${thread.message_count === 1 ? "" : "s"}, ${persons} from the person${thread.resolved_at ? ", resolved" : ""}.`,
+  );
+  const facts = [
+    thread.thread_name ? `Name: ${thread.thread_name}` : null,
+    `Project: ${thread.project.name} (${thread.project.root})`,
+    `From: ${thread.participants.map((p) => `${p.name} ${p.messages}`).join(", ")}`,
+    thread.resolved_at ? `Resolved ${shortTime(thread.resolved_at)}` : null,
+    result.url,
+  ].filter((part): part is string => part !== null);
+  out.push(facts.join(" · "));
+  if (thread.open_questions.length === 0) {
+    out.push("No question waits on the person.");
+  } else {
+    out.push(`Waiting on the person (${thread.open_questions.length}):`);
+    for (const q of thread.open_questions) {
+      const state = q.state === "picked" ? `picked, not sent${q.answer ? `: ${answerWords(q.answer, INBOX_ANSWER_CHARS)}` : ""}` : "open";
+      const choices = q.choices.length > 0 ? ` Choices: ${q.choices.map((c) => clip(c, 200)).join(" | ")}` : "";
+      out.push(`- ${q.message_id}/${q.key} (Q${q.q}) ${state}: ${q.prompt}${choices}`);
+    }
+  }
+  if (thread.questions?.length) {
+    out.push(`Questions of messages not shown: ${thread.questions.map((q) => `${q.message_id}/${questionWords(q, INBOX_ANSWER_CHARS)}`).join("; ")}`);
+  }
+  const range = window.after !== undefined || window.before !== undefined
+    ? ` Range:${window.after !== undefined ? ` after ${window.after}` : ""}${window.before !== undefined ? ` before ${window.before}` : ""}; ${window.left_out} other message${window.left_out === 1 ? "" : "s"} left out.`
+    : "";
+  out.push(
+    `Shown: ${window.full} in full (the newest ${Math.min(window.limit, thread.message_count)}, the person's earlier messages up to ${sizeText(INBOX_EARLIER_PERSON_BYTES)}, any you expanded) and ${window.lines} earlier as one line each.${range} A message replies to the one above it unless it says otherwise; times are UTC. read_thread expand: [ids] shows messages in full; before: <id> reads further back; after: <cursor> returns only what is new.`,
+  );
+  out.push("");
+  // Oldest first, one line or in full.
+  const lines = new Map(thread.earlier.map((line) => [line.id, line]));
+  const fulls = new Map(thread.messages.map((message) => [message.id, message]));
+  const context: TranscriptContext = { previousId: null, previousDate: null, rootId: thread.thread_id };
+  let previousWasLine = false;
+  for (const id of order) {
+    const line = lines.get(id);
+    if (line) {
+      out.push(messageLineText(line, context));
+      previousWasLine = true;
+      continue;
+    }
+    if (previousWasLine) out.push("");
+    out.push(messageText(fulls.get(id)!, context), "");
+    previousWasLine = false;
+  }
+  if (out.at(-1) !== "") out.push("");
+  out.push(`Cursor ${result.cursor}: read_thread after: ${result.cursor} returns only what is new since this read.${extra}`);
+  return out.join("\n");
+}
