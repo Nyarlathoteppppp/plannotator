@@ -301,7 +301,8 @@ test('desktop 1440: in a field scrolled by a long message the picker follows the
 });
 
 test('an iPhone (WebKit): the picker opens full width at the caret, 44 px rows, inside the sheet above its footer', async () => {
-  const browser = await webkit.launch();
+  // No args: the config's Chromium flags (--use-mock-keychain) stop WebKit from starting on Linux.
+  const browser = await webkit.launch({ args: [] });
   try {
     const context = await browser.newContext({ ...devices['iPhone 15'], colorScheme: 'light' });
     const page = await context.newPage();
