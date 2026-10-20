@@ -34,7 +34,7 @@ import type { InboxAuthor } from "./inbox-types";
  * window's card routes and the event stream are unaffected. Off since the
  * owner's answer (2026-10-20): it is switched on with the Board page (step 2).
  */
-export const INBOX_CARD_ACTION_ON: boolean = false;
+export const INBOX_CARD_ACTION_ON: boolean = true;
 
 /** Every column a card can be in, in the Board's order. */
 export const INBOX_CARD_COLUMNS = ["asked", "designing", "your_look", "building", "your_review", "shipped", "icebox", "dropped"] as const;
