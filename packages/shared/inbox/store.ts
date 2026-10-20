@@ -72,6 +72,9 @@ import {
   type InboxParticipant,
   type InboxSentRecipient,
   type InboxTag,
+  inboxDeliveryState,
+  type InboxDeliveryConnection,
+  type InboxRowDelivery,
 } from "@plannotator/core/inbox-types";
 import { inboxListSections, inboxRowUnread, inboxSectionOf } from "./list";
 import { inboxProjectLabels } from "./project-name";
@@ -371,8 +374,22 @@ function legacySeqFloor(path: string): number {
   return high;
 }
 
+/**
+ * What a list row's delivery (`InboxListRow.delivery`) reads about the live
+ * agent sessions, which the store does not hold: the server passes its live
+ * sessions (packages/server/inbox-sessions.ts). Both answer from memory.
+ */
+export interface InboxDeliveryPresence {
+  /** How a session is connected now (no grace), or null when it does not poll. */
+  connection(session: string): InboxDeliveryConnection | null;
+  /** Whether the session that asked is still there, with the sessions route's grace (`askerLive`). */
+  askerLive(session: string): boolean;
+}
+
 export class InboxStore {
   readonly dir: string;
+  /** The live sessions, for the rows' delivery; null (tests, tools): not known, every session counts as there. */
+  private deliveryPresence: InboxDeliveryPresence | null = null;
   private seq = 0;
   private readonly latest = new Map<string, InboxLine>();
   private readonly projectsById = new Map<string, InboxProject>();
@@ -1030,8 +1047,10 @@ export class InboxStore {
         summary.questions.open > 0 ||
         summary.questions.picked > 0 ||
         replyUnread);
+    const delivery = this.rowDelivery(root, messages, lastReal, sent, recipients, root.resolved_at !== null && !agentAfterArchive);
     const facts = {
       ...summary,
+      delivery,
       agent_after_archive: agentAfterArchive,
       back_from_archive: backFromArchive,
       read_at: readAt,
@@ -1050,6 +1069,140 @@ export class InboxStore {
     };
     const section = inboxSectionOf(facts);
     return { ...facts, section, unread: inboxRowUnread(section) };
+  }
+
+  /** The live sessions the rows' delivery reads (the server's); null forgets them. */
+  setDeliveryPresence(presence: InboxDeliveryPresence | null): void {
+    this.deliveryPresence = presence;
+  }
+
+  /**
+   * Where the person's latest sent item in the thread is, for its list row:
+   * the same inputs, gathered the same way, as the thread's delivery line
+   * (packages/inbox/components/Thread.tsx, `deliveryLine` and `ackPillLine`),
+   * decided by the one rule (`inboxDeliveryState`), so a row and its thread
+   * agree. Memory only: a few map lookups per row.
+   */
+  private rowDelivery(
+    root: InboxMessage,
+    messages: readonly InboxMessage[],
+    lastReal: InboxMessage,
+    sent: { checked_at: string | null } | null,
+    recipients: InboxSentRecipient[] | null,
+    resolved: boolean,
+  ): InboxRowDelivery | null {
+    const presence = this.deliveryPresence;
+    // Not read (no presence): undefined, as the thread before it reads the session.
+    const connectionOf = (session: string): InboxDeliveryConnection | null | undefined => {
+      if (!presence) return undefined;
+      const connection = presence.connection(session);
+      return connection ? { busy: connection.busy, send_now: connection.send_now } : null;
+    };
+    const askerLive = (session: string): boolean => (presence ? presence.askerLive(session) : true);
+
+    if (lastReal.author.kind === "person") {
+      if (isInboxNote(lastReal)) return null;
+      const last = lastReal;
+      // A thread the person started is addressed to a session; a reply in it goes there too.
+      const startedTo = root.started_by_person && root.to ? root.to : null;
+      const lastTo = last.to ?? (startedTo && last.reply_to ? startedTo : null);
+      const askedBy = last.reply_to ? this.messages.get(last.reply_to) : undefined;
+      const repliedTo = lastTo ? undefined : askedBy;
+      const askedSession = repliedTo?.author.kind === "agent" && repliedTo.author.session ? repliedTo.author.session : null;
+      const wakingSession = askedSession && repliedTo?.wakes === true ? askedSession : null;
+      const replySession = lastTo?.session ?? askedSession;
+      const replyWaiting = !!replySession && !last.delivery && !(lastTo === null && sent?.checked_at);
+      const connection = replyWaiting ? connectionOf(replySession!) : undefined;
+      const kind = last.reply_to ? "reply" : "message";
+      if (lastTo) {
+        const to = last.delivery ?? last.to ?? lastTo;
+        // "Claude Code (another session)": a reply sent to another session of the asker's own host.
+        const another =
+          !!last.to &&
+          !!last.reply_to &&
+          askedBy?.author.kind === "agent" &&
+          askedBy.author.host !== null &&
+          askedBy.author.host === to.host &&
+          askedBy.author.session !== to.session;
+        const decision = inboxDeliveryState({
+          delivered: !!last.delivery,
+          undelivered: !last.delivery && !askerLive(lastTo.session),
+          askerEnded: false,
+          wakes: true,
+          sendingNow: !!last.deliver_now_at,
+          connection,
+        });
+        return {
+          kind,
+          state: decision.state,
+          reason: decision.reason,
+          send_now: decision.sendNow,
+          message_id: last.id,
+          at: last.delivery?.at ?? null,
+          host: to.host ?? null,
+          name: null,
+          ...(another ? { another_session: true } : {}),
+        };
+      }
+      // A reply that tags agents: the owner's own delivery, never another recipient's.
+      const deliveredAt = recipients
+        ? (last.delivery?.at ?? recipients.find((r) => r.owner)?.delivered_at ?? null)
+        : (sent?.checked_at ?? null);
+      // The session the next Send would reach (the thread's `askingSessionOf` with its defaults): the last
+      // agent message a pick or a skip answers, else the latest agent message. Called ended only when its
+      // message came through a waking connection and the Inbox has not heard from it (with the grace).
+      let asking: InboxMessage | null = null;
+      let latestAgent: InboxMessage | null = null;
+      for (const message of messages) {
+        if (message.author.kind !== "agent") continue;
+        latestAgent = message;
+        if (this.questionsOf(message.id).some((q) => q.state === "open" || q.state === "picked")) asking = message;
+      }
+      asking ??= latestAgent;
+      const askingSession = asking?.author.kind === "agent" ? asking.author.session : null;
+      const askerEnded = !resolved && asking?.wakes === true && !!askingSession && !askerLive(askingSession);
+      const decision = inboxDeliveryState({
+        delivered: !!deliveredAt,
+        undelivered: false,
+        askerEnded,
+        wakes: wakingSession !== null || (askedSession !== null && connection != null),
+        sendingNow: !!last.deliver_now_at,
+        connection,
+      });
+      const author = root.author.kind === "agent" ? root.author : null;
+      return {
+        kind,
+        state: decision.state,
+        reason: decision.reason,
+        send_now: decision.sendNow,
+        message_id: last.id,
+        at: deliveredAt,
+        host: author?.host ?? null,
+        name: author?.name ?? null,
+      };
+    }
+
+    // 👍 Looks good on the latest agent message (the thread's `ackPillLine`): sent through, not withdrawn.
+    const target = lastReal;
+    const ack = target.ack;
+    if (target.author.kind !== "agent" || !ack || ack.not_sent) return null;
+    const base = { kind: "ack" as const, message_id: target.id, host: target.author.host ?? null, name: target.author.name ?? null, send_now: false };
+    const deliveredAt = this.ackDeliveredAt(ack);
+    if (deliveredAt) return { ...base, state: "delivered", reason: "delivered", at: deliveredAt };
+    if (ack.settled_seq == null) return { ...base, state: "queued", reason: "ack_pending", at: null };
+    if (target.wakes === true && ack.note_id) {
+      const session = target.author.session;
+      const decision = inboxDeliveryState({
+        delivered: false,
+        undelivered: false,
+        askerEnded: false,
+        wakes: true,
+        sendingNow: false,
+        connection: session ? connectionOf(session) : undefined,
+      });
+      return { ...base, state: decision.state === "sending" ? "sending" : "queued", reason: decision.reason, at: null };
+    }
+    return { ...base, state: "saved", reason: "reads", at: null };
   }
 
   /**

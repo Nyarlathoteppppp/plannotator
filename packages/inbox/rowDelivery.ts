@@ -1,0 +1,47 @@
+/**
+ * The list row's delivery glyph ("Ticks", approval "inbox-row-delivery",
+ * 2026-10-20): its words, from the row's additive `delivery` field, which the
+ * server decides with the thread's own rule (`inboxDeliveryState`). The
+ * tooltip is the thread's line word for word (`deliveryText`); the row's
+ * accessible name carries the state in words. Pure, for the tests.
+ */
+import { inboxAgentName, type InboxListRow, type InboxListSection, type InboxRowDelivery } from '@plannotator/core/inbox-types';
+import { deliveryText } from './deliveryLine';
+import { whenTime } from './format';
+
+/** Whom it goes to, as the thread names it ("Claude Code", "Claude Code (another session)", an MCP agent's own name). */
+export function rowDeliveryName(d: InboxRowDelivery): string {
+  const name = inboxAgentName({ kind: 'agent', host: d.host, name: d.name });
+  return d.another_session ? `${name} (another session)` : name;
+}
+
+/** The tooltip: the thread's delivery line for the same state (a 👍's says so first). */
+export function rowDeliveryLine(d: InboxRowDelivery, time: (iso: string) => string = whenTime): string {
+  const name = rowDeliveryName(d);
+  const text = deliveryText(d.reason, { name, at: d.at, time, undeliveredHost: name, endedName: name });
+  return d.kind === 'ack' ? `👍 Looks good · ${text}` : text;
+}
+
+/** The state in words, for the row's accessible name (the time follows it there). */
+export function rowDeliverySpoken(d: InboxRowDelivery): string {
+  const name = rowDeliveryName(d);
+  const words = {
+    delivered: `delivered to ${name}`,
+    undelivered: 'not delivered',
+    saved: `saved for ${name}`,
+    sending: `sending to ${name}`,
+    queued: `queued for ${name}`,
+  }[d.state];
+  const text = d.kind === 'ack' ? `Looks good, ${words}` : words;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The row's time: when it was delivered, once it was; else the thread's latest activity. */
+export function rowTimeIso(row: InboxListRow): string {
+  return row.delivery?.state === 'delivered' && row.delivery.at ? row.delivery.at : row.last_at;
+}
+
+/** Some row's delivery can still move with the live sessions (anything but delivered): `event: deliveries` reads the list again. */
+export function hasMovingDelivery(sections: readonly InboxListSection[] | null): boolean {
+  return !!sections?.some((section) => section.threads.some((row) => row.delivery != null && row.delivery.state !== 'delivered'));
+}

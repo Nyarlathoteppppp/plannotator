@@ -31,6 +31,7 @@ import {
   type WhatsNewModel,
 } from './api';
 import { addOwnThreads, filterSections, heldNotice, markHeldRowArchived, refreshHeldRows, settleOwn, settleThread, showBroughtIn, waitingCount, type OpenThread } from './held';
+import { hasMovingDelivery } from './rowDelivery';
 import {
   captureSettle,
   COVERED_LIST_SETTLES,
@@ -354,6 +355,9 @@ function Inbox() {
     storage.setItem(SIDEBAR_OPEN_COOKIE, String(next));
   }, []);
   const [latest, setLatest] = useState<ListModel | null>(null);
+  /** The latest list read's sections, for the event stream's `deliveries` (which reads again only while a delivery can move). */
+  const latestSectionsRef = useRef<ListModel['sections'] | null>(null);
+  latestSectionsRef.current = latest?.sections ?? null;
   /** The list on screen: held until the person acts (the "N new" notice). */
   const [shown, setShown] = useState<InboxListSection[] | null>(null);
   const [thread, setThread] = useState<InboxThread | null>(null);
@@ -745,6 +749,7 @@ function Inbox() {
   useEffect(() => {
     let unsubscribe = () => {};
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let deliveriesTimer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
     void (async () => {
       const first = await refreshList(true);
@@ -769,6 +774,13 @@ function Inbox() {
         },
         // Whether any open Inbox tab can show a notification (Settings → General).
         onReach: setNotifyReach,
+        // The live sessions moved (approval "inbox-row-delivery"): read the list again while a row's
+        // delivery can still change (queued, sending, saved, not delivered), so its glyph follows.
+        onDeliveries: () => {
+          if (!hasMovingDelivery(latestSectionsRef.current)) return;
+          if (deliveriesTimer) clearTimeout(deliveriesTimer);
+          deliveriesTimer = setTimeout(() => void refreshList(false), 80);
+        },
         // Every (re)connect: the permission now, since a reconnect's URL may be stale.
         onConnect: reportWindow,
       }, windowReport());
@@ -777,6 +789,7 @@ function Inbox() {
       cancelled = true;
       unsubscribe();
       if (timer) clearTimeout(timer);
+      if (deliveriesTimer) clearTimeout(deliveriesTimer);
     };
   }, [refreshList, refreshSettings, refreshThread, observeEvent, flushNotifications, setNotifyReach, windowReport, reportWindow]);
 
