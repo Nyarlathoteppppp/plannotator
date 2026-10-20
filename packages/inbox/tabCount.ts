@@ -1,7 +1,7 @@
 /**
  * The count on the Inbox's browser tab (approval "inbox-tab-count",
  * 2026-10-20): how many threads hold agent messages the person has not looked
- * at yet, as a red badge on the favicon and "(N) " before the title.
+ * at yet, as a badge on the favicon (white, near-black digits, a dark ring) and "(N) " before the title.
  *
  * What counts is the list rows' `unseen` (new since you looked), across every
  * project whatever the sidebar's filter, never the sidebar's waiting-on-you
@@ -47,10 +47,13 @@ export function tabTitle(base: string, count: number): string {
 /** The icon is drawn at 64 px; the browser scales it to the tab (16 or 32). */
 export const TAB_ICON_SIZE = 64;
 const BADGE_HEIGHT = 40;
-const BADGE_RING = 3;
-const BADGE_FILL = '#e5243b';
-const BADGE_RING_COLOR = '#ffffff';
-const BADGE_TEXT = '#ffffff';
+// White with near-black digits and a dark ring (the owner's pick of four, 2026-10-20): Tater
+// is orange, and a red or blue badge sat close to it, or to the goggles, at tab size. The ring
+// is 4 px at 64, one full pixel at 16, so the badge stays apart from the light goggles.
+const BADGE_RING = 4;
+const BADGE_FILL = '#ffffff';
+const BADGE_RING_COLOR = '#18181b';
+const BADGE_TEXT = '#18181b';
 const BADGE_FONT = '700 30px -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
 
 /** The badge's box in the bottom-right corner: a circle for one digit, a pill for "9+". */
@@ -61,9 +64,20 @@ function badgeBox(label: string): { x: number; y: number; w: number; h: number }
 
 /**
  * The badged icon drawn on a canvas (PNG, crisp at every tab size in
- * Chromium and Safari). Null when the browser gives no 2D context.
+ * Chromium and Safari). Null when the browser gives no 2D context or the
+ * draw throws.
  */
 export function drawTabIcon(base: CanvasImageSource, count: number, doc: Document = document): string | null {
+  // A browser without part of the canvas API (`roundRect` came in Safari 16 and Firefox 112)
+  // answers null, and the caller draws the SVG instead.
+  try {
+    return drawOnCanvas(base, count, doc);
+  } catch {
+    return null;
+  }
+}
+
+function drawOnCanvas(base: CanvasImageSource, count: number, doc: Document): string | null {
   const label = tabBadgeLabel(count);
   const canvas = doc.createElement('canvas');
   canvas.width = TAB_ICON_SIZE;
@@ -170,7 +184,12 @@ export function useTabCount(count: number): void {
       // A failed read is tried again at the next count.
       if (!icon) base.current = null;
       if (cancelled || !icon) return;
-      const url = (icon.image ? drawTabIcon(icon.image, count) : null) ?? tabIconSvg(icon.dataUrl, count);
+      let url: string;
+      try {
+        url = (icon.image ? drawTabIcon(icon.image, count) : null) ?? tabIconSvg(icon.dataUrl, count);
+      } catch {
+        return; // The title still carries the count.
+      }
       drawn.current.set(key, url);
       setIcon(link, url, null);
     });

@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { InboxListRow, InboxListSection, InboxSectionId } from '@plannotator/core/inbox-types';
-import { inboxTabCount, tabBadgeLabel, tabIconSvg, tabTitle } from './tabCount';
+import { drawTabIcon, inboxTabCount, tabBadgeLabel, tabIconSvg, tabTitle } from './tabCount';
 
 let next = 0;
 function row(over: Partial<InboxListRow> & { section: InboxSectionId }): InboxListRow {
@@ -79,5 +79,15 @@ describe('the tab', () => {
     expect(svg).toContain('href="data:image/png;base64,AAAA"');
     expect(svg).toContain('>9+</text>');
     expect(decodeURIComponent(tabIconSvg('data:image/png;base64,AAAA', 0))).not.toContain('<text');
+  });
+
+  test('a canvas without roundRect (Safari before 16, Firefox before 112) gives null, so the SVG is drawn instead', () => {
+    const ctx = { drawImage() {}, beginPath() {}, fill() {}, stroke() {}, fillText() {} };
+    const doc = { createElement: () => ({ width: 0, height: 0, getContext: () => ctx, toDataURL: () => 'data:image/png;base64,X' }) } as unknown as Document;
+    expect(drawTabIcon({} as CanvasImageSource, 3, doc)).toBeNull();
+    // With the whole API the PNG comes back.
+    const full = { ...ctx, roundRect() {} };
+    const fullDoc = { createElement: () => ({ width: 0, height: 0, getContext: () => full, toDataURL: () => 'data:image/png;base64,X' }) } as unknown as Document;
+    expect(drawTabIcon({} as CanvasImageSource, 3, fullDoc)).toBe('data:image/png;base64,X');
   });
 });
