@@ -176,14 +176,14 @@ export function skipsUnanswered(choice: SkipChoice, answersAny: boolean): boolea
   return choice === 'skip' || (choice === 'auto' && answersAny);
 }
 
+/** A wire message's question states, for the shared asking rule. */
+const questionStatesOf = (message: InboxMessageWire): InboxQuestionState[] => (message.questions ?? []).map((q) => q.state);
+
 /**
  * Whether a Send now would carry at least one answer: a saved pick not yet
  * sent, or one being saved (`pending`, keyed `<message id>/<key>`; null is a
  * pick being cleared).
  */
-/** A wire message's question states, for the shared asking rule. */
-const questionStatesOf = (message: InboxMessageWire): InboxQuestionState[] => (message.questions ?? []).map((q) => q.state);
-
 export function sendAnswersAny(thread: InboxThread, pending: ReadonlyMap<string, QuestionAnswer | null> = new Map()): boolean {
   // Nothing being saved: the shared default (core inbox-delivery), which the list row's delivery reads too.
   if (pending.size === 0) return inboxDefaultSkip(thread.messages.filter((m) => m.author.kind === 'agent'), questionStatesOf);
