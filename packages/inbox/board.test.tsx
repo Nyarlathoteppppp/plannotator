@@ -11,7 +11,8 @@
  *    person looks: Restore puts one back in one click, Got it clears the rest,
  *    and opening Dropped (the Icebox page) clears a new one;
  *  - the open card: its threads (opening one goes to the thread) and PRs,
- *    Move to, Pause (the Icebox) with Undo, Drop with a reason, Restore;
+ *    Move to, Pause (the Icebox) and Take out, Drop with a reason, Restore,
+ *    each said in the card;
  *  - "Ask where this is" opens a message to the card's live agent with the
  *    card named, and says so when nobody is running.
  *
@@ -175,7 +176,6 @@ async function renderApp(hash = '') {
 
 const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
 const card = (el: ParentNode, key: string) => el.querySelector<HTMLButtonElement>(`.ib-bcard[data-card-id="${board.ids[key]}"]`);
-const lane = (el: ParentNode, column: string) => el.querySelector(`[data-lane="${column}"]`);
 const dialog = () => document.querySelector<HTMLElement>('[data-open-card]');
 const click = (el: Element | null) => act(() => (el as HTMLElement).click());
 
@@ -264,7 +264,7 @@ test.skipIf(!hasDom)('opening Dropped is looking: a new agent drop leaves the no
   expect(el.querySelector('[data-drop-notice]')).toBeNull();
 });
 
-test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause with Undo, Drop with a reason, Restore', async () => {
+test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Take out, Drop with a reason, Restore, each said in the card', async () => {
   const el = await renderApp('#board');
   await until(() => card(el, 'explorer') !== null, 'the Board');
   click(card(el, 'explorer'));
@@ -292,16 +292,16 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause with Un
   click(open.querySelector('[data-card-move="building"]'));
   await until(async () => (await columnOf(board.ids.explorer)) === 'building', 'the move on the server');
   await until(() => dialog()?.querySelector('[data-card-move="building"]')?.getAttribute('aria-pressed') === 'true', 'the open card moved');
-  expect(text(el.querySelector('[data-inbox-toast]'))).toContain('Moved to Building');
+  // Said in the card itself (the modal covers the window's toast).
+  expect(text(dialog()!.querySelector('[data-card-note]'))).toBe('Moved to Building.');
 
   // Pause: the Icebox, with Undo.
   click(dialog()!.querySelector('[data-card-icebox]'));
   await until(async () => (await columnOf(board.ids.explorer)) === 'icebox', 'paused on the server');
   await until(() => dialog()?.querySelector('[data-card-state="icebox"]') !== null, 'the open card paused');
-  const toast = el.querySelector('[data-inbox-toast]')!;
-  expect(text(toast)).toContain('Paused');
-  click([...toast.querySelectorAll('button')].find((b) => text(b).startsWith('Undo'))!);
-  await until(async () => (await columnOf(board.ids.explorer)) === 'building', 'Undo puts it back');
+  expect(text(dialog()!.querySelector('[data-card-note]'))).toBe('Paused: it is in the Icebox. Take out puts it back.');
+  click(dialog()!.querySelector('[data-card-restore]'));
+  await until(async () => (await columnOf(board.ids.explorer)) === 'building', 'Take out puts it back');
 
   // Drop, with a reason the person writes.
   await until(() => dialog()?.querySelector('[data-card-drop]') !== null, 'Drop offered again');

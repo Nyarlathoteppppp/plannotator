@@ -126,6 +126,19 @@ Holds up: staging deploy; release notes
 
 Agents are told to write `Stopped:` only when they truly cannot continue. A negative value (`no`, `none`, `n/a`, a dash) means no stop, so `Stopped: no` is read as if the line were not there, and a `Holds up:` entry `none` holds nothing up. `plannotator inbox --help` and the `send_message` tool's `body` field teach agents both lines.
 
+## The Board
+
+**Board** in the sidebar shows the work your agents have in flight: one card per piece of work that outlasts an agent's reply (a lane started, a PR opened, something it promised to send). An agent makes the card when it takes such an ask and keeps it current with one short call (`card`, below). The count beside **Board** is the cards waiting on you.
+
+- **Five columns:** Asked · Designing · Your look · Building · Your review. Designing and Building are the agent working (anything that is not code, then code or an open PR). **Your look** and **Your review** wait on you: a sheet, options or questions to look at, then code, a green PR or a release go.
+- **A card** is two lines: its title, then "You: …" (what you owe) in your columns and the agent's last word in the others, with how long ago anyone last wrote to it ("2d ago"). Nothing marks a card as stalled: the age is the fact.
+- **Shipped** and **Icebox** are links at the top. Only you pause a card (it goes to the Icebox) or take one out. Dropped cards are listed on the Icebox page under **Dropped**, with who dropped them, when and why, and **Restore** puts one back where it was.
+- **When an agent drops a card**, the Board says "N dropped by an agent" above the columns, with each reason and **Restore**, until you have looked: **Got it**, or opening Dropped.
+- **Open a card** to see its threads and PRs. From there you can move it to another column, **Pause** it, **Drop** it (with a reason if you like), or **Ask where this is**, which starts a message to the card's agent (or another agent running in its project). The work itself happens in the card's threads: opening one takes you there.
+- A merged PR never moves a card by itself: the agent (or you) moves it to Shipped.
+
+On a phone the columns are one list in the same order, each one folds, and Shipped and Icebox come at the end. The Board has no keyboard shortcuts of its own.
+
 ## Connecting your agent
 
 Before any agent has written, the Inbox window shows one next step for this computer: Plannotator's own connections first (Claude Code, Pi and OpenCode, whose replies come back into the session by themselves), then agents that reach it through MCP. A tool that is off turns on with one click. A plugin that is missing shows its install command to copy; the window never installs anything, and it moves on by itself once you have. Below the step, a short list says which agents are already connected and what is left.

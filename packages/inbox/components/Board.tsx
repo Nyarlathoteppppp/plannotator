@@ -396,6 +396,8 @@ export interface CardDialogProps {
   /** Whether a live session can take "Ask where this is" (the card's agent, or one in its project). */
   canAsk: boolean;
   busy: boolean;
+  /** What the person's last move here did ("Paused: it is in the Icebox."), shown in the card. */
+  note?: string | null;
   onClose: () => void;
   onMove: (column: InboxCardColumn) => void;
   onIcebox: () => void;
@@ -406,7 +408,7 @@ export interface CardDialogProps {
 }
 
 /** The open card: what it is, where it stands, its threads and PRs, and the person's moves. */
-export function CardDialog({ card, model, now, canAsk, busy, onClose, onMove, onIcebox, onDrop, onRestore, onOpenThread, onAsk }: CardDialogProps) {
+export function CardDialog({ card, model, now, canAsk, busy, note, onClose, onMove, onIcebox, onDrop, onRestore, onOpenThread, onAsk }: CardDialogProps) {
   const titleId = useId();
   const reasonId = useId();
   const [dropping, setDropping] = useState(false);
@@ -465,6 +467,13 @@ export function CardDialog({ card, model, now, canAsk, busy, onClose, onMove, on
             </button>
           </Tip>
         </div>
+
+        {note && (
+          <p className="ib-cd-done" data-card-note="">
+            <Icon name="check" size={15} />
+            {note}
+          </p>
+        )}
 
         {line && (
           <p className={`ib-cd-line${line.you ? ' ib-cd-you' : ''}`} dir="auto" data-card-line="">

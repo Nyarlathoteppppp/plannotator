@@ -1345,21 +1345,31 @@ function Inbox() {
       setCardBusy(false);
     }
   };
-  const restoreCard = async (card: InboxCardWire) => {
+  // From the open card (a modal dialog: a toast under it could not be reached), what happened is said in the
+  // card itself, and its own Restore or Take out undoes it. From the page, the window's one toast, with Undo.
+  const [cardNote, setCardNote] = useState<{ card: string; text: string } | null>(null);
+  const cardDone = (card: InboxCardWire, inCard: boolean, toast: Omit<InboxToastModel, 'id'>, note: string) => {
+    if (inCard) {
+      setCardNote({ card: card.id, text: note });
+      say(note);
+    } else showToast(toast, toast.onUndo ? MARK_READ_UNDO_MS : 4200);
+  };
+  const restoreCard = async (card: InboxCardWire, inCard = false) => {
     const next = await moveCard(card, { op: 'restore' });
-    if (next) showToast({ icon: 'check', lead: `Back in ${INBOX_CARD_COLUMN_LABELS[next.column]}`, detail: `“${card.title}”` }, 4200);
+    if (next) cardDone(card, inCard, { icon: 'check', lead: `Back in ${INBOX_CARD_COLUMN_LABELS[next.column]}`, detail: `“${card.title}”` }, `Back in ${INBOX_CARD_COLUMN_LABELS[next.column]}.`);
   };
-  const iceboxCard = async (card: InboxCardWire) => {
+  const iceboxCard = async (card: InboxCardWire, inCard = false) => {
     const next = await moveCard(card, { op: 'icebox' });
-    if (next) showToast({ icon: 'check', lead: 'Paused', detail: `“${card.title}” is in the Icebox`, onUndo: () => void restoreCard(next) });
+    if (next)
+      cardDone(card, inCard, { icon: 'check', lead: 'Paused', detail: `“${card.title}” is in the Icebox`, onUndo: () => void restoreCard(next) }, 'Paused: it is in the Icebox. Take out puts it back.');
   };
-  const dropCard = async (card: InboxCardWire, reason: string) => {
+  const dropCard = async (card: InboxCardWire, reason: string, inCard = false) => {
     const next = await moveCard(card, reason ? { op: 'drop', reason } : { op: 'drop' });
-    if (next) showToast({ icon: 'archive', lead: 'Dropped', detail: `“${card.title}”`, onUndo: () => void restoreCard(next) });
+    if (next) cardDone(card, inCard, { icon: 'archive', lead: 'Dropped', detail: `“${card.title}”`, onUndo: () => void restoreCard(next) }, 'Dropped. Restore puts it back.');
   };
-  const moveCardTo = async (card: InboxCardWire, column: InboxCardColumn) => {
+  const moveCardTo = async (card: InboxCardWire, column: InboxCardColumn, inCard = false) => {
     const next = await moveCard(card, { op: 'move', column });
-    if (next) showToast({ icon: 'check', lead: `Moved to ${INBOX_CARD_COLUMN_LABELS[column]}`, detail: `“${card.title}”` }, 4200);
+    if (next) cardDone(card, inCard, { icon: 'check', lead: `Moved to ${INBOX_CARD_COLUMN_LABELS[column]}`, detail: `“${card.title}”` }, `Moved to ${INBOX_CARD_COLUMN_LABELS[column]}.`);
   };
   const dropsSeen = async () => {
     try {
@@ -2010,6 +2020,7 @@ function Inbox() {
   const { model: cardSessions } = useComposeSessions(openCard !== null);
   const askSession = openCard ? askTarget(openCard, cardSessions?.projects) : null;
   const closeCard = () => {
+    setCardNote(null);
     const next = { ...routeRef.current, card: null };
     if (!backTo(hashOf(next))) writeRoute(next);
   };
@@ -2367,11 +2378,12 @@ function Inbox() {
           now={boardNow}
           canAsk={askSession !== null}
           busy={cardBusy}
+          note={cardNote?.card === openCard.id ? cardNote.text : null}
           onClose={closeCard}
-          onMove={(column) => void moveCardTo(openCard, column)}
-          onIcebox={() => void iceboxCard(openCard)}
-          onDrop={(reason) => void dropCard(openCard, reason)}
-          onRestore={() => void restoreCard(openCard)}
+          onMove={(column) => void moveCardTo(openCard, column, true)}
+          onIcebox={() => void iceboxCard(openCard, true)}
+          onDrop={(reason) => void dropCard(openCard, reason, true)}
+          onRestore={() => void restoreCard(openCard, true)}
           onOpenThread={(threadId) => go({ page: 'inbox', project: null, thread: threadId })}
           onAsk={() => {
             const session = askSession;
