@@ -26,7 +26,9 @@ export function useTaggable(threadId: string, enabled: boolean) {
   const [model, setModel] = useState<TaggableModel | null>(null);
   const load = useCallback(async () => {
     try {
-      setModel(await inboxApi.taggable(threadId));
+      const next = await inboxApi.taggable(threadId);
+      // Only a well-formed answer: an older Inbox (or a stub) leaves nobody to tag.
+      setModel(next && Array.isArray(next.sessions) ? next : null);
     } catch {
       // An older Inbox, or a failed read: nobody to tag; `@` stays text.
     }

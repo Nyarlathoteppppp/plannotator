@@ -68,7 +68,7 @@ function stateWords(session: TaggableSession, time: (iso: string) => string): st
  * (the window's own answer, else the server's).
  */
 export function tagOptions(model: TaggableModel | null, ownerSession: string | null, threadProjectId: string | null, time: (iso: string) => string): TagOption[] {
-  if (!model) return [];
+  if (!model || !Array.isArray(model.sessions)) return [];
   const owner = ownerSession ?? model.owner?.session ?? null;
   const live = model.sessions.filter((s) => s.kind === 'live');
   const readers = model.sessions.filter((s) => s.kind === 'mcp');
@@ -116,7 +116,7 @@ export function tagOptions(model: TaggableModel | null, ownerSession: string | n
 
 /** The rows as ui's mention people: agents, grouped; an older Plannotator's row cannot be picked (`canOpen: false`). */
 export function tagPeople(options: readonly TagOption[]): MentionPerson[] {
-  return options.map((o) => ({ id: o.id, kind: 'agent' as const, label: o.label, detail: o.detail, group: o.group, canOpen: o.taggable }));
+  return options.map((o) => ({ id: o.id, kind: 'agent' as const, label: o.label, detail: o.taggable ? o.detail : TAG_UPDATE_WORDS, group: o.group, canOpen: o.taggable }));
 }
 
 /** The sessions a set of mention ids tags, leaving out the owner (it gets the reply anyway), in the order given. */

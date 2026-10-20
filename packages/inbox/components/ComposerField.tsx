@@ -20,7 +20,7 @@
  * keep their meaning and the host's own `onKeyDown` gets everything else.
  * With no skills installed (or the route missing) `/` and `$` are plain text.
  */
-import React, { useCallback, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ComposerTokenTextarea } from '@plannotator/ui/components/ComposerTokenTextarea';
 import { HumanOnlySkillNotice, SkillReferenceMenu } from '@plannotator/ui/components/SkillReferenceMenu';
 import { useMentionAutocomplete } from '@plannotator/ui/hooks/useMentionAutocomplete';
@@ -99,6 +99,12 @@ export function InboxComposerField({
     [options, people, onTagsChange],
   );
   const mention = useMentionAutocomplete({ text: value, setText: onChange, textareaRef: innerRef, source });
+  // The agents can arrive after the person typed `@` (the list is read when the box opens): read the caret then.
+  const tagsReady = source !== undefined;
+  const readMentionCaret = mention.onSelect;
+  useEffect(() => {
+    if (tagsReady) readMentionCaret();
+  }, [tagsReady, readMentionCaret]);
   const skillListboxId = `ib-skills-${useId().replace(/:/g, '')}`;
   const tagListboxId = `ib-tags-${useId().replace(/:/g, '')}`;
   const notesId = `ib-tagnotes-${useId().replace(/:/g, '')}`;

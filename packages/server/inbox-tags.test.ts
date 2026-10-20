@@ -11,7 +11,7 @@
  * recipient only by its own delivery or its own wait_for_reply.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
@@ -27,6 +27,7 @@ import {
   inboxWakeText,
   parseInboxBridgeCommands,
 } from "@plannotator/shared/inbox/connection";
+import { InboxAgentConnection, InboxWake } from "@plannotator/shared/inbox/agent-link";
 import { startInboxServer, type InboxServer } from "./inbox";
 
 const roots: string[] = [];
@@ -325,5 +326,59 @@ describe("tags in a reply", () => {
     await delivered(server, "ses-owner", "claude-code", sent.id);
     r = await row(server, asked.thread_id);
     expect(r.section).not.toBe("sent");
+  });
+});
+
+describe("the Pi and OpenCode wake (agent-link) for a reply that tags", () => {
+  test("a Pi owner and a tagged OpenCode session on one computer (one data dir, one claims folder): each is woken once with its own wake text, and each acknowledges its own copy", async () => {
+    const { server, client, project, infra } = await setup();
+    const dataDir = join(roots.at(-1)!, "data");
+    const asked = await agentSends(client, project, "ses-pi", "Should the queue own retries?", { host: "pi", name: "Pi", wakes: true });
+    const piConnection = new InboxAgentConnection({ dataDir, host: "pi", agentName: "Pi", tools: [] });
+    const ocConnection = new InboxAgentConnection({ dataDir, host: "opencode", agentName: "OpenCode", tools: [] });
+    const toPi: { text: string; id: string }[] = [];
+    const toOc: { text: string; id: string }[] = [];
+    let piBusy = true;
+    const piWake = new InboxWake(piConnection, "ses-pi", { isBusy: () => piBusy, deliver: async (text, command) => void toPi.push({ text, id: command.id }), notify: () => {}, projectPath: () => project }, 50);
+    const ocWake = new InboxWake(ocConnection, "ses-oc", { isBusy: () => false, deliver: async (text, command) => void toOc.push({ text, id: command.id }), notify: () => {}, projectPath: () => infra }, 50);
+    piWake.start();
+    ocWake.start();
+    try {
+      // OpenCode's wake polls with the tags capability: it can be tagged.
+      for (let i = 0; i < 100; i++) {
+        const model = (await (await fetch(`${base(server)}/api/inbox/threads/${asked.thread_id}/taggable`)).json()) as { sessions: { session: string; taggable: boolean }[] };
+        if (model.sessions.some((s) => s.session === "ses-oc" && s.taggable)) break;
+        await Bun.sleep(50);
+      }
+      const response = await reply(server, asked.message_id, { idempotency_key: "k1", words: "Queue it. @OpenCode add the search index.", tags: [{ session: "ses-oc" }] });
+      expect(response.status).toBe(200);
+      const sent = ((await response.json()) as { reply: { id: string; body: string } }).reply;
+      for (let i = 0; i < 200 && toOc.length === 0; i++) await Bun.sleep(50);
+      expect(toOc).toHaveLength(1);
+      expect(toOc[0]!.text).toBe(inboxWakeText({ id: sent.id, subject: "Should the queue own retries?", body: sent.body, tagged: { owner: "Pi" } }));
+      // OpenCode reads the thread before Pi's turn ends: Pi is still woken.
+      await client.callTool({ name: "read_thread", arguments: { thread_id: asked.thread_id, agent_session: "ses-oc" } });
+      expect(toPi).toHaveLength(0);
+      piBusy = false;
+      for (let i = 0; i < 200 && toPi.length === 0; i++) await Bun.sleep(50);
+      expect(toPi).toHaveLength(1);
+      expect(toPi[0]!.text).toBe(inboxWakeText({ id: sent.id, subject: "Should the queue own retries?", body: sent.body, also_tagged: ["OpenCode"] }));
+      let message: InboxThread["messages"][number] | undefined;
+      for (let i = 0; i < 100; i++) {
+        message = (await thread(server, asked.thread_id)).messages.find((m) => m.id === sent.id);
+        if (message?.delivery && message.tags?.[0]?.delivery) break;
+        await Bun.sleep(50);
+      }
+      expect(message?.delivery).toMatchObject({ host: "pi", session: "ses-pi" });
+      expect(message?.tags?.[0]?.delivery).toMatchObject({ host: "opencode", session: "ses-oc" });
+      // Two claims in the one folder: the owner's by the reply id, the tagged session's by the id and its session.
+      expect(readdirSync(join(dataDir, "inbox", "claims")).sort()).toEqual([sent.id, `${sent.id}.ses-oc`].sort());
+      await Bun.sleep(300);
+      expect(toPi).toHaveLength(1);
+      expect(toOc).toHaveLength(1);
+    } finally {
+      piWake.dispose();
+      ocWake.dispose();
+    }
   });
 });

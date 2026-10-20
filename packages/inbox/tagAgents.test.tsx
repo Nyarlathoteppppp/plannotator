@@ -209,7 +209,7 @@ test.skipIf(!hasDom)('@ opens the agents grouped by agent, the owner first and t
   expect(box.getAttribute('aria-activedescendant')).toBeNull();
   expect(document.querySelector('[data-tag-option][aria-selected="true"]')).toBeNull();
   for (const g of document.querySelectorAll('[data-tag-picker] [role="group"]')) {
-    expect(document.getElementById(g.getAttribute('aria-labelledby')!)?.textContent).toBe(g.getAttribute('data-tag-group'));
+    expect(document.getElementById(g.getAttribute('aria-labelledby')!)?.textContent).toBe(g.getAttribute('data-tag-group') ?? undefined);
   }
   const owner = document.querySelector(`[data-tag-option="${S.owner}"]`)!;
   expect(owner.textContent).toContain('Owns this thread');

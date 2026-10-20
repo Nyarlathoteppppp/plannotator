@@ -1107,7 +1107,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
   const taggable = useTaggable(thread.thread_id, (box.open || !!file) && !resolved);
   const tagOwner = asking?.session ?? taggable?.owner?.session ?? null;
   const tagOpts: TagOption[] = useMemo(() => tagOptions(taggable, tagOwner, thread.project.id, whenTime), [taggable, tagOwner, thread.project.id]);
-  const composerTags = useMemo(() => ({ options: tagOpts, onChange: onTagsChange }), [tagOpts, onTagsChange]);
+  // Until the list is read (or from an older Inbox) `@` is plain text.
+  const composerTags = useMemo(() => (taggable ? { options: tagOpts, onChange: onTagsChange } : undefined), [taggable, tagOpts, onTagsChange]);
   // The same agents in a file comment's composer (markdown, text and HTML files): a tag there sends the
   // whole reply to that agent, and the composer says so under the field.
   const commentMentions = useMemo<MentionSource | undefined>(
