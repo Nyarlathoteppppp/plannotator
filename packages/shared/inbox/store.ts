@@ -2931,6 +2931,28 @@ export class InboxStore {
   }
 
   /**
+   * Whether `session` is only a guest in this thread: the person tagged it
+   * there, and it never wrote there and owns none of the person's messages.
+   * Its reads must not count as "the agent read it" (`markAgentChecked`,
+   * `markAcksSeen`): that would settle a plain reply still queued for the
+   * thread's owner, which a tagged agent told to read the thread first would
+   * otherwise swallow. Once it writes in the thread it is a participant.
+   */
+  isTaggedGuest(threadId: string, session: string | null): boolean {
+    if (!session) return false;
+    let tagged = false;
+    for (const message of this.threadMessages(threadId)) {
+      if (message.author.kind === "agent") {
+        if (message.author.session === session) return false;
+        continue;
+      }
+      if (this.isOwner(message, session)) return false;
+      if (tagOf(message, session)) tagged = true;
+    }
+    return tagged;
+  }
+
+  /**
    * The threads a person's reply tagged `session` in and that session has not
    * taken yet (no delivery): wait_for_reply without a thread waits on them
    * too, and read_thread lists them, wherever their project is.

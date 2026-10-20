@@ -285,7 +285,8 @@ function replyResult(store: InboxStore, reply: InboxMessage, base: string, calle
     store.recordDelivery(reply.id, { host: reply.to.host, session: reply.to.session });
   }
   // The agent now has this reply (not any later one): a Sent row moves to Quiet.
-  store.markAgentChecked(reply.thread_id, cursor);
+  // Not for a session only tagged here: its read must not settle what the owner still waits for.
+  if (!store.isTaggedGuest(reply.thread_id, caller)) store.markAgentChecked(reply.thread_id, cursor);
   const questions = reply.reply_to ? replyQuestions(store, reply.reply_to) : [];
   const subject = store.threadSubject(reply.thread_id);
   // The files the person attached are named with their paths, as the wake names them.
@@ -810,10 +811,12 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
           const naming = namingHint(store, threadId, input.agent_session?.trim() || null);
           const url = threadUrl(context.baseUrl(), threadId);
           const reader = input.agent_session?.trim() || null;
+          // A session the person only tagged here reads as a guest: what the owner still waits for stays queued.
+          const guest = store.isTaggedGuest(threadId, reader);
           if (input.format === "full") {
-            store.markAgentChecked(threadId);
+            if (!guest) store.markAgentChecked(threadId);
             // The person's 👍 (settled acks) are read now too: the window says the agent saw it.
-            store.markAcksSeen(threadId);
+            if (!guest) store.markAcksSeen(threadId);
             // An agent that is not woken read a thread it was tagged in: the window says it saw it.
             if (reader) store.recordTagRead(threadId, reader);
             // The full records, as before the window (tests, scripts, a jq over the result).
@@ -826,8 +829,10 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
           }
           // Built first, so a refused read (a bad expand, before or after) marks nothing read.
           const { result, order, shown, readThrough } = windowedThread(store, threadId, { ...input, caller: input.agent_session?.trim() || null }, url);
-          store.markAgentChecked(threadId, readThrough);
-          store.markAcksSeen(threadId, Number.POSITIVE_INFINITY, undefined, shown);
+          if (!guest) {
+            store.markAgentChecked(threadId, readThrough);
+            store.markAcksSeen(threadId, Number.POSITIVE_INFINITY, undefined, shown);
+          }
           // An agent that is not woken read a thread it was tagged in: the window says it saw it.
           if (reader) store.recordTagRead(threadId, reader);
           return okComplete(windowedThreadText(result, order, naming?.line ?? ""), { ...result, ...(naming?.structured ?? {}) });

@@ -175,6 +175,23 @@ describe("tags in a reply", () => {
     expect(await poll(server, "ses-owner", "claude-code", project)).toEqual([]);
   });
 
+  test("a session only tagged in a thread reads it as a guest: an earlier plain reply still queued for the owner stays queued", async () => {
+    const { server, client, project, infra } = await setup();
+    const asked = await agentSends(client, project, "ses-owner", "Ship it?", CLAUDE);
+    await poll(server, "ses-pi", "pi", infra);
+    // A plain reply waits for the owner (busy), then a second one tags Pi.
+    const first = (await (await reply(server, asked.message_id, { idempotency_key: "k1", words: "Yes." })).json()) as { reply: { id: string } };
+    const second = (await (await reply(server, asked.message_id, { idempotency_key: "k2", words: "@Pi check infra.", tags: [{ host: "pi", session: "ses-pi" }] })).json()) as {
+      reply: { id: string };
+    };
+    // Pi does as its wake says: reads the thread (windowed and full), and waits for its reply.
+    expect((await poll(server, "ses-pi", "pi", infra)).map((c) => c.id)).toEqual([second.reply.id]);
+    await client.callTool({ name: "read_thread", arguments: { thread_id: asked.thread_id, agent_session: "ses-pi" } });
+    await client.callTool({ name: "read_thread", arguments: { thread_id: asked.thread_id, agent_session: "ses-pi", format: "full" } });
+    // The owner is still handed both, oldest first.
+    expect((await poll(server, "ses-owner", "claude-code", project)).map((c) => c.id)).toEqual([first.reply.id, second.reply.id]);
+  });
+
   test("a connection that does not say it understands tags is never handed what it was only tagged in, and a live session on an older Plannotator can't be tagged", async () => {
     const { server, client, project, infra } = await setup();
     const asked = await agentSends(client, project, "ses-owner", "Ship it?", CLAUDE);
