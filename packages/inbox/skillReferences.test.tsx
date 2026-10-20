@@ -404,7 +404,7 @@ test.skipIf(!hasDom)('compose (a message you start): the field takes a skill, th
   await until(() => menu() !== null, 'the skill picker on a bare /');
   const anchor = menu()!.parentElement!;
   expect(anchor.hasAttribute('data-skill-menu-anchor')).toBe(true);
-  expect(anchor.parentElement).toBe(dialog());
+  expect(anchor.parentElement).toBe(dialog() as HTMLElement | null);
   expect(menu()!.closest('.ib-cp-body')).toBeNull();
   expect(menu()!.getAttribute('data-skill-menu-placement')).toBe('below');
   expect(field.getAttribute('aria-controls')).toBe(menu()!.id);
