@@ -307,6 +307,14 @@ test('the sent reply shows one line per agent (Lines): delivered, queued with it
   await expect(lines.nth(1).locator('[data-send-now]')).toBeVisible();
   await expect(lines.nth(2)).toContainText('Saved for Codex. It sees it the next time it reads this thread.');
   await expect(page.locator('[data-tagged-names]')).toHaveText(' · tagged Pi, Codex');
+  // Each tag chip in the sent words carries its agent's mark over the `@` (the approved shot 5).
+  const marks = page.locator('article.ib-message[data-author="person"] [data-tag-marks] .ib-tg-mark');
+  await expect(marks).toHaveCount(2);
+  for (const mark of await marks.all()) {
+    const box = (await mark.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(10);
+    expect(box.width).toBeLessThanOrEqual(14);
+  }
   await shot(page, '5-sent-lines-desktop', { clip: { selector: 'article.ib-message[data-author="person"]' } });
   // Pi's own Send now hands Pi its copy with `now`.
   await lines.nth(1).locator('[data-send-now]').click();

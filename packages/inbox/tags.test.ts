@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { TaggableModel, TaggableSession } from './api';
-import { TAG_READERS_GROUP, sentRecipientsWords, tagDeliveryLine, tagHeadsUp, tagName, tagOptions, tagPeople, tagsToSend } from './tags';
+import { TAG_READERS_GROUP, sendTagsByTarget, sentRecipientsWords, tagDeliveryLine, tagHeadsUp, tagName, tagOptions, tagPeople, tagsToSend } from './tags';
 import { tagTokenSpans } from './tagHighlight';
 
 const time = (iso: string) => iso.slice(11, 16);
@@ -76,6 +76,27 @@ describe('the picker', () => {
       { host: 'codex', session: 'codex-1', label: 'Codex' },
       { session: 'gone' },
     ]);
+  });
+
+  test('one Send tags once, on its last reply: a comment tag on an earlier target and the same agent in the words are one tag', () => {
+    const options = tagOptions(model, 'cc-owner', billing.id, time);
+    const targets = [
+      { id: 'msg-a', owner: 'cc-two' },
+      { id: 'msg-b', owner: 'cc-owner' },
+    ];
+    // Pi tagged in a comment on A's file and again in the words; Codex only in a comment on A.
+    const plan = sendTagsByTarget(targets, ['pi-1'], new Map([['msg-a', ['pi-1', 'codex-1']]]), options);
+    expect(plan.get('msg-a')).toEqual([]);
+    expect(plan.get('msg-b')).toEqual([
+      { host: 'pi', session: 'pi-1', label: 'Pi' },
+      { host: 'codex', session: 'codex-1', label: 'Codex' },
+    ]);
+    // A comment tag on a non-last target, with nothing in the words, still goes with the whole Send.
+    const onlyComment = sendTagsByTarget(targets, [], new Map([['msg-a', ['pi-1']]]), options);
+    expect(onlyComment.get('msg-a')).toEqual([]);
+    expect(onlyComment.get('msg-b')).toEqual([{ host: 'pi', session: 'pi-1', label: 'Pi' }]);
+    // The earlier target's owner tagged in a comment is tagged on the last reply; the last reply's owner never is.
+    expect(sendTagsByTarget(targets, ['cc-owner'], new Map([['msg-a', ['cc-two']]]), options).get('msg-b')!.map((t) => t.session)).toEqual(['cc-two']);
   });
 
   test('the heads-ups: one for a session that does not own the thread, another for one that cannot be woken', () => {

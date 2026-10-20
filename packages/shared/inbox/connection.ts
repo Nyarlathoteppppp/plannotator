@@ -555,9 +555,20 @@ export function inboxAlsoTaggedLine(names: readonly string[]): string {
   return `This reply also tags ${list} (other sessions); each gets it too. Leave what is addressed to them to them.`
 }
 
-/** An agent name a wake line carries: control characters and runs of space folded, capped (it goes into a prompt). */
+/**
+ * The only agent names a wake line may carry about ANOTHER agent (the owner
+ * a tagged session is told about, the sessions also tagged, the session that
+ * asked a redirected reply): the hosts' own names. An agent chooses its own
+ * host string, and these lines go into another session's prompt, so any
+ * other value reads as "another agent" (`agent` in the redirected line).
+ */
+export const INBOX_WAKE_AGENT_NAMES: readonly string[] = ['Claude Code', 'Pi', 'OpenCode', 'Codex', 'Cursor']
+
+/** An agent name a wake line carries: one of INBOX_WAKE_AGENT_NAMES (spacing folded), else '' (the caller says "another agent"). */
 function wakeName(value: unknown): string {
-  return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim().slice(0, INBOX_REDIRECTED_NAME_MAX).trim() : ''
+  if (typeof value !== 'string') return ''
+  const name = value.replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim()
+  return INBOX_WAKE_AGENT_NAMES.includes(name) ? name : ''
 }
 
 /**
@@ -628,8 +639,8 @@ export function inboxContinuesLine(id: string): string {
 
 /**
  * The longest asking-agent name a redirected wake carries. The server names
- * it from the host (`Claude Code`), and the wake cleans and caps it again,
- * because it goes into another session's prompt.
+ * it from the host (`Claude Code`); the wake takes only a host's own name
+ * (INBOX_WAKE_AGENT_NAMES), because it goes into another session's prompt.
  */
 export const INBOX_REDIRECTED_NAME_MAX = 40
 
@@ -679,13 +690,18 @@ export function inboxWakeText(
     const owner = wakeName(command.tagged.owner) || 'another agent'
     return `Plannotator Inbox: ${subject} (${command.id})\n${INBOX_TAGGED_INSTRUCTION}\n${inboxTaggedLine(owner, command.id)}\n\n${command.body}`
   }
-  const others = Array.isArray(command.also_tagged) ? command.also_tagged.map(wakeName).filter((name) => name !== '').slice(0, 8) : []
+  const others = Array.isArray(command.also_tagged)
+    ? command.also_tagged
+        .filter((name) => typeof name === 'string' && name.trim() !== '')
+        .map((name) => wakeName(name) || 'another agent')
+        .slice(0, 8)
+    : []
   const also = others.length > 0 ? `\n${inboxAlsoTaggedLine(others)}` : ''
   const instruction =
     command.type === 'message' ? (command.new_thread === true ? INBOX_NEW_THREAD_INSTRUCTION : INBOX_MESSAGE_INSTRUCTION) : INBOX_WAKE_INSTRUCTION
   const asker =
-    command.type !== 'message' && typeof command.redirected_from === 'string'
-      ? command.redirected_from.replace(/[\u0000-\u001f\u007f-\u009f\s]+/g, ' ').trim().slice(0, INBOX_REDIRECTED_NAME_MAX).trim()
+    command.type !== 'message' && typeof command.redirected_from === 'string' && command.redirected_from.trim() !== ''
+      ? wakeName(command.redirected_from) || 'agent'
       : ''
   const redirected = asker
     ? `\n${inboxRedirectedLine(asker, command.id)}`

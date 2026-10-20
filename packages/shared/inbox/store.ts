@@ -982,6 +982,15 @@ export class InboxStore {
     const recipients = lastReal.author.kind === "person" && hasTags(lastReal) ? this.recipientsOf(lastReal) : null;
     const taggedChecked = (list: InboxSentRecipient[]): string | null => {
       const awaited = list.filter((r) => r.wakes || r.owner);
+      // No owner and nothing that wakes (only agents that read the Inbox through MCP):
+      // Sent until one of them takes it (its wait_for_reply) or reads the thread.
+      if (awaited.length === 0) {
+        const taken = (lastReal.tags ?? [])
+          .map((t) => t.delivery?.at ?? t.read_at ?? null)
+          .filter((at): at is string => at !== null)
+          .sort();
+        return taken[0] ?? null;
+      }
       if (awaited.some((r) => r.delivered_at === null)) return null;
       return awaited.reduce<string | null>((latest, r) => (latest === null || r.delivered_at! > latest ? r.delivered_at : latest), null) ?? lastReal.created_at;
     };

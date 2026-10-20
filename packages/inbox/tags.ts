@@ -250,3 +250,26 @@ export function sentRecipientsWords(recipients: readonly { host: string | null; 
   if (saved.length > 0 && queued.length === 0) parts.push(`${namesList(saved)} not woken`);
   return parts.join(' · ');
 }
+
+/**
+ * The tags one Send carries, and the reply they ride: every `@` tag in the
+ * words and in every comment the Send carries, once each, on the LAST reply
+ * only (the one that carries the words). So a tag in a comment on an earlier
+ * target's file still sends the whole reply to that agent, and an agent
+ * tagged twice (a comment and the words) gets one reply and one wake. The
+ * last reply's own owner is never tagged (it is handed the reply anyway).
+ */
+export function sendTagsByTarget(
+  targets: readonly { id: string; owner: string | null }[],
+  wordTags: readonly string[],
+  commentTags: ReadonlyMap<string, readonly string[]>,
+  options: readonly TagOption[],
+): Map<string, TagToSend[]> {
+  const out = new Map<string, TagToSend[]>();
+  for (const t of targets) out.set(t.id, []);
+  const last = targets.at(-1);
+  if (!last) return out;
+  const ids = [...wordTags, ...targets.flatMap((t) => commentTags.get(t.id) ?? [])];
+  out.set(last.id, tagsToSend(ids, options, last.owner));
+  return out;
+}

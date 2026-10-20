@@ -51,9 +51,9 @@ import { ChangedNotice, ReplacedQuestionCard, ReplacesLine, StaleGuard, replaced
 import { InboxComposerField } from './ComposerField';
 import { SkillsLine } from './SkillsLine';
 import { paintSkillReferences } from '../skillHighlight';
-import { paintTagReferences } from '../tagHighlight';
+import { paintTagReferences, type TagMarkPlace } from '../tagHighlight';
 import { TagNotes, TagStack, useTagConnections, useTaggable } from './TagPicker';
-import { messageTags, participantsWords, tagDeliveryLine, tagName, tagOptions, tagPeople, tagsToSend, threadParticipants, type TagOption } from '../tags';
+import { messageTags, participantsWords, sendTagsByTarget, tagDeliveryLine, tagName, tagOptions, tagPeople, threadParticipants, type TagOption } from '../tags';
 import type { MentionSource } from '@plannotator/ui/utils/mentions';
 import { TAG_TOKEN_CLASS } from './ComposerField';
 import { HostMark } from '../icons';
@@ -375,11 +375,19 @@ export function MessageBody({
     return paintSkillReferences(message.id, body, skills.skills);
   }, [message.id, skills]);
   // The agents the reply tags are painted too (approval "inbox-tag-agents"), from the labels it carries.
-  const tagLabels = (message.author.kind === 'person' ? (message.tags ?? []) : []).map((t) => t.label ?? '').filter(Boolean).join('\u0000');
+  const sentTags = message.author.kind === 'person' ? (message.tags ?? []) : [];
+  const tagLabels = sentTags.map((t) => t.label ?? '').filter(Boolean).join('\u0000');
+  // Each token's chip carries its agent's mark over the `@` (the approved shot 5), drawn in a layer of our own.
+  const tagHosts = new Map(sentTags.filter((t) => t.label).map((t) => [t.label!, t.host]));
+  const tagLayerRef = useRef<HTMLDivElement>(null);
+  const [tagMarks, setTagMarks] = useState<TagMarkPlace[]>([]);
   useEffect(() => {
     const body = bodyRef.current;
     if (!body || !tagLabels) return;
-    return paintTagReferences(`${message.id}:tags`, body, tagLabels.split('\u0000'));
+    return paintTagReferences(`${message.id}:tags`, body, tagLabels.split('\u0000'), {
+      layer: tagLayerRef.current,
+      onMarks: (next) => setTagMarks((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next)),
+    });
   }, [message.id, tagLabels]);
   // A link to a file this message attached opens it beside the thread; any
   // other local link is inert text (links.ts). Kept stable across renders,
@@ -530,6 +538,15 @@ export function MessageBody({
         renderQuestionBelowPrompt={renderReplacesLine ? belowPrompt : undefined}
       />
       {skills && <SkillsLine split={skills} />}
+      {tagLabels && (
+        <div className="ib-tg-marks" ref={tagLayerRef} aria-hidden="true" data-tag-marks="">
+          {tagMarks.map((mark, index) => (
+            <span key={index} className="ib-tg-mark" style={{ left: mark.left, top: mark.top, width: mark.size, height: mark.size }}>
+              <HostMark host={tagHosts.get(mark.label) ?? null} />
+            </span>
+          ))}
+        </div>
+      )}
       {fallback && createPortal(<ImageLightbox src={fallback.src} alt={fallback.alt} onClose={() => setFallback(null)} />, document.body)}
     </div>
   );
@@ -1742,13 +1759,23 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
         return;
       }
       const lastId = targets.at(-1)!.message.id;
+      // Every tag of this Send (the words' and every carried comment's), once each, on the last reply.
+      const sendTags = sendTagsByTarget(
+        targets.map((t) => ({ id: t.message.id, owner: t.message.author.kind === 'agent' ? (t.message.author.session ?? null) : null })),
+        taggedIds,
+        new Map(targets.map((t) => [t.message.id, (carried.get(t.message.id) ?? []).flatMap((r) => commentTags(r))])),
+        tagOpts,
+      );
       if (!sendKeys.current) sendKeys.current = new Map();
       for (const t of targets) if (!sendKeys.current.has(t.message.id)) sendKeys.current.set(t.message.id, crypto.randomUUID());
       // A retry whose words, files or annotations changed: each reply carrying them is a new one.
       const contents = new Map(
         targets.map((t) => [
           t.message.id,
-          JSON.stringify([t.message.id === lastId ? [words, uploads] : [], (carried.get(t.message.id) ?? []).map((r) => [r.id, r.updated_at])]),
+          JSON.stringify([
+            t.message.id === lastId ? [words, uploads, sendTags.get(lastId) ?? []] : [],
+            (carried.get(t.message.id) ?? []).map((r) => [r.id, r.updated_at]),
+          ]),
         ]),
       );
       if (sendContents.current) {
@@ -1765,10 +1792,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
         const annotationsFeedback = own.length > 0 ? await buildFeedback(own) : '';
         const skills = await inboxSkillsBlock([last ? words : '', ...annotationSkillTexts(own)], INBOX_REPLY_SKILL_AUDIENCE);
         const feedback = withSkillsBlock(annotationsFeedback, skills);
-        // The agents this reply tags: the words' `@` tags, and the tags in the comments it carries
-        // (a tag in a file comment sends the whole reply to that agent). Never the reply's own owner.
-        const owner = target.message.author.kind === 'agent' ? (target.message.author.session ?? null) : null;
-        const tags = tagsToSend([...(last ? taggedIds : []), ...own.flatMap((r) => commentTags(r))], tagOpts, owner);
+        // The agents tagged anywhere in this Send ride the last reply (a tag in a file comment sends the whole reply).
+        const tags = sendTags.get(target.message.id) ?? [];
         await inboxApi.reply(target.message.id, {
           idempotency_key: sendKeys.current.get(target.message.id) ?? crypto.randomUUID(),
           words: last ? words : '',

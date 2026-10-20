@@ -917,6 +917,9 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
         const release = holder ? context.presence?.hold(holder) : undefined;
         try {
           const single = threadOf(store, input);
+          const caller = input.agent_session?.trim() || null;
+          // The threads the person tagged the caller in (until it took that reply), read once for the call.
+          const taggedThreads = new Set(caller ? store.taggedThreadsOf(caller) : []);
           let threadIds: string[];
           if (single) {
             threadIds = [single];
@@ -928,9 +931,8 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
               .filter((t) => t.resolved_at === null || t.agent_after_archive === true)
               .map((t) => t.thread_id);
             // A thread the person tagged this session in, wherever it is, until it took that reply.
-            for (const id of store.taggedThreadsOf(session)) if (!threadIds.includes(id)) threadIds.push(id);
+            for (const id of taggedThreads) if (!threadIds.includes(id)) threadIds.push(id);
           }
-          const caller = input.agent_session?.trim() || null;
           const thresholds = new Map(threadIds.map((id) => [id, input.cursor ?? lastAgentCursor(store, id, caller)]));
           // A New message (step 8) belongs to the session the person picked: it
           // never answers another session's wait.
@@ -940,8 +942,7 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
             caller
               ? threadIds.filter(
                   (id) =>
-                    !(store.thread(id)?.messages ?? []).some((m) => m.author.kind === "agent" && m.author.session === caller) &&
-                    store.taggedThreadsOf(caller).includes(id),
+                    taggedThreads.has(id) && !(store.thread(id)?.messages ?? []).some((m) => m.author.kind === "agent" && m.author.session === caller),
                 )
               : [],
           );

@@ -46,7 +46,7 @@ import {
   INBOX_APP_ID,
   INBOX_SOUND_DEFAULT_VOLUME,
   INBOX_TEXT_SIZE_DEFAULT,
-  inboxAgentName,
+  INBOX_HOST_NAMES,
   isInboxId,
   isInboxSoundVolume,
   isInboxTextSize,
@@ -379,6 +379,8 @@ const ERROR_STATUS: Record<string, number> = {
   send_now_unavailable: 409,
   // Tags: a live session whose Plannotator is too old to word a tag truthfully.
   tag_needs_update: 409,
+  // Tags: the session is known, but as another agent than the tag says.
+  tag_host_mismatch: 409,
   // Compose: a new thread the person starts (packages/server/inbox-compose.ts).
   already_delivered: 409,
   not_addressed: 422,
@@ -1353,8 +1355,13 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     const parent = reply.reply_to ? store.message(reply.reply_to) : null;
     return parent?.author.kind === "agent" ? parent.author.session : null;
   };
-  /** An agent named from its host only (`Claude Code`), never from a name it gave itself: these go into another session's prompt. */
-  const hostAgentName = (host: string | null | undefined): string => (host ? inboxAgentName({ kind: "agent", host, name: null }) : "another agent");
+  /**
+   * An agent named from a known host only (`Claude Code`), never from a name
+   * or a host string it chose itself: these go into another session's
+   * prompt. Anything else is "another agent" (`fallback`).
+   */
+  const hostAgentName = (host: string | null | undefined, fallback = "another agent"): string =>
+    host && Object.hasOwn(INBOX_HOST_NAMES, host) ? INBOX_HOST_NAMES[host]! : fallback;
   /**
    * `sendNow`: the polling connection said it can deliver into a running turn;
    * only then does a Send now reply carry `now`. `session`: the polling
@@ -1387,11 +1394,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     // Named from the host (`Claude Code`), never from the name the agent gave
     // itself: this line goes into another session's prompt.
     const redirected =
-      asked && asked.author.kind === "agent" && asked.author.session !== reply.to!.session
-        ? asked.author.host
-          ? inboxAgentName({ kind: "agent", host: asked.author.host, name: null })
-          : "agent"
-        : null;
+      asked && asked.author.kind === "agent" && asked.author.session !== reply.to!.session ? hostAgentName(asked.author.host, "agent") : null;
     // More words in a thread the person started, handed to a session that has
     // seen nothing of it (the person moved them there): read the thread first.
     const root = store.message(reply.thread_id);

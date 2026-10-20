@@ -421,7 +421,8 @@ export function createInboxLiveSessions(options: {
    * names a live session whose connection understands tags (woken), or an MCP
    * agent the Inbox knows (not woken), in any project. Refused before anything
    * is written: a live session on an older Plannotator (`tag_needs_update`),
-   * and one that is neither (`session_not_live`).
+   * a session the Inbox knows under another host than the tag says
+   * (`tag_host_mismatch`), and one that is neither (`session_not_live`).
    */
   const tagTargets = (value: unknown): InboxTag[] => {
     if (!Array.isArray(value)) throw new InboxError("validation_error", "tags: a list of { host, session }.", { field: "tags" });
@@ -429,6 +430,7 @@ export function createInboxLiveSessions(options: {
     const out: InboxTag[] = [];
     const old: string[] = [];
     const missing: string[] = [];
+    const mismatched: string[] = [];
     let agents: InboxMcpAgent[] | null = null;
     for (const item of value) {
       if (!item || typeof item !== "object" || Array.isArray(item)) throw new InboxError("validation_error", "tags: each one { host, session }.", { field: "tags" });
@@ -449,13 +451,23 @@ export function createInboxLiveSessions(options: {
         out.push({ host: agent.host, session, ...(agent.name ? { name: agent.name } : {}), ...labeled, wakes: false });
         continue;
       }
-      missing.push(session);
+      // Known, but as another agent than the tag names: say that, not "not live".
+      const known = (entry && isLive(entry)) || agents.some((candidate) => candidate.session === session);
+      if (known) mismatched.push(session);
+      else missing.push(session);
     }
     if (old.length > 0) {
       throw new InboxError(
         "tag_needs_update",
         "A session you tagged runs an older Plannotator that can't be tagged: nothing was sent. Update Plannotator there, or remove the tag.",
         { sessions: old },
+      );
+    }
+    if (mismatched.length > 0) {
+      throw new InboxError(
+        "tag_host_mismatch",
+        "A session you tagged is another agent than the tag says: nothing was sent. Remove the tag and pick the session from the list again.",
+        { sessions: mismatched },
       );
     }
     if (missing.length > 0) {
