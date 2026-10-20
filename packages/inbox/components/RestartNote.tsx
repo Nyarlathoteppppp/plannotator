@@ -16,7 +16,7 @@
  * aria-expanded / aria-controls.
  */
 
-import { useId, useRef, useState } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import { copyTextToClipboard } from '@plannotator/ui/utils/clipboard';
 import type { RestartNote } from '../deliveryLine';
 import { Icon } from '../icons';
@@ -70,6 +70,12 @@ function CommandLine({ text, label, announcement }: { text: string; label: strin
   );
 }
 
+/** The note's text with `/reload-plugins` drawn as code, as the steps draw it (and never broken mid-word). */
+function withCommandCode(text: string): ReactNode {
+  const parts = text.split('/reload-plugins');
+  return parts.flatMap((part, i) => (i === 0 ? [part] : [<code key={i}>/reload-plugins</code>, part]));
+}
+
 /** The line under the reply: why there is no Send now, and how to bring it back. */
 export function RestartLine({ note, name }: { note: RestartNote; name: string }) {
   const [open, setOpen] = useState(false);
@@ -81,7 +87,7 @@ export function RestartLine({ note, name }: { note: RestartNote; name: string })
       <span className="ib-rw-note" data-restart-note={note.fix}>
         <Icon name="refresh" />
         <span>
-          {note.text}
+          {withCommandCode(note.text)}
           <button type="button" className="ib-rw-lnk" aria-expanded={open} aria-controls={stepsId} data-restart-toggle="" onClick={() => setOpen((was) => !was)}>
             <span>{open ? 'Hide steps' : updating ? 'How to update' : 'How to reload'}</span>
             <Icon name="chevD" className="ib-rw-chev" />

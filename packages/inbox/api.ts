@@ -72,7 +72,7 @@ export interface ListModel {
   update: InboxHealth['update'];
   /** This Inbox started on a newer version than the one before it: "What's new in X" for this run. Absent from an older Inbox. */
   updated?: string | null;
-  /** Claude Code sessions a restart would bring up to date: the sidebar's "Reload Claude Code N". Absent from an older Inbox. */
+  /** Claude Code sessions a /reload-plugins would bring up to date: the sidebar's "Reload Claude Code N". Absent from an older Inbox. */
   restart_claude_code?: number;
   notice: string | null;
   projects: ProjectFolder[];

@@ -13,7 +13,7 @@
  * person replies in the window. What is proved: the line under the reply
  * ("Steps"), its "How to reload" disclosure (`/reload-plugins` first, `/exit`
  * and the resume command as the fallback) and Copy; the sidebar's "Reload
- * Claude Code plugin 3" and Settings → Agents' "Open sessions", two of them in
+ * Claude Code 3" and Settings → Agents' "Open sessions", two of them in
  * one folder, which the sub-line says each need their own `/reload-plugins`; the row going away by
  * itself once the sessions run the installed plugin; and a phone at 390 px,
  * where nothing overflows.
@@ -223,6 +223,8 @@ test('a working Claude Code on an older plugin: the reason under the reply, then
   await expect(line).toContainText('Queued · Claude Code is working; it gets this when its turn ends.');
   const note = line.locator('[data-restart-note]');
   await expect(note).toContainText('No Send now here: this Claude Code runs an older Plannotator plugin (0.28.23; 0.28.25 is installed). Type /reload-plugins in it to get Send now.');
+  await expect(note.locator('code')).toHaveText('/reload-plugins');
+  await expect(note.locator('code')).toHaveCSS('white-space', 'nowrap');
   await expect(pane.locator('[data-send-now]')).toHaveCount(0);
   const toggle = note.locator('[data-restart-toggle]');
   await expect(toggle).toHaveAccessibleName('How to reload');
@@ -269,8 +271,9 @@ test('the sidebar: "Reload Claude Code 3" under the What\'s new spot opens Setti
   await expect(sessions.locator(`[data-session-row="${BILLING_SESSION_2}"]`)).toContainText('idle · plugin 0.28.23');
   await expect(sessions.locator(`[data-session-row="${BILLING_SESSION}"]`)).toContainText('working · plugin 0.28.23');
   // Two billing-api sessions: each Copy restart names when its session started, so they are told apart.
-  await expect(sessions.getByRole('button', { name: /^Copy the command that restarts the billing-api session started / })).toHaveCount(2);
-  await expect(sessions.getByRole('button', { name: 'Copy the command that restarts the billing-api session started 9:14 AM' })).toBeVisible();
+  await expect(sessions.getByRole('button', { name: /^Copy restart: the command that restarts the billing-api session started / })).toHaveCount(2);
+  await expect(sessions.getByRole('button', { name: 'Copy restart: the command that restarts the billing-api session started 9:14 AM' })).toBeVisible();
+  await expect(sessions.locator('[data-restart-same-folder]')).toHaveText(' Sessions in the same folder (billing-api) each need their own /reload-plugins; tell them apart by when they started.');
   await shot(page, '2-agents-desktop');
 });
 

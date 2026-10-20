@@ -45,13 +45,11 @@ function sessionsState(id: InboxToolHostId, sessions: InboxHostSessions | undefi
  * rows tell them apart by "since <time>". The folder's name, or null when no two share one.
  */
 function sharedFolder(stale: readonly InboxOpenSession[]): string | null {
-  const seen = new Map<string, number>();
+  const seen = new Set<string>();
   for (const s of stale) {
-    const key = s.folder ?? s.project;
-    if (!key) continue;
-    const n = (seen.get(key) ?? 0) + 1;
-    seen.set(key, n);
-    if (n === 2) return stale.find((x) => (x.folder ?? x.project) === key)?.project ?? key;
+    if (!s.folder) continue;
+    if (seen.has(s.folder)) return s.project ?? s.folder;
+    seen.add(s.folder);
   }
   return null;
 }
@@ -87,20 +85,21 @@ function OpenSessions({ id, label, sessions }: { id: InboxToolHostId; label: str
       </>
     );
     const sameFolder = shared && (
-      <span className="ib-rw-same" data-restart-same-folder="">
+      <span data-restart-same-folder="">
         {' '}Sessions in the same folder ({shared}) each need their own <code>/reload-plugins</code>; tell them apart by when they started.
       </span>
     );
     sub = updating ? (
       <>
         The installed plugin{sessions.installed ? ` (${sessions.installed})` : ''} is older than this Inbox, so reloading alone loads it again. Update it, then type{' '}
-        <code>/reload-plugins</code> in {where}.{sameFolder}{fallback}
+        <code>/reload-plugins</code> in {where}.{sameFolder}
         {sessions.update_command && (
           <span className="ib-rw-cmd" data-restart-update="">
             <code>{sessions.update_command}</code>
             <CopyCommand text={sessions.update_command} label="Copy the command that updates Plannotator's Claude Code plugin" announcement={UPDATE_COPIED_ANNOUNCEMENT} />
           </span>
         )}
+        {fallback}
       </>
     ) : (
       <>
@@ -164,7 +163,7 @@ function SessionRow({ session }: { session: InboxOpenSession }) {
         <span className="ib-rw-sm">{meta}</span>
       </span>
       {session.restart_command && (
-        <CopyCommand text={session.restart_command} short="Copy restart" label={`Copy the command that restarts the ${session.project ?? 'Claude Code'} session started ${sinceText(session.started_at)}`} />
+        <CopyCommand text={session.restart_command} short="Copy restart" label={`Copy restart: the command that restarts the ${session.project ?? 'Claude Code'} session started ${sinceText(session.started_at)}`} />
       )}
     </div>
   );

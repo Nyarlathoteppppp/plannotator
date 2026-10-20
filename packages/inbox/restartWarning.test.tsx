@@ -178,6 +178,8 @@ test.skipIf(!hasDom)('a busy session on an older plugin: the reason, then "How t
   await openThread();
   await until(() => !!note(), 'the restart note');
   expect(note()!.textContent).toContain('No Send now here: this Claude Code runs an older Plannotator plugin (0.28.23; 0.28.25 is installed). Type /reload-plugins in it to get Send now.');
+  // The command is code, as in the steps, and never breaks mid-word.
+  expect(note()!.querySelector('code')!.textContent).toBe('/reload-plugins');
   expect(!!delivered()!.querySelector('[data-send-now]')).toBe(false);
   const toggle = note()!.querySelector<HTMLButtonElement>('[data-restart-toggle]')!;
   expect(toggle.tagName).toBe('BUTTON');
@@ -271,6 +273,8 @@ test.skipIf(!hasDom)('the sidebar: "Reload Claude Code N", a real button, opens 
   expect(sessions.querySelector('.ib-agsub')!.textContent).toMatch(/^Plugin 0\.28\.25 is installed\. To load it, type \/reload-plugins in (that Claude Code: it keeps|each of [^:]+: each keeps) the session and nothing is interrupted\./);
   expect(sessions.querySelector('.ib-agsub')!.textContent).toContain('still listed after that, type /exit in it and run the command Copy restart gives.');
   expect(sessions.querySelector('.ib-agsub')!.textContent).not.toContain('/restart');
+  // Every listed session is in its own folder here, so no "same folder" line.
+  expect(sessions.querySelector('[data-restart-same-folder]')).toBeNull();
   expect(document.querySelector('[data-agent="claude-code"] .ib-agstate')!.textContent).toMatch(/Connected · \d+ needs? a reload/);
   const mine = sessions.querySelector<HTMLElement>(`[data-session-row="${ids.restart.session}"]`)!;
   expect(mine.textContent).toContain('working · plugin 0.28.23');
