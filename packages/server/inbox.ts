@@ -768,7 +768,22 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     const cards = store.listCards({ projectIds: project ? new Set([project]) : null, columns }).map((card) => store.cardWire(card));
     // An agent's drops the person has not seen, in the project (or everywhere): the Board's "N dropped by an agent".
     const droppedUnseen = store.listCards({ projectIds: project ? new Set([project]) : null, columns: new Set(["dropped"]) }).filter(isInboxCardDropUnseen).length;
-    return { serverSession, cursor: store.cursor(), cards, dropped_unseen: droppedUnseen };
+    // The Board page (step 2): each linked thread's list row (subject, section, last time) and each card's
+    // project, so the open card names them without reading every thread. Additive.
+    const threads: Record<string, InboxListRow> = {};
+    const projects: Record<string, { id: string; name: string; root: string }> = {};
+    for (const card of cards) {
+      for (const id of card.threads) {
+        if (threads[id]) continue;
+        const row = store.listRow(id);
+        if (row) threads[id] = row;
+      }
+      if (!projects[card.project_id]) {
+        const known = store.project(card.project_id);
+        if (known) projects[known.id] = { id: known.id, name: known.name, root: known.root };
+      }
+    }
+    return { serverSession, cursor: store.cursor(), cards, dropped_unseen: droppedUnseen, threads, projects };
   };
 
   /**

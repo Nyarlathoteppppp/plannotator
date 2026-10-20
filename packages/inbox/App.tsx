@@ -90,6 +90,10 @@ import { useComposeSessions } from './compose/useComposeSessions';
 import { composeActions, composeTargets, hostLabel, type ComposeAction } from './compose/model';
 import type { DraftView } from './api';
 import { inboxTabCount, useTabCount } from './tabCount';
+import { BoardListPage, BoardPage, CardDialog, type BoardActions } from './components/Board';
+import { askTarget, askWhereText, boardOf, type BoardView } from './board';
+import { INBOX_CARD_COLUMN_LABELS, type InboxCardColumn, type InboxCardWire } from '@plannotator/core/inbox-types';
+import type { CardMove, CardsModel } from './api';
 
 // The Inbox has no /api/config and no browser-agent tools: settings stay in
 // the page's own cookies, except the theme, which goes to config.json `theme`
@@ -141,7 +145,11 @@ const WHATS_NEW_RETRIES = 15;
 const WHATS_NEW_RETRY_MS = 1000;
 
 interface Route {
-  page: 'inbox' | 'settings' | 'whats-new' | 'drafts';
+  page: 'inbox' | 'settings' | 'whats-new' | 'drafts' | 'board';
+  /** The Board's page (`#board`, `#board=shipped`, `#board=icebox`; approval "inbox-board"). */
+  board?: BoardView;
+  /** The card open over the Board (`&card=crd_…`). */
+  card?: string | null;
   /** The release whose notes the What's new page shows (`#whats-new=0.28.12`). */
   version?: string | null;
   project: string | null;
@@ -176,6 +184,10 @@ function routeOf(fullHash: string): Route {
   const params = new URLSearchParams(hash);
   if (params.has('whats-new')) return { page: 'whats-new', project: null, thread: null, version: params.get('whats-new') };
   if (params.has('drafts')) return { page: 'drafts', project: null, thread: null };
+  if (params.has('board')) {
+    const view = params.get('board');
+    return { page: 'board', project: null, thread: null, board: view === 'shipped' || view === 'icebox' ? view : 'live', card: params.get('card') };
+  }
   const thread = params.get('thread');
   const fileId = thread ? params.get('file') : null;
   return {
@@ -194,6 +206,10 @@ function hashOf(route: Route): string {
   if (route.page === 'settings') hash = settingsHash({ section: route.section ?? null, pair: route.pair });
   else if (route.page === 'whats-new') hash = new URLSearchParams({ 'whats-new': route.version ?? '' }).toString();
   else if (route.page === 'drafts') hash = 'drafts';
+  else if (route.page === 'board') {
+    hash = route.board === 'shipped' || route.board === 'icebox' ? `board=${route.board}` : 'board';
+    if (route.card) hash += `&card=${encodeURIComponent(route.card)}`;
+  }
   else {
     const params = new URLSearchParams();
     if (route.project) params.set('project', route.project);
@@ -701,6 +717,55 @@ function Inbox() {
     return () => clearInterval(timer);
   }, [route.page, refreshDrafts]);
 
+  // The Board (approval "inbox-board", step 2): every card, read at start (the sidebar's Board count), again when a
+  // card line arrives on the event stream, and while the Board is open when anything moves (its threads' rows).
+  const [cards, setCards] = useState<CardsModel | null>(null);
+  const [cardsError, setCardsError] = useState<string | null>(null);
+  const [cardBusy, setCardBusy] = useState(false);
+  const refreshCards = useCallback(async () => {
+    try {
+      const next = await inboxApi.cards();
+      setCards(next);
+      setCardsError(null);
+      return next;
+    } catch (cause) {
+      setCardsError(cause instanceof Error ? cause.message : String(cause));
+      return null;
+    }
+  }, []);
+  useEffect(() => {
+    void refreshCards();
+  }, [refreshCards]);
+  const cardsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleCards = useCallback(() => {
+    if (cardsTimer.current) clearTimeout(cardsTimer.current);
+    cardsTimer.current = setTimeout(() => {
+      cardsTimer.current = null;
+      void refreshCards();
+    }, 80);
+  }, [refreshCards]);
+  useEffect(() => () => {
+    if (cardsTimer.current) clearTimeout(cardsTimer.current);
+  }, []);
+  // Each card's age ("2d ago") follows the clock while the Board is open.
+  const [boardNow, setBoardNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (route.page !== 'board') return;
+    setBoardNow(Date.now());
+    void refreshCards();
+    const timer = setInterval(() => setBoardNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, [route.page, route.board, refreshCards]);
+  // Opening Dropped (the Icebox page) is the person looking at an agent's drops: they leave "N dropped by an agent".
+  const unseenDrops = cards ? boardOf(cards.cards).droppedByAgent.length : 0;
+  useEffect(() => {
+    if (route.page !== 'board' || route.board !== 'icebox' || unseenDrops === 0) return;
+    void inboxApi
+      .cardDropsSeen()
+      .then(() => refreshCards())
+      .catch(() => {});
+  }, [route.page, route.board, unseenDrops, refreshCards]);
+
   /** Read the agents; while `plannotator inbox` is still connecting them, read again until it is done. */
   const refreshAgents = useCallback(async () => {
     try {
@@ -764,6 +829,8 @@ function Inbox() {
       unsubscribe = subscribeInboxEvents(first.cursor, {
         onRecord: (event) => {
           observeEvent(event);
+          // A card line, or anything while the Board is open (a linked thread's row may have moved).
+          if (event?.kind === 'card' || routeRef.current.page === 'board') scheduleCards();
           if (timer) clearTimeout(timer);
           timer = setTimeout(() => {
             void refreshList(false).then((next) => next && flushNotifications(next));
@@ -795,7 +862,7 @@ function Inbox() {
       if (timer) clearTimeout(timer);
       if (deliveriesTimer) clearTimeout(deliveriesTimer);
     };
-  }, [refreshList, refreshSettings, refreshThread, observeEvent, flushNotifications, setNotifyReach, windowReport, reportWindow]);
+  }, [refreshList, refreshSettings, refreshThread, observeEvent, flushNotifications, setNotifyReach, windowReport, reportWindow, scheduleCards]);
 
   // Opening a thread: read it, record the look, and update its row in place.
   // While any thread is open the list holds still (settle.ts): the look
@@ -1261,6 +1328,47 @@ function Inbox() {
   useEffect(() => () => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
+
+  // ── The Board's moves (approval "inbox-board"): the person's only. ──
+  /** One move on a card; the card on screen takes the answer at once, the rest follows the next read. */
+  const moveCard = async (card: InboxCardWire, move: CardMove): Promise<InboxCardWire | null> => {
+    setCardBusy(true);
+    try {
+      const { card: next } = await inboxApi.moveCard(card.id, move);
+      setCards((current) => (current ? { ...current, cards: current.cards.map((c) => (c.id === next.id ? next : c)) } : current));
+      void refreshCards();
+      return next;
+    } catch (cause) {
+      showToast({ icon: 'warn', lead: cause instanceof Error ? cause.message : 'The card did not change.', wrap: true });
+      return null;
+    } finally {
+      setCardBusy(false);
+    }
+  };
+  const restoreCard = async (card: InboxCardWire) => {
+    const next = await moveCard(card, { op: 'restore' });
+    if (next) showToast({ icon: 'check', lead: `Back in ${INBOX_CARD_COLUMN_LABELS[next.column]}`, detail: `“${card.title}”` }, 4200);
+  };
+  const iceboxCard = async (card: InboxCardWire) => {
+    const next = await moveCard(card, { op: 'icebox' });
+    if (next) showToast({ icon: 'check', lead: 'Paused', detail: `“${card.title}” is in the Icebox`, onUndo: () => void restoreCard(next) });
+  };
+  const dropCard = async (card: InboxCardWire, reason: string) => {
+    const next = await moveCard(card, reason ? { op: 'drop', reason } : { op: 'drop' });
+    if (next) showToast({ icon: 'archive', lead: 'Dropped', detail: `“${card.title}”`, onUndo: () => void restoreCard(next) });
+  };
+  const moveCardTo = async (card: InboxCardWire, column: InboxCardColumn) => {
+    const next = await moveCard(card, { op: 'move', column });
+    if (next) showToast({ icon: 'check', lead: `Moved to ${INBOX_CARD_COLUMN_LABELS[column]}`, detail: `“${card.title}”` }, 4200);
+  };
+  const dropsSeen = async () => {
+    try {
+      await inboxApi.cardDropsSeen();
+    } catch (cause) {
+      showToast({ icon: 'warn', lead: cause instanceof Error ? cause.message : 'Not saved.', wrap: true });
+    }
+    void refreshCards();
+  };
 
   /**
    * Mark read, or move it back (the pressed button, `E` again, Undo). The
@@ -1897,6 +2005,15 @@ function Inbox() {
     return folder ? { id: folder.id, root: folder.root, name: folder.name } : thread && route.thread ? { id: thread.project.id, root: thread.project.root, name: thread.project.name } : null;
   })();
 
+  // The open card (`#board…&card=crd_…`), and where "Ask where this is" would go.
+  const openCard = route.page === 'board' && route.card ? (cards?.cards.find((c) => c.id === route.card) ?? null) : null;
+  const { model: cardSessions } = useComposeSessions(openCard !== null);
+  const askSession = openCard ? askTarget(openCard, cardSessions?.projects) : null;
+  const closeCard = () => {
+    const next = { ...routeRef.current, card: null };
+    if (!backTo(hashOf(next))) writeRoute(next);
+  };
+
   let main: ReactNode;
   if (route.page === 'settings') {
     main = (
@@ -1980,6 +2097,30 @@ function Inbox() {
         onCompose={(opener) => openCompose({}, opener)}
       />
     );
+  } else if (route.page === 'board') {
+    const boardActions: BoardActions = {
+      onOpenCard: (card) => go({ page: 'board', project: null, thread: null, board: route.board ?? 'live', card: card.id }),
+      onRestore: (card) => void restoreCard(card),
+      onDropsSeen: () => void dropsSeen(),
+      onView: (view) => go({ page: 'board', project: null, thread: null, board: view, card: null }),
+    };
+    main =
+      route.board === 'shipped' || route.board === 'icebox' ? (
+        <BoardListPage
+          view={route.board}
+          model={cards}
+          error={cardsError}
+          now={boardNow}
+          phone={phone}
+          actions={boardActions}
+          onBack={() => {
+            const live = { page: 'board' as const, project: null, thread: null, board: 'live' as const, card: null };
+            if (!backTo(hashOf(live))) go(live);
+          }}
+        />
+      ) : (
+        <BoardPage model={cards} error={cardsError} now={boardNow} phone={phone} actions={boardActions} />
+      );
   } else if (!latest || !shown) {
     main = <div className="ib-listcol">{loadError && <div className="ib-error" style={{ padding: 22 }}>{loadError}</div>}</div>;
   } else if (firstRun) {
@@ -2144,6 +2285,8 @@ function Inbox() {
             updated={updated}
             onSearch={(opener) => openSearch(opener)}
             onCompose={(opener) => openCompose({}, opener)}
+            onBoard={() => go({ page: 'board', project: null, thread: null, board: 'live', card: null })}
+            boardCount={cards ? boardOf(cards.cards).onYou : 0}
             draftsCount={drafts?.length ?? 0}
             onDrafts={() => go({ page: 'drafts', project: null, thread: null })}
             onInbox={() => go({ page: 'inbox', project: null, thread: null })}
@@ -2214,6 +2357,28 @@ function Inbox() {
           onModel={setAgents}
           onSettings={() => go({ page: 'settings', project: null, thread: null, section: 'agents' })}
           onClosed={() => setAgentNote('shown')}
+        />
+      )}
+      {openCard && (
+        <CardDialog
+          key={openCard.id}
+          card={openCard}
+          model={cards}
+          now={boardNow}
+          canAsk={askSession !== null}
+          busy={cardBusy}
+          onClose={closeCard}
+          onMove={(column) => void moveCardTo(openCard, column)}
+          onIcebox={() => void iceboxCard(openCard)}
+          onDrop={(reason) => void dropCard(openCard, reason)}
+          onRestore={() => void restoreCard(openCard)}
+          onOpenThread={(threadId) => go({ page: 'inbox', project: null, thread: threadId })}
+          onAsk={() => {
+            const session = askSession;
+            const card = openCard;
+            closeCard();
+            openCompose({ session, body: askWhereText(card) });
+          }}
         />
       )}
       {toast && soundDialog !== 'open' && !agentNoteOpen && <InboxToast toast={toast} phone={phone} />}

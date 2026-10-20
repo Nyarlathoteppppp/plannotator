@@ -18,7 +18,7 @@ import { UpdateButton } from './Updates';
 import { openSearchAriaKeys, openSearchHint } from '../search/searchShortcut';
 
 export interface SidebarProps {
-  page: 'inbox' | 'settings' | 'whats-new' | 'drafts';
+  page: 'inbox' | 'settings' | 'whats-new' | 'drafts' | 'board';
   projectId: string | null;
   /** Rows waiting on the person, all projects. */
   inboxCount: number;
@@ -43,6 +43,12 @@ export interface SidebarProps {
   onSearch?: (opener: HTMLElement) => void;
   /** Compose (a new message to a connected agent): the icon button beside Search. Absent: no button. */
   onCompose?: (opener: HTMLElement) => void;
+  /**
+   * The Board (approval "inbox-board"): its row under Inbox, counting the
+   * cards waiting on the person (Your look and Your review). Absent: no row.
+   */
+  onBoard?: () => void;
+  boardCount?: number;
   /** Drafts not sent: the Drafts row shows only while there are some. */
   draftsCount?: number;
   onDrafts?: () => void;
@@ -176,6 +182,23 @@ export function Sidebar(props: SidebarProps) {
         Inbox
         {!firstRun && props.inboxCount > 0 && <span className="ib-n">{formatCount(props.inboxCount)}</span>}
       </button>
+      {props.onBoard && (
+        <button
+          type="button"
+          className={`ib-nav${props.page === 'board' ? ' ib-on' : ''}`}
+          onClick={pick(props.onBoard)}
+          aria-current={props.page === 'board' ? 'page' : undefined}
+          data-board-nav=""
+        >
+          <Icon name="board" />
+          Board
+          {(props.boardCount ?? 0) > 0 && (
+            <span className="ib-n" aria-label={`${props.boardCount} on you`}>
+              {formatCount(props.boardCount ?? 0)}
+            </span>
+          )}
+        </button>
+      )}
       {(props.draftsCount ?? 0) > 0 && props.onDrafts && (
         <button
           type="button"
