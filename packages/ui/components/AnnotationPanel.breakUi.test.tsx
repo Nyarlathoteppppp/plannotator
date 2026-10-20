@@ -18,6 +18,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { AnnotationPanel } from './AnnotationPanel';
 import { AnnotationType, type Annotation, type CodeAnnotation } from '../types';
 import { parseMarkdownToBlocks } from '../utils/parser';
+import { resetIdentityProvider, setIdentityProvider } from '../utils/identity';
 
 const hasDom = typeof document !== 'undefined';
 
@@ -123,6 +124,22 @@ describe('AnnotationPanel worst-case cards', () => {
     expect(time.textContent).toBe('6m');
     // The line still reads as it did.
     expect(c.querySelector('[data-annotation-byline]')!.textContent).toBe(`${LONG_NAME} · 6m`);
+  });
+
+  test.skipIf(!hasDom)('"(me)" sits outside the truncating name, so the ellipsis cannot hide it', async () => {
+    setIdentityProvider({ getIdentity: () => LONG_NAME, isCurrentUser: (a) => a === LONG_NAME });
+    try {
+      const el = await mount([comment('mine', { author: LONG_NAME })]);
+      const c = card(el, 'mine');
+      const author = c.querySelector<HTMLElement>('[data-annotation-author]')!;
+      const me = c.querySelector<HTMLElement>('[data-annotation-me]')!;
+      expect(me.textContent).toBe(' (me)');
+      expect(me.className).toContain('shrink-0');
+      expect(author.contains(me)).toBe(false);
+      expect(c.querySelector('[data-annotation-byline]')!.textContent).toBe(`${LONG_NAME} (me) · 6m`);
+    } finally {
+      resetIdentityProvider();
+    }
   });
 
   test.skipIf(!hasDom)('a right-to-left name is isolated, so the time is not split around it', async () => {

@@ -787,9 +787,10 @@ const CardByline: React.FC<{ author?: string; isMe: boolean; timestamp: number }
       <>
         <HostTitle title={author} cut>
           <span data-annotation-author="true" className="min-w-0 truncate">
-            <bdi>{author}</bdi>{isMe ? ' (me)' : ''}
+            <bdi>{author}</bdi>
           </span>
         </HostTitle>
+        {isMe ? <span data-annotation-me="true" className="shrink-0 whitespace-pre"> (me)</span> : null}
         <span className="shrink-0 whitespace-pre"> · </span>
       </>
     ) : null}
