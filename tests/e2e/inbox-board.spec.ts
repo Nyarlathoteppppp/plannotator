@@ -5,8 +5,10 @@
  * and long "You:" lines, the Icebox, Dropped), and an agent drops cards live
  * through `plannotator inbox mcp`'s `card` tool (scripts/inbox-sim.ts):
  *
- *  - the five lanes and the header at 1440, light and dark; no lane wider
- *    than the window, no text spilling out of a card;
+ *  - the five lanes and the header at 1440 and 1280, light and dark; each
+ *    card's title and line wrap and clamp at two lines, the age on its own
+ *    line; the whole text in a component tooltip only while clamped; a lane
+ *    with many cards scrolls on its own;
  *  - "N dropped by an agent" with each reason, Restore in one click, Got it;
  *  - the open card: threads, PRs, Move to, Pause and its Undo;
  *  - the Icebox page with Dropped (opening it clears the notice);
@@ -72,6 +74,29 @@ async function expectNoSpill(page: Page) {
   expect(spill).toEqual([]);
 }
 
+/**
+ * Each card's title and line wrap and clamp at two lines (never cut to one), and its age sits on a line of its
+ * own under them, never beside the words. A long "You:" line shows at least a full line of words.
+ */
+async function expectCardText(page: Page) {
+  const bad = await page.evaluate(() => {
+    const out: string[] = [];
+    for (const card of document.querySelectorAll<HTMLElement>('.ib-bcard')) {
+      for (const part of card.querySelectorAll<HTMLElement>('.ib-bcard-t, .ib-bcard-l')) {
+        const lines = Math.round(part.getBoundingClientRect().height / parseFloat(getComputedStyle(part).lineHeight));
+        if (lines > 2) out.push(`${card.dataset.cardId} ${part.className}: ${lines} lines`);
+        if (getComputedStyle(part).whiteSpace === 'nowrap') out.push(`${card.dataset.cardId} ${part.className}: one line`);
+      }
+      const age = card.querySelector<HTMLElement>('.ib-bcard-age')!.getBoundingClientRect();
+      for (const part of card.querySelectorAll<HTMLElement>('.ib-bcard-t, .ib-bcard-l')) {
+        if (age.top < part.getBoundingClientRect().bottom - 0.5) out.push(`${card.dataset.cardId}: the age beside ${part.className}`);
+      }
+    }
+    return out;
+  });
+  expect(bad).toEqual([]);
+}
+
 test.beforeAll(async () => {
   expect(existsSync(binary), `build the binary first: ${binary}`).toBe(true);
   rmSync(shots, { recursive: true, force: true });
@@ -108,9 +133,7 @@ test('the Board at 1440: five lanes, two lines a card, last-heard ages, no amber
     const portless = page.locator(`.ib-bcard[data-card-id="${world.ids.portless}"]`);
     await expect(portless.locator('.ib-bcard-l')).toHaveText(/^You: Pick a dialog/);
     await expect(portless.locator('[data-card-age]')).toHaveText('4d ago');
-    // A long title and a long "You:" line end in an ellipsis inside the card.
-    const blend = page.locator(`.ib-bcard[data-card-id="${world.ids.blend}"] .ib-bcard-t`);
-    expect(await blend.evaluate((el) => el.scrollWidth > el.clientWidth && getComputedStyle(el).textOverflow === 'ellipsis')).toBe(true);
+    await expectCardText(page);
     await expectNoSpill(page);
     const notice = page.locator('[data-drop-notice]');
     await expect(notice.locator('h2')).toHaveText('3 cards dropped by an agent');
@@ -213,5 +236,51 @@ test('the Icebox page lists Dropped with reasons; opening it is looking, so the 
   await page.goto(`${world.url}#board`);
   await expect(page.locator('.ib-lane-l').first()).toBeVisible();
   await expect(page.locator('[data-drop-notice]')).toHaveCount(0);
+  await context.close();
+});
+
+test('at 1280 the words still read: two lines each, the whole text in a tooltip only while clamped (never a native title)', async ({ browser }) => {
+  for (const scheme of ['light', 'dark'] as const) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2, colorScheme: scheme });
+    const page = await context.newPage();
+    await page.goto(`${world.url}#board`);
+    await expect(page.locator('.ib-lane-l')).toHaveCount(5);
+    await expectCardText(page);
+    await expectNoSpill(page);
+    await shot(page, `board-1280-${scheme}`);
+    if (scheme === 'light') {
+      // No native title on any card.
+      expect(await page.locator('.ib-bcard [title], .ib-bcard[title]').count()).toBe(0);
+      // A clamped title: its whole text in the component tooltip.
+      const blend = page.locator(`.ib-bcard[data-card-id="${world.ids.blend}"]`);
+      expect(await blend.locator('.ib-bcard-t').evaluate((el) => el.scrollHeight > el.clientHeight + 1)).toBe(true);
+      await blend.locator('.ib-bcard-t').hover();
+      await expect(page.locator('[data-pn-tooltip]')).toHaveText('Landing: a third style blend from interfere.com with scroll-faded screenshots, real popovers and stacked guided plans');
+      await page.mouse.move(5, 5);
+      await expect(page.locator('[data-pn-tooltip]')).toHaveCount(0);
+      // A short title that fits: no tooltip.
+      await page.locator(`.ib-bcard[data-card-id="${world.ids.caret}"] .ib-bcard-t`).hover();
+      await page.waitForTimeout(500);
+      await expect(page.locator('[data-pn-tooltip]')).toHaveCount(0);
+    }
+    await context.close();
+  }
+});
+
+test('a lane with many cards scrolls on its own; the page does not', async ({ browser }) => {
+  for (let i = 1; i <= 14; i++) {
+    await world.agent.card({ op: 'create', project_path: world.projects.machine, title: `Follow-up ${i}: split the drag-drop work into smaller pieces so each one lands on its own`, column: 'building', say: `Piece ${i} of 14 is in a lane; the PR follows once the tests are green on the runner` });
+  }
+  const { context, page } = await open(browser, { scheme: 'light' });
+  await page.goto(`${world.url}#board`);
+  const cards = page.locator('[data-lane="building"] .ib-lane-cards');
+  await expect(cards.locator('.ib-bcard')).toHaveCount(17);
+  const box = await cards.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+  expect(box.scroll).toBeGreaterThan(box.client);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1)).toBe(true);
+  await cards.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  await expect(cards.locator('.ib-bcard').last()).toBeInViewport();
+  await expectCardText(page);
+  await shot(page, 'board-1440-many-light');
   await context.close();
 });
