@@ -57,6 +57,7 @@ import {
   inboxToolCallParams,
   inboxToolResultText,
   INBOX_SEND_NOW_POLL_FIELD,
+  INBOX_TAGS_POLL_FIELD,
   inboxSentNowFollowUpText,
   inboxWakeText,
   mcpAnswerOfResponse,
@@ -621,6 +622,8 @@ export class InboxLink {
       ...(this.busy === null ? {} : { busy: this.busy, idle_since: this.idleSince }),
       // Send now: this engine can put a reply into a running turn (`$.session.append`).
       ...((await this.sendNowNow()) ? { [INBOX_SEND_NOW_POLL_FIELD]: true } : {}),
+      // Tags (approval "inbox-tag-agents"): this connection words a reply it was tagged in truthfully.
+      [INBOX_TAGS_POLL_FIELD]: true,
     })
     return response && response.status === 200 ? parseInboxBridgeCommands(response.text) : null
   }

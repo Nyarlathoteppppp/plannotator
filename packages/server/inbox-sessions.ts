@@ -35,9 +35,9 @@
  */
 
 import { homedir } from "node:os";
-import type { InboxProject } from "@plannotator/core/inbox-types";
+import { INBOX_TAGS_MAX, type InboxProject, type InboxTag } from "@plannotator/core/inbox-types";
 import { checkServerSession, INBOX_SERVER_SESSION_MISMATCH_ERROR, serverSessionMismatchBody } from "@plannotator/core/server-session";
-import { INBOX_SEND_NOW_POLL_FIELD, INBOX_SESSION_LIVE_MS } from "@plannotator/shared/inbox/connection";
+import { INBOX_SEND_NOW_POLL_FIELD, INBOX_SESSION_LIVE_MS, INBOX_TAGS_POLL_FIELD } from "@plannotator/shared/inbox/connection";
 import { InboxError } from "@plannotator/shared/inbox/schema";
 import type { InboxStore } from "@plannotator/shared/inbox/store";
 
@@ -81,7 +81,30 @@ interface SeenSession {
   idleSince: number | null;
   /** Its poll said it can deliver into a running turn (`send_now`). */
   sendNow: boolean;
+  /** Its poll said it understands a reply it was tagged in (`tags`): only then can it be tagged. */
+  tags: boolean;
 }
+
+/**
+ * An agent that reads the Inbox through MCP only (approval "inbox-tag-agents",
+ * Q2: any MCP agent may be tagged): it is never woken, and sees a tag the next
+ * time it reads the thread or waits for a reply.
+ */
+export interface InboxMcpAgent {
+  session: string;
+  host: string | null;
+  /** The name it gave itself, if any. */
+  name: string | null;
+  /** Where it last wrote, if it wrote. */
+  project_id: string | null;
+  /** When it last wrote or called an Inbox tool. */
+  last_at: string;
+}
+
+/** How long an MCP agent stays on the tag list after it last wrote or called a tool. */
+export const INBOX_MCP_AGENT_LISTED_MS = 14 * 24 * 60 * 60 * 1000;
+/** The most MCP agents the tag list offers. */
+export const INBOX_MCP_AGENTS_MAX = 30;
 
 /**
  * How long the session that asked may go without a poll before the window
@@ -109,7 +132,7 @@ export function createInboxLiveSessions(options: {
    * asked is not "ended" while it talks to the Inbox); it never makes a
    * session live for New message, which needs a connection that wakes it.
    */
-  const mcpSeen = new Map<string, { lastSeen: number; holding: number }>();
+  const mcpSeen = new Map<string, { lastSeen: number; holding: number; host?: string; name?: string }>();
   const mcpEntry = (session: string) => {
     let entry = mcpSeen.get(session);
     if (!entry) {
@@ -118,9 +141,13 @@ export function createInboxLiveSessions(options: {
     }
     return entry;
   };
-  /** A tool call named this agent session. */
-  const seenOverMcp = (session: string) => {
-    if (session) mcpEntry(session).lastSeen = now();
+  /** A tool call named this agent session (and, when the call said so, its host and name: the tag list's MCP rows). */
+  const seenOverMcp = (session: string, who: { host?: unknown; name?: unknown } = {}) => {
+    if (!session) return;
+    const entry = mcpEntry(session);
+    entry.lastSeen = now();
+    if (typeof who.host === "string" && who.host.trim() && who.host.length <= 64) entry.host = who.host.trim();
+    if (typeof who.name === "string" && who.name.trim() && who.name.length <= 80) entry.name = who.name.trim();
   };
   /** A wait_for_reply for this session is open: present until it answers. */
   const holdOverMcp = (session: string): (() => void) => {
@@ -162,9 +189,10 @@ export function createInboxLiveSessions(options: {
   const pollStarted = async (session: string, host: string, body: Record<string, unknown>): Promise<() => void> => {
     const at = now();
     const root = await rootOf(body.project_path);
-    const entry = sessions.get(session) ?? { host, root, startedAt: finiteMs(body.started_at) ?? at, lastSeen: at, holding: 0, busy: null, idleSince: null, sendNow: false };
+    const entry = sessions.get(session) ?? { host, root, startedAt: finiteMs(body.started_at) ?? at, lastSeen: at, holding: 0, busy: null, idleSince: null, sendNow: false, tags: false };
     entry.host = host;
     entry.sendNow = body[INBOX_SEND_NOW_POLL_FIELD] === true;
+    entry.tags = body[INBOX_TAGS_POLL_FIELD] === true;
     if (root !== null) entry.root = root;
     entry.startedAt = finiteMs(body.started_at) ?? entry.startedAt;
     entry.lastSeen = at;
@@ -266,11 +294,119 @@ export function createInboxLiveSessions(options: {
    * Every live session in any project (compose), with the root its
    * `project_path` resolved to (null when its connection sends none).
    */
-  const allLive = (): { session: string; host: string; root: string | null; startedAt: number; lastSeen: number; busy: boolean | null; idleSince: number | null }[] => {
+  const allLive = (): {
+    session: string;
+    host: string;
+    root: string | null;
+    startedAt: number;
+    lastSeen: number;
+    busy: boolean | null;
+    idleSince: number | null;
+    /** Its connection understands a reply it was tagged in (`tags`). */
+    tags: boolean;
+    sendNow: boolean;
+  }[] => {
     const out = [];
     for (const [session, entry] of sessions) {
       if (!isLive(entry)) continue;
-      out.push({ session, host: entry.host, root: entry.root, startedAt: entry.startedAt, lastSeen: entry.lastSeen, busy: entry.busy, idleSince: entry.busy === false ? entry.idleSince : null });
+      out.push({
+        session,
+        host: entry.host,
+        root: entry.root,
+        startedAt: entry.startedAt,
+        lastSeen: entry.lastSeen,
+        busy: entry.busy,
+        idleSince: entry.busy === false ? entry.idleSince : null,
+        tags: entry.tags,
+        sendNow: entry.sendNow,
+      });
+    }
+    return out;
+  };
+
+  /**
+   * The agents that read the Inbox through MCP only, newest first: every
+   * session whose latest message did not come through a waking connection,
+   * and every session an MCP tool call named with its host or name, within
+   * `INBOX_MCP_AGENT_LISTED_MS`; never a session that polls now (that one is
+   * live and woken).
+   */
+  const mcpAgents = (): InboxMcpAgent[] => {
+    const cutoff = now() - INBOX_MCP_AGENT_LISTED_MS;
+    const out = new Map<string, InboxMcpAgent & { at: number }>();
+    for (const [session, message] of store.latestAgentMessages()) {
+      if (message.wakes === true || message.author.kind !== "agent") continue;
+      const polling = sessions.get(session);
+      if (polling && isLive(polling)) continue;
+      const at = Date.parse(message.created_at);
+      if (!(at >= cutoff)) continue;
+      out.set(session, { session, host: message.author.host ?? null, name: message.author.name ?? null, project_id: message.project_id, last_at: message.created_at, at });
+    }
+    for (const [session, entry] of mcpSeen) {
+      if (entry.lastSeen < cutoff) continue;
+      const polling = sessions.get(session);
+      if (polling && isLive(polling)) continue;
+      const known = out.get(session);
+      if (known) {
+        if (entry.lastSeen > known.at) Object.assign(known, { at: entry.lastSeen, last_at: iso(entry.lastSeen) });
+        known.host ??= entry.host ?? null;
+        known.name ??= entry.name ?? null;
+        continue;
+      }
+      // A session that never wrote is listed only when its calls said who it is.
+      if (!entry.host && !entry.name) continue;
+      out.set(session, { session, host: entry.host ?? null, name: entry.name ?? null, project_id: null, last_at: iso(entry.lastSeen), at: entry.lastSeen });
+    }
+    return [...out.values()]
+      .sort((a, b) => b.at - a.at || a.session.localeCompare(b.session))
+      .slice(0, INBOX_MCP_AGENTS_MAX)
+      .map(({ at: _at, ...agent }) => agent);
+  };
+
+  /**
+   * The reply route's `tags` (approval "inbox-tag-agents"): each `{ host?, session }`
+   * names a live session whose connection understands tags (woken), or an MCP
+   * agent the Inbox knows (not woken), in any project. Refused before anything
+   * is written: a live session on an older Plannotator (`tag_needs_update`),
+   * and one that is neither (`session_not_live`).
+   */
+  const tagTargets = (value: unknown): InboxTag[] => {
+    if (!Array.isArray(value)) throw new InboxError("validation_error", "tags: a list of { host, session }.", { field: "tags" });
+    if (value.length > INBOX_TAGS_MAX) throw new InboxError("validation_error", `tags: at most ${INBOX_TAGS_MAX} sessions.`, { field: "tags" });
+    const out: InboxTag[] = [];
+    const old: string[] = [];
+    const missing: string[] = [];
+    let agents: InboxMcpAgent[] | null = null;
+    for (const item of value) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) throw new InboxError("validation_error", "tags: each one { host, session }.", { field: "tags" });
+      const { host, session, label } = item as Record<string, unknown>;
+      if (typeof session !== "string" || !session) throw new InboxError("validation_error", "tags: each one names a session.", { field: "tags" });
+      // The readable label rides along (the store checks its shape).
+      const labeled = typeof label === "string" ? { label } : {};
+      if (host !== undefined && host !== null && typeof host !== "string") throw new InboxError("validation_error", "tags: host a string.", { field: "tags" });
+      const entry = sessions.get(session);
+      if (entry && isLive(entry) && (host === undefined || host === entry.host)) {
+        if (entry.tags) out.push({ host: entry.host, session, ...labeled, wakes: true });
+        else old.push(session);
+        continue;
+      }
+      agents ??= mcpAgents();
+      const agent = agents.find((candidate) => candidate.session === session && (host === undefined || host === candidate.host));
+      if (agent) {
+        out.push({ host: agent.host, session, ...(agent.name ? { name: agent.name } : {}), ...labeled, wakes: false });
+        continue;
+      }
+      missing.push(session);
+    }
+    if (old.length > 0) {
+      throw new InboxError(
+        "tag_needs_update",
+        "A session you tagged runs an older Plannotator that can't be tagged: nothing was sent. Update Plannotator there, or remove the tag.",
+        { sessions: old },
+      );
+    }
+    if (missing.length > 0) {
+      throw new InboxError("session_not_live", "A session you tagged is not live any more: nothing was sent. Remove the tag, or tag another session.", { sessions: missing });
     }
     return out;
   };
@@ -318,6 +454,11 @@ export function createInboxLiveSessions(options: {
       if (req.method !== "GET") return answer({ error: "Use GET." }, 405);
       const live = liveFor(sessionsMatch[1]!);
       const asker = new URL(req.url).searchParams.get("asker");
+      const recipients = (new URL(req.url).searchParams.get("recipients") ?? "")
+        .split(",")
+        .map((session) => session.trim())
+        .filter((session) => session !== "")
+        .slice(0, INBOX_TAGS_MAX);
       return answer({
         serverSession,
         home: homedir(),
@@ -325,6 +466,8 @@ export function createInboxLiveSessions(options: {
         sessions: live.sessions,
         // `connection` (additive): how that session is connected now, for the line under the person's message ("Queued", "Sending", Send now).
         ...(asker ? { asker: { session: asker, live: askerLive(asker), connection: connectionOf(asker) } } : {}),
+        // `recipients` (additive, "inbox-tag-agents"): how each session a reply tags is connected now, for its own line.
+        ...(recipients.length > 0 ? { recipients: Object.fromEntries(recipients.map((session) => [session, connectionOf(session)])) } : {}),
       });
     }
     const sendNowMatch = /^\/api\/inbox\/messages\/([A-Za-z0-9_]+)\/send-now$/.exec(path);
@@ -338,7 +481,7 @@ export function createInboxLiveSessions(options: {
         throw new InboxError("validation_error", "body: expected a JSON object.");
       }
       if (checkServerSession(body, serverSession) === "mismatch") return answer(serverSessionMismatchBody(INBOX_SERVER_SESSION_MISMATCH_ERROR), 409);
-      return answer({ message: sendNow(sendNowMatch[1]!) });
+      return answer({ message: sendNow(sendNowMatch[1]!, typeof body.session === "string" && body.session ? body.session : null) });
     }
     const messageMatch = /^\/api\/inbox\/threads\/([A-Za-z0-9_]+)\/message$/.exec(path);
     if (!messageMatch) return null;
@@ -370,11 +513,15 @@ export function createInboxLiveSessions(options: {
    * that session's connection does not poll now or cannot deliver into a
    * running turn (`send_now_unavailable`), or once delivered.
    */
-  const sendNow = (messageId: string) => {
+  const sendNow = (messageId: string, session: string | null = null) => {
     const message = store.message(messageId);
     if (!message) throw new InboxError("message_not_found", `No message ${messageId}.`);
-    if (message.delivery) throw new InboxError("already_delivered", "That session already took this.", { delivery: message.delivery });
-    const recipient = store.recipientOf(message);
+    // A tagged session's own line (approval "inbox-tag-agents"): its own Send now.
+    const tag = session && !store.isOwner(message, session) ? (message.tags?.find((t) => t.session === session) ?? null) : null;
+    if (session && !tag && !store.isOwner(message, session)) throw new InboxError("not_addressed", "That session is not one this message goes to.");
+    const delivery = tag ? tag.delivery : message.delivery;
+    if (delivery) throw new InboxError("already_delivered", "That session already took this.", { delivery });
+    const recipient = tag ? { host: tag.host, session: tag.session } : store.recipientOf(message);
     if (!recipient) throw new InboxError("not_addressed", "Only your reply or message to an agent session can be sent now.");
     const connection = connectionOf(recipient.session);
     if (!connection?.send_now) {
@@ -383,8 +530,8 @@ export function createInboxLiveSessions(options: {
         connection ? "This agent's connection cannot take a message mid-turn; it gets it when its turn ends." : "That session is not connected now; it gets this when it is back.",
       );
     }
-    return store.requestDeliverNow(messageId);
+    return store.requestDeliverNow(messageId, tag ? tag.session : null);
   };
 
-  return { pollStarted, stateChanged, liveFor, askerLive, replyTarget, seenOverMcp, holdOverMcp, route, allLive, isSessionLive, composeTarget, connectionOf };
+  return { pollStarted, stateChanged, liveFor, askerLive, replyTarget, seenOverMcp, holdOverMcp, route, allLive, isSessionLive, composeTarget, connectionOf, mcpAgents, tagTargets };
 }

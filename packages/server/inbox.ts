@@ -94,6 +94,7 @@ import {
   INBOX_BRIDGE_POLL_PATH,
   INBOX_MAX_REQUEST_BYTES,
   INBOX_SEND_NOW_POLL_FIELD,
+  INBOX_TAGS_POLL_FIELD,
   type InboxReplyCommand,
 } from "@plannotator/shared/inbox/connection";
 import {
@@ -119,6 +120,7 @@ import { recordInboxAttachments, sweepStaleInboxSendTemps } from "@plannotator/s
 import { inboxBodyForAgent, inboxUploadAttachments, removeInboxAttachmentFiles, removeInboxUploads } from "@plannotator/shared/inbox/uploads";
 import { createInboxLiveSessions } from "./inbox-sessions";
 import { createInboxCompose, INBOX_UPLOAD_SWEEP_MS } from "./inbox-compose";
+import { createInboxTagsRoute } from "./inbox-tags";
 import { createInboxDevices, DOOR_PREFIX } from "./inbox-devices";
 import type { PairingProbes } from "./inbox-pairing-checks";
 import { createInboxRelay } from "./inbox-relay";
@@ -372,6 +374,8 @@ const ERROR_STATUS: Record<string, number> = {
   session_not_live: 409,
   // Send now: the session's connection does not poll now, or cannot deliver into a running turn.
   send_now_unavailable: 409,
+  // Tags: a live session whose Plannotator is too old to word a tag truthfully.
+  tag_needs_update: 409,
   // Compose: a new thread the person starts (packages/server/inbox-compose.ts).
   already_delivered: 409,
   not_addressed: 422,
@@ -1310,8 +1314,34 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     const parent = reply.reply_to ? store.message(reply.reply_to) : null;
     return parent?.author.kind === "agent" ? parent.author.session : null;
   };
-  /** `sendNow`: the polling connection said it can deliver into a running turn; only then does a Send now reply carry `now`. */
-  const replyCommand = (reply: InboxMessage, sendNow = false): InboxReplyCommand => {
+  /** An agent named from its host only (`Claude Code`), never from a name it gave itself: these go into another session's prompt. */
+  const hostAgentName = (host: string | null | undefined): string => (host ? inboxAgentName({ kind: "agent", host, name: null }) : "another agent");
+  /**
+   * `sendNow`: the polling connection said it can deliver into a running turn;
+   * only then does a Send now reply carry `now`. `session`: the polling
+   * session, when the reply may tag it (approval "inbox-tag-agents"): a
+   * session the reply tags gets the tagged wake, and the owner of a reply
+   * that tags others is told who else it went to.
+   */
+  const replyCommand = (reply: InboxMessage, sendNow = false, session: string | null = null): InboxReplyCommand => {
+    const tag = session && !store.isOwner(reply, session) ? (reply.tags?.find((t) => t.session === session) ?? null) : null;
+    if (tag) {
+      return {
+        type: reply.to && !reply.reply_to ? "message" : "reply",
+        id: reply.id,
+        thread_id: reply.thread_id,
+        reply_to: reply.reply_to,
+        subject: store.threadSubject(reply.thread_id),
+        body: inboxBodyForAgent(reply),
+        url: threadPageUrl(baseUrl, reply.thread_id),
+        tagged: { owner: hostAgentName(store.recipientOf(reply)?.host) },
+        ...(tag.deliver_now_at && sendNow ? { now: true } : {}),
+      };
+    }
+    const alsoTagged = (reply.tags ?? []).map((t) => hostAgentName(t.host));
+    return { ...ownerCommand(reply, sendNow), ...(alsoTagged.length > 0 ? { also_tagged: alsoTagged } : {}) };
+  };
+  const ownerCommand = (reply: InboxMessage, sendNow: boolean): InboxReplyCommand => {
     // A reply the person sent to another session because the one that asked
     // had ended: the wake says so, naming the agent that asked.
     const asked = reply.to && reply.reply_to ? store.message(reply.reply_to) : null;
@@ -1370,7 +1400,9 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     // Step 8: a polling session is live (New message can reach it) while its poll is held.
     const answered = await live.pollStarted(session, bridgeHost(body), body);
     const sendNow = body[INBOX_SEND_NOW_POLL_FIELD] === true;
-    const commands = () => store.pendingReplies(session).map((reply) => replyCommand(reply, sendNow));
+    // Tags: what this session was only tagged in goes to a connection that words it truthfully.
+    const tags = body[INBOX_TAGS_POLL_FIELD] === true;
+    const commands = () => store.pendingReplies(session, { tags }).map((reply) => replyCommand(reply, sendNow, session));
     const now = commands();
     if (now.length > 0 || waitMs === 0) {
       answered();
@@ -1389,7 +1421,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       };
       const timer = setTimeout(finish, waitMs);
       const unsubscribe = store.subscribe((line) => {
-        if (line.kind === "message" && line.record.author.kind === "person" && store.pendingReplies(session).length > 0) finish();
+        if (line.kind === "message" && line.record.author.kind === "person" && store.pendingReplies(session, { tags }).length > 0) finish();
       });
       req.signal.addEventListener("abort", finish);
     });
@@ -1427,9 +1459,11 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     try {
       const body = (await req.json()) as unknown;
       for (const call of Array.isArray(body) ? body : [body]) {
-        const args = (call as { method?: unknown; params?: { arguments?: { agent_session?: unknown } } } | null)?.params?.arguments;
+        const args = (call as { method?: unknown; params?: { arguments?: { agent_session?: unknown; agent_host?: unknown; agent_name?: unknown } } } | null)?.params
+          ?.arguments;
         if ((call as { method?: unknown } | null)?.method !== "tools/call" || typeof args?.agent_session !== "string") continue;
-        live.seenOverMcp(args.agent_session.trim());
+        // Who it is, when the call says: an MCP agent the person can tag (inbox-tags.ts).
+        live.seenOverMcp(args.agent_session.trim(), { host: args.agent_host, name: args.agent_name });
       }
     } catch {
       // Not JSON: the MCP handler answers it.
@@ -1442,6 +1476,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     serverSession,
     resolveRoot: async (path) => (await projectRoots.resolve(path)).root,
   });
+
+  const tagsRoute = createInboxTagsRoute({ store, serverSession, live, json });
 
   // Compose: a new thread the person starts with a live agent, drafts and uploads (packages/server/inbox-compose.ts).
   const compose = createInboxCompose({
@@ -1900,6 +1936,12 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
             // An unknown message is the store's 404, never "not live".
             const asked = body.to === undefined ? undefined : store.message(messageId);
             const to = body.to === undefined || !asked ? undefined : live.replyTarget(asked.thread_id, body.to);
+            // The sessions the person tagged with `@` (approval "inbox-tag-agents"): each one live
+            // with a connection that understands tags, or an MCP agent the Inbox knows; any other
+            // is refused before anything is written. A replay answers what it wrote, as it was.
+            const tagKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+            const tags =
+              body.tags === undefined || body.tags === null || (tagKey && store.replyByKey(messageId, tagKey)) ? undefined : live.tagTargets(body.tags);
             // Files the person pasted into the reply box: their uploads become
             // attachments on the reply, exactly as compose's become a thread's.
             // A replay answers the reply it wrote before anything is copied
@@ -1915,6 +1957,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
               result = store.sendReply(messageId, {
                 ...(attachments.length > 0 ? { attachments } : {}),
                 ...(to === undefined ? {} : { to }),
+                ...(tags && tags.length > 0 ? { tags } : {}),
                 words: typeof body.words === "string" ? body.words : undefined,
                 questions: (body.questions as never) ?? [],
                 idempotency_key: body.idempotency_key as string,
@@ -1974,6 +2017,9 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       // Step 8: the live sessions of a thread's project, and New message.
       const newMessage = await live.route(req, path);
       if (newMessage) return newMessage;
+      // Tags (approval "inbox-tag-agents"): who the person can tag with `@` (packages/server/inbox-tags.ts).
+      const taggable = tagsRoute.route(req, path);
+      if (taggable) return taggable;
 
       // #1813: an image a message's body shows, read from wherever it is on this
       // computer outside hidden folders (packages/server/inbox-message-images.ts).

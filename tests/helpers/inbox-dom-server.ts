@@ -47,6 +47,13 @@
  * The Inbox is published over the tailnet by a scripted `tailscale`, and the
  * first line adds `tailnet: { listener, host, login }`: a request to that
  * loopback port with that Host and login is one `tailscale serve` hands over.
+ *
+ * With `tags` (approval "inbox-tag-agents"), the mock's sample threads are
+ * seeded too (tests/helpers/inbox-tag-world.ts): live connections that poll
+ * as the mod, Pi and OpenCode do (one Pi on an older Plannotator, without
+ * the tags capability) and Codex through MCP only; the first line adds
+ * `tags: { ids, sessions }`. `{ "deliver": { session } }` then delivers what
+ * that session is handed, tagged replies included.
  */
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -56,6 +63,7 @@ import type { InboxOpenInLauncher } from "../../packages/server/inbox-open-in";
 import { recordInboxAttachments } from "../../packages/shared/inbox/attachments";
 import { writeUpdateState } from "../../packages/shared/update-check";
 import { isScratchDataDir, refuseRealDataDir } from "./real-data-dir";
+import { seedTagWorld, TAG_SESSIONS } from "./inbox-tag-world";
 
 const [dataDir, projectsDir, countArg, extra] = process.argv.slice(2);
 const withNews = extra === "news";
@@ -326,7 +334,15 @@ for (let i = 0; i < count; i++) {
   });
 }
 const tailnet = openInMode ? { listener: server.tailscale.listenerPort(), host: `macbook.tail0000.ts.net:${server.port}`, login: "ramos@example.com" } : undefined;
-process.stdout.write(`${JSON.stringify({ port: server.port, worlds, ...(tailnet ? { tailnet } : {}) })}\n`);
+const tagWorld = extra === "tags" ? await seedTagWorld(`http://127.0.0.1:${server.port}`, server.token, join(projectsDir, "tags")) : null;
+const tags = tagWorld ? { ids: tagWorld.ids, sessions: TAG_SESSIONS } : undefined;
+process.stdout.write(`${JSON.stringify({ port: server.port, worlds, ...(tailnet ? { tailnet } : {}), ...(tags ? { tags } : {}) })}\n`);
+/** The host a delivery is recorded under: the tag world's own sessions are not all Claude Code. */
+function tagHost(session: string): string {
+  if (session === TAG_SESSIONS.pi || session === TAG_SESSIONS.oldPi) return "pi";
+  if (session === TAG_SESSIONS.opencode) return "opencode";
+  return "claude-code";
+}
 // An agent writing while a test runs.
 void (async () => {
   for await (const line of console) {
@@ -346,7 +362,7 @@ void (async () => {
       continue;
     }
     if (command.deliver) {
-      const ids = store.pendingReplies(command.deliver.session).map((reply) => store.recordDelivery(reply.id, { host: "claude-code", session: command.deliver!.session }).id);
+      const ids = store.pendingReplies(command.deliver.session).map((reply) => store.recordDelivery(reply.id, { host: tagHost(command.deliver!.session), session: command.deliver!.session }).id);
       process.stdout.write(`${JSON.stringify({ delivered: ids })}\n`);
       continue;
     }
@@ -357,6 +373,7 @@ void (async () => {
   }
 })();
 process.on("SIGTERM", () => {
+  void tagWorld?.stop();
   server.stop();
   process.exit(0);
 });

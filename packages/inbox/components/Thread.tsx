@@ -5,7 +5,7 @@ import type { Annotation } from '@plannotator/ui/types';
 import { annotationOwnsHighlight } from '@plannotator/ui/utils/annotationOwnsHighlight';
 import { ImageLightbox } from '@plannotator/ui/components/ImageLightbox';
 import { parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
-import type { InboxListRow, InboxMessageWire, InboxProjectRepo, InboxQuestion, InboxThread, InboxUpload } from '@plannotator/core/inbox-types';
+import type { InboxListRow, InboxMessageWire, InboxProjectRepo, InboxQuestion, InboxSentRecipient, InboxThread, InboxUpload } from '@plannotator/core/inbox-types';
 import type { IndexedQuestion, QuestionAnswer, QuestionStatus } from '@plannotator/core/question-block';
 import { isInboxNote, isInboxTextKind, readInboxAttachmentKind, type InboxAnnotationRecord, type InboxAttachment, type InboxAttachmentState, type InboxInlineImage } from '@plannotator/core/inbox-types';
 import type { LocalLinkResolver } from '@plannotator/ui/components/LocalLinkContext';
@@ -50,6 +50,12 @@ import { ChangedNotice, ReplacedQuestionCard, ReplacesLine, StaleGuard, replaced
 import { InboxComposerField } from './ComposerField';
 import { SkillsLine } from './SkillsLine';
 import { paintSkillReferences } from '../skillHighlight';
+import { paintTagReferences } from '../tagHighlight';
+import { TagNotes, TagStack, useTagConnections, useTaggable } from './TagPicker';
+import { messageTags, participantsWords, tagDeliveryLine, tagName, tagOptions, tagPeople, tagsToSend, threadParticipants, type TagOption } from '../tags';
+import type { MentionSource } from '@plannotator/ui/utils/mentions';
+import { TAG_TOKEN_CLASS } from './ComposerField';
+import { HostMark } from '../icons';
 import { INBOX_REPLY_SKILL_AUDIENCE, annotationSkillTexts, inboxSkillsBlock, withSkillsBlock } from '../skills';
 import { splitInboxSkillsBlock } from '@plannotator/core/skill-reference-block';
 import { Tip } from './Tip';
@@ -203,6 +209,12 @@ function askingSessionOf(thread: InboxThread, options: { skip: boolean; carries:
   const message = (options.carries ? targets.at(-1) : (sending.at(-1) ?? targets.at(-1)))!.message;
   if (message.author.kind !== 'agent' || !message.author.session) return null;
   return { message, session: message.author.session, host: message.author.host ?? '', name: agentName(message.author) };
+}
+
+/** The sessions a comment tags with `@` (ui's `Annotation.mentions`): a tag there sends the whole reply to them. */
+export function commentTags(record: InboxAnnotationRecord): string[] {
+  const mentions = annotationOf(record)?.mentions;
+  return Array.isArray(mentions) ? mentions.filter((id): id is string => typeof id === 'string') : [];
 }
 
 /** One message's text, with its question cards (exported for its DOM test). */
@@ -361,6 +373,13 @@ export function MessageBody({
     if (!body || !skills) return;
     return paintSkillReferences(message.id, body, skills.skills);
   }, [message.id, skills]);
+  // The agents the reply tags are painted too (approval "inbox-tag-agents"), from the labels it carries.
+  const tagLabels = (message.author.kind === 'person' ? (message.tags ?? []) : []).map((t) => t.label ?? '').filter(Boolean).join('\u0000');
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !tagLabels) return;
+    return paintTagReferences(`${message.id}:tags`, body, tagLabels.split('\u0000'));
+  }, [message.id, tagLabels]);
   // A link to a file this message attached opens it beside the thread; any
   // other local link is inert text (links.ts). Kept stable across renders,
   // so raw-HTML blocks do not redraw their links on every pick.
@@ -523,7 +542,7 @@ export interface ThreadPaneProps {
    * store's seq, so a reply the agent was not given still reads as unread),
    * or null.
    */
-  sent: { at: string; checked_at: string | null } | null;
+  sent: { at: string; checked_at: string | null; recipients?: InboxSentRecipient[] } | null;
   /** The thread's questions changed through a pick (the response's questions for that message). */
   onQuestions: (messageId: string, questions: InboxQuestion[]) => void;
   /** Something was written (a Send, resolve): read the thread and the list again. */
@@ -755,8 +774,12 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
   // A paste is said in the thread's polite live region ("Attached pasted-image-….png").
   const replyFiles = useComposeFiles(NO_UPLOADS, { onPasted: (names) => announce(attachedAnnouncement(names)) });
   const replyUploads = replyFiles.uploaded.map((upload) => upload.upload_id);
+  // The sessions the reply box's text tags with `@` (approval "inbox-tag-agents"), as the field reports them.
+  const [taggedIds, setTaggedIds] = useState<readonly string[]>([]);
+  const onTagsChange = useCallback((ids: readonly string[]) => setTaggedIds(ids), []);
   const closeBox = () => {
     setBox({ open: false, text: '' });
+    setTaggedIds([]);
     replyFiles.reset();
   };
   /**
@@ -816,6 +839,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
   // look (the window's `lookSeq`, else the first thread this pane was given),
   // so the "New" marks last until the person leaves the thread.
   const one = thread.messages.length < 2;
+  // The agent sessions this thread involves (approval "inbox-tag-agents"): overlapping marks in the head.
+  const participants = useMemo(() => threadParticipants(thread), [thread]);
   const lookRef = useRef<{ threadId: string; seq: number | null } | null>(null);
   if (!lookRef.current || lookRef.current.threadId !== thread.thread_id) lookRef.current = { threadId: thread.thread_id, seq: lookBoundary(thread) };
   const opened = lookSeq !== undefined ? lookSeq : lookRef.current.seq;
@@ -1078,6 +1103,30 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
   // New message (record 5.x): the project's live sessions, and what the button opened.
   const { model: live, load: loadLive } = useLiveSessions(thread.thread_id, askerToWatch);
   const askerEnded = !resolved && askerHasEnded(asking, live);
+  // Tags (approval "inbox-tag-agents"): who the person can tag with `@`, read while the reply box is open.
+  const taggable = useTaggable(thread.thread_id, (box.open || !!file) && !resolved);
+  const tagOwner = asking?.session ?? taggable?.owner?.session ?? null;
+  const tagOpts: TagOption[] = useMemo(() => tagOptions(taggable, tagOwner, thread.project.id, whenTime), [taggable, tagOwner, thread.project.id]);
+  const composerTags = useMemo(() => ({ options: tagOpts, onChange: onTagsChange }), [tagOpts, onTagsChange]);
+  // The same agents in a file comment's composer (markdown, text and HTML files): a tag there sends the
+  // whole reply to that agent, and the composer says so under the field.
+  const commentMentions = useMemo<MentionSource | undefined>(
+    () =>
+      tagOpts.length === 0
+        ? undefined
+        : {
+            people: tagPeople(tagOpts),
+            kinds: ['agent'],
+            matchDetail: false,
+            tokenClassName: TAG_TOKEN_CLASS,
+            // A session on an older Plannotator cannot be tagged: nothing is inserted (its row says to update).
+            onPickBlocked: () => {},
+            renderNotice: (people) => (
+              <TagNotes tagged={people.flatMap((p) => tagOpts.filter((o) => o.id === p.id))} owner={tagOpts.find((o) => o.owner) ?? null} where="comment" />
+            ),
+          },
+    [tagOpts],
+  );
   const anyOtherLive = asking !== null && othersLive(asking, live).length > 0;
   const noteId = `ib-asker-note-${thread.thread_id}`;
   // The choice at Send, when the session that asked has ended.
@@ -1261,6 +1310,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
     }
     return attachmentFeedback(pending, allFiles, texts, thread.project.root, {
       personMessageIds: new Set(thread.messages.filter((m) => m.author.kind === 'person').map((m) => m.id)),
+      // A comment that tags agents is marked in the export (approval "inbox-tag-agents").
+      tagNames: (ids) => ids.map((id) => tagOpts.find((o) => o.id === id)?.label ?? 'an agent'),
     });
   };
 
@@ -1712,6 +1763,10 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
         const annotationsFeedback = own.length > 0 ? await buildFeedback(own) : '';
         const skills = await inboxSkillsBlock([last ? words : '', ...annotationSkillTexts(own)], INBOX_REPLY_SKILL_AUDIENCE);
         const feedback = withSkillsBlock(annotationsFeedback, skills);
+        // The agents this reply tags: the words' `@` tags, and the tags in the comments it carries
+        // (a tag in a file comment sends the whole reply to that agent). Never the reply's own owner.
+        const owner = target.message.author.kind === 'agent' ? (target.message.author.session ?? null) : null;
+        const tags = tagsToSend([...(last ? taggedIds : []), ...own.flatMap((r) => commentTags(r))], tagOpts, owner);
         await inboxApi.reply(target.message.id, {
           idempotency_key: sendKeys.current.get(target.message.id) ?? crypto.randomUUID(),
           words: last ? words : '',
@@ -1721,6 +1776,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
           ...(own.length > 0 ? { annotation_ids: own.map((r) => r.id) } : {}),
           // The pasted files ride the reply that carries the words, as attachments.
           ...(last && uploads.length > 0 ? { uploads } : {}),
+          ...(tags.length > 0 ? { tags } : {}),
           // Only a message the ended session asked goes to the session picked;
           // an answer to another session's message still goes to that session.
           ...(to && target.message.author.kind === 'agent' && target.message.author.session === asking?.session ? { to } : {}),
@@ -1735,6 +1791,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
       const later = replyFiles.current().some((f) => !sentFiles.has(f.key));
       replyFiles.forget(sentFiles);
       setBox({ open: later, text: '' });
+      setTaggedIds([]);
       setFull(false);
       await onChanged();
       await reloadFiles();
@@ -1812,6 +1869,16 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
   const undelivered = !!lastTo && !last.delivery && pendingLive?.asker?.session === lastTo.session && pendingLive.asker.live === false;
   const recipientConnection = pendingLive?.asker?.session === recipientSession ? pendingLive?.asker?.connection : undefined;
   const ackConnection = ackWaiting && !replySession && pendingLive?.asker?.session === ackSession ? pendingLive.asker.connection : undefined;
+  // A reply that tags agents (approval "inbox-tag-agents", Lines): one line per tagged session, each with
+  // its own state and Send now, under the owner's line. Their connections are read while one still waits.
+  const lastTags = last.author.kind === 'person' && !isInboxNote(last) ? messageTags(last) : [];
+  const ownerHost = lastTo?.host ?? (repliedTo?.author.kind === 'agent' ? (repliedTo.author.host ?? null) : null);
+  const waitingTags = lastTags.filter((t) => t.wakes && !t.delivery).map((t) => t.session);
+  const { connections: tagConnections, load: loadTagConnections } = useTagConnections(thread.thread_id, waitingTags, waitingTags.length > 0);
+  const tagLines = lastTags.map((tag) => {
+    const name = tagName(tag, ownerHost, replySession);
+    return { tag, name, line: tagDeliveryLine(tag, name, tagConnections[tag.session], whenTime) };
+  });
   const delivered: DeliveryLine | null =
     last.author.kind !== 'person'
       ? null
@@ -1827,7 +1894,8 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
           })
         : deliveryLine({
             name: asker,
-            deliveredAt: sent?.checked_at ?? null,
+            // A reply that tags agents: the owner's own delivery, never another recipient's.
+            deliveredAt: lastTags.length > 0 ? (last.delivery?.at ?? sent?.recipients?.find((r) => r.owner)?.delivered_at ?? null) : (sent?.checked_at ?? null),
             time: whenTime,
             wakes: wakingSession !== null || (askedSession !== null && recipientConnection != null),
             sendingNow: !!last.deliver_now_at,
@@ -1848,6 +1916,20 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
     }
   };
   const sendNowError = sendNowState?.id === last.id ? sendNowState.error : null;
+  /** Send now for one tagged session's own line. */
+  const [tagSendNow, setTagSendNow] = useState<{ id: string; session: string; busy: boolean; error: string | null } | null>(null);
+  const sendTagNow = async (session: string) => {
+    setTagSendNow({ id: last.id, session, busy: true, error: null });
+    try {
+      await inboxApi.sendNow(last.id, session);
+      setTagSendNow({ id: last.id, session, busy: false, error: null });
+      await onChanged();
+      void loadTagConnections();
+    } catch (cause) {
+      setTagSendNow({ id: last.id, session, busy: false, error: cause instanceof InboxApiError ? cause.message : 'It was not sent now. Try again.' });
+      void loadTagConnections();
+    }
+  };
 
   const waitingHoldsUp = [...new Set(lastAgent.questions?.filter((q) => q.state === 'open').flatMap((q) => q.holds_up) ?? [])];
   const [holdsOpen, setHoldsOpen] = useState(false);
@@ -2073,6 +2155,15 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
         )}
         {!one && (
           <div className="ib-tmeta" data-thread-meta="">
+            {participants.length > 1 && (
+              <>
+                <span className="ib-tg-hwho" data-thread-participants="">
+                  <TagStack participants={participants} />
+                  <span>{participantsWords(participants)}</span>
+                </span>
+                <span className="ib-tdot" aria-hidden="true" />
+              </>
+            )}
             <span>{plural(thread.messages.length, 'message')}</span>
             <span className="ib-tdot" aria-hidden="true" />
             <span>{spanWords(root.created_at, thread.messages[thread.messages.length - 1]!.created_at)}</span>
@@ -2213,10 +2304,19 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
           // a button cannot hold them. The row's text is hidden from screen
           // readers there, since the button's label says it.
           const hide = one ? undefined : true;
+          // A reply that tags agents names them after its owner ("to Claude Code · tagged Pi, Codex").
+          const sentTags = messageTags(message);
+          const ownerOfSent = message.to ?? (askedBy(message)?.author.kind === 'agent' ? askedBy(message)!.author : null);
           const toWords = (
             <>
               to {isAgent ? 'you' : message.to ? toName(message, message.to) : asker}
               {isAgent && askerEnded && message.id === asking?.message.id && <SessionEndedMark />}
+              {sentTags.length > 0 && (
+                <span data-tagged-names="">
+                  {' · tagged '}
+                  {sentTags.map((t) => tagName(t, ownerOfSent && 'host' in ownerOfSent ? ownerOfSent.host : null, ownerOfSent && 'session' in ownerOfSent ? ownerOfSent.session : null)).join(', ')}
+                </span>
+              )}
             </>
           );
           const foldLabel = `${name}, ${time}${isNew ? ', new' : ''}. Fold this message`;
@@ -2356,7 +2456,44 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
                     ))}
                   </ul>
                 )}
-                {message === last && delivered && (
+                {message === last && delivered && tagLines.length > 0 && (
+                  // Lines (approval "inbox-tag-agents"): the owner first, then each tagged session, each with its own state.
+                  <ul className="ib-tg-dl" data-tag-lines="" tabIndex={-1}>
+                    <li data-tag-line={replySession ?? ''} data-delivery={delivered.state} data-owner="">
+                      <HostMark host={ownerHost} />
+                      <span className="ib-dl-text">{delivered.text}</span>
+                      {delivered.sendNow && (
+                        <button type="button" className="ib-sendnow" data-send-now="" disabled={sendNowState?.id === last.id && sendNowState.busy} onClick={() => void sendNow()}>
+                          Send now
+                        </button>
+                      )}
+                    </li>
+                    {tagLines.map(({ tag, name, line }) => (
+                      <li key={tag.session} data-tag-line={tag.session} data-delivery={line.state}>
+                        <HostMark host={tag.host} />
+                        <span className="ib-dl-text">{line.text}</span>
+                        {line.sendNow && (
+                          <button
+                            type="button"
+                            className="ib-sendnow"
+                            data-send-now={tag.session}
+                            aria-label={`Send now to ${name}`}
+                            disabled={tagSendNow?.id === last.id && tagSendNow.session === tag.session && tagSendNow.busy}
+                            onClick={() => void sendTagNow(tag.session)}
+                          >
+                            Send now
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {message === last && tagSendNow?.id === last.id && tagSendNow.error && (
+                  <p className="ib-error" role="alert" data-send-now-error="">
+                    {tagSendNow.error}
+                  </p>
+                )}
+                {message === last && delivered && tagLines.length === 0 && (
                   // tabIndex -1: Send to another session puts focus here once it moved the message.
                   <div className="ib-delivered" data-delivery={delivered.state} tabIndex={-1}>
                     <span className="ib-dl-main">
@@ -2478,6 +2615,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
                 ariaDescribedBy={showAskerNote ? noteId : undefined}
                 placeholder="Write a reply"
                 destination="your reply"
+                tags={composerTags}
                 value={box.text}
                 onChange={(text) => setBox({ open: true, text })}
                 onKeyDown={(event) => {
@@ -2633,6 +2771,7 @@ export function ThreadPane({ thread, sent, onQuestions, onChanged, onClose, file
         attachments={allFiles}
         // The files' annotations only: a guided-review comment is on the guide's diff, not on a file.
         records={fileRecords}
+        mentionSource={commentMentions}
         agent={asker}
         projectName={thread.project.name}
         projectRoot={thread.project.root}
