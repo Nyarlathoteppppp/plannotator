@@ -4513,6 +4513,120 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
       window.getSelection()!.removeAllRanges();
     });
 
+    // Touch (owner's amendment to html-link-click, 2026-10-20): a tap follows, press-and-hold pins.
+    function touch(type: string, selector: string, x: number, y: number, live = true): Event {
+      const el = document.querySelector(selector)!;
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      const point = { identifier: 1, clientX: x, clientY: y, target: el };
+      Object.defineProperty(event, "touches", { value: live ? [point] : [] });
+      Object.defineProperty(event, "changedTouches", { value: [point] });
+      el.dispatchEvent(event);
+      return event;
+    }
+    const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    test("touch, armed: a tap on a link follows it and pins nothing", async () => {
+      setUp('<p>Intro</p><a id="rel" href="next.html">Next</a>', true);
+      await flushPosts();
+      const { selections, stop } = collectSelections();
+      touch("touchstart", "#rel", 10, 10);
+      await wait(60);
+      const end = touch("touchend", "#rel", 10, 10, false);
+      clickLink("#rel");
+      await wait(600);
+      stop();
+      expect(end.defaultPrevented).toBe(false);
+      expect(capturedLinkPosts.map((p) => p.href)).toEqual(["next.html"]);
+      expect(selections).toEqual([]);
+      expect(document.body.hasAttribute("data-plannotator-touch")).toBe(true);
+      document.body.removeAttribute("data-plannotator-touch");
+    });
+
+    test("touch, armed: press-and-hold pins the link for a comment, and the release never follows it", async () => {
+      setUp('<p>Intro</p><a id="rel" href="next.html">Entry point</a>', true);
+      await flushPosts();
+      const { selections, stop } = collectSelections();
+      touch("touchstart", "#rel", 10, 10);
+      await wait(400);
+      expect(selections).toEqual([]); // not yet: the hold is 500 ms
+      await wait(200);
+      await flushPosts();
+      expect(selections.length).toBe(1);
+      expect(selections[0]!.pinpoint).toBe(true);
+      const anchor = selections[0]!.anchor as { selector: string; tagName: string };
+      expect(anchor.tagName).toBe("a");
+      expect(document.querySelector(anchor.selector)).toBe(document.querySelector("#rel"));
+      // The release: cancelled, so no click is synthesized; one that arrives anyway is swallowed.
+      const end = touch("touchend", "#rel", 10, 10, false);
+      expect(end.defaultPrevented).toBe(true);
+      const click = clickLink("#rel");
+      await flushPosts();
+      stop();
+      expect(click.defaultPrevented).toBe(true);
+      expect(capturedLinkPosts).toEqual([]);
+      expect(selections.length).toBe(1);
+      // The next tap is a tap again.
+      touch("touchstart", "#rel", 10, 10);
+      touch("touchend", "#rel", 10, 10, false);
+      clickLink("#rel");
+      await flushPosts();
+      expect(capturedLinkPosts.map((p) => p.href)).toEqual(["next.html"]);
+      postBridge({ type: "plannotator-bridge-cancel-selection" });
+      document.body.removeAttribute("data-plannotator-touch");
+    });
+
+    test("touch, armed: a finger that moves past the slop (a scroll) cancels the hold", async () => {
+      setUp('<a id="rel" href="next.html">Next</a>', true);
+      await flushPosts();
+      const { selections, stop } = collectSelections();
+      touch("touchstart", "#rel", 10, 10);
+      await wait(100);
+      touch("touchmove", "#rel", 10, 34);
+      await wait(550);
+      const end = touch("touchend", "#rel", 10, 34, false);
+      await flushPosts();
+      stop();
+      expect(selections).toEqual([]);
+      expect(end.defaultPrevented).toBe(false);
+      document.body.removeAttribute("data-plannotator-touch");
+    });
+
+    test("touch, armed: Android's long-press contextmenu fires the hold at once and shows no menu", async () => {
+      setUp('<a id="rel" href="next.html">Next</a>', true);
+      await flushPosts();
+      const { selections, stop } = collectSelections();
+      touch("touchstart", "#rel", 10, 10);
+      await wait(50);
+      const menu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+      document.querySelector("#rel")!.dispatchEvent(menu);
+      await flushPosts();
+      expect(menu.defaultPrevented).toBe(true);
+      expect(selections.length).toBe(1);
+      await wait(500); // the timer does not pin a second time
+      touch("touchend", "#rel", 10, 10, false);
+      await flushPosts();
+      stop();
+      expect(selections.length).toBe(1);
+      postBridge({ type: "plannotator-bridge-cancel-selection" });
+      document.body.removeAttribute("data-plannotator-touch");
+    });
+
+    test("touch, Interact: a hold pins nothing (the platform's own long-press), a tap follows", async () => {
+      setUp('<a id="rel" href="next.html">Next</a>', false);
+      await flushPosts();
+      const { selections, stop } = collectSelections();
+      touch("touchstart", "#rel", 10, 10);
+      await wait(600);
+      const end = touch("touchend", "#rel", 10, 10, false);
+      clickLink("#rel");
+      await flushPosts();
+      stop();
+      expect(selections).toEqual([]);
+      expect(end.defaultPrevented).toBe(false);
+      expect(capturedLinkPosts.map((p) => p.href)).toEqual(["next.html"]);
+      document.body.removeAttribute("data-plannotator-touch");
+    });
+
     test("javascript: hrefs stay the page's own scripting", async () => {
       setUp('<a id="js" href="javascript:void 0">Run</a>', false);
       const event = clickLink("#js");

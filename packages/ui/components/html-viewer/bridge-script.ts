@@ -71,6 +71,29 @@ body[data-plannotator-pinpoint-cursor]:not([data-plannotator-pin-modifier]) svg 
 body[data-plannotator-pinpoint-cursor]:not([data-plannotator-pin-modifier]) svg a:not([href])[*|href]:not([*|href=""]):not([*|href="#"]):not([*|href^="javascript:" i]) * {
   cursor: pointer !important;
 }
+/* Touch, armed: a tap on a link follows it and a press-and-hold pins it for
+ * a comment. The platform's own long-press (iOS's link callout, Android's
+ * context menu and text selection) would take that hold, so it is off on
+ * links while armed. Set once a touch is seen (data-plannotator-touch), and
+ * on screens without hover, so a desktop keeps selecting link text. */
+body[data-plannotator-pinpoint-cursor][data-plannotator-touch] :is(a, area),
+body[data-plannotator-pinpoint-cursor][data-plannotator-touch] :is(a, area) *,
+body[data-plannotator-pinpoint-cursor][data-plannotator-touch] svg a,
+body[data-plannotator-pinpoint-cursor][data-plannotator-touch] svg a * {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+@media (hover: none) {
+  body[data-plannotator-pinpoint-cursor] :is(a, area),
+  body[data-plannotator-pinpoint-cursor] :is(a, area) *,
+  body[data-plannotator-pinpoint-cursor] svg a,
+  body[data-plannotator-pinpoint-cursor] svg a * {
+    -webkit-touch-callout: none !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+  }
+}
 /* Armed pinpoint over an EMBEDDED local document: the embed is one element
  * from the outer page's point of view, and the bridge is never injected into a
  * nested frame, so a click inside it would simply vanish into another document.
@@ -3944,6 +3967,102 @@ export const BRIDGE_SCRIPT = `(function() {
       rect: { top: r.top, left: r.left, width: r.width, height: r.height } });
     return true;
   }
+
+  // --- Touch: a tap on a link follows it, press-and-hold pins it ---
+  // The owner's amendment to html-link-click (2026-10-20): on a phone there is
+  // no Cmd/Ctrl, so while armed a TAP on a link follows it (the click handlers
+  // below take it as a plain click) and a PRESS-AND-HOLD of HOLD_PIN_MS opens
+  // a comment on it, pinned like a Cmd-click. Every surface alike: srcdoc
+  // pages (annotate, plan review's HTML, the Inbox) and live apps.
+  // A finger that moves past HOLD_SLOP_PX (a scroll) cancels the hold. The
+  // release after a hold never follows the link: touchend is cancelled, which
+  // stops the click a browser would synthesize, and any click that still
+  // arrives (some engines send one) is swallowed once. The platform's own
+  // long-press (iOS's callout, Android's context menu and selection) is off
+  // on links while armed (the CSS above), and Android's contextmenu, which
+  // is its long-press signal, fires the hold at once.
+  var HOLD_PIN_MS = 500;
+  var HOLD_SLOP_PX = 10;
+  var linkHold = null; // { timer, x, y, id, target }
+  var holdSwallowsClickUntil = 0; // a click before this is the hold's own release
+  function holdArmed() {
+    return annotateModeActive && currentInputMethod === 'pinpoint' && !(vimEnabled && vimPhase !== 'inactive');
+  }
+  function cancelLinkHold() {
+    if (!linkHold) return;
+    clearTimeout(linkHold.timer);
+    linkHold = null;
+  }
+  function fireLinkHold() {
+    var hold = linkHold;
+    if (!hold) return false;
+    clearTimeout(hold.timer);
+    linkHold = null;
+    if (!holdArmed() || !hold.target.isConnected) return false;
+    var el = resolvePinpointTargetAt(hold.x, hold.y, hold.target);
+    if (!el) return false;
+    // Until the finger lifts (touchend sets the real deadline).
+    holdSwallowsClickUntil = Infinity;
+    try { window.getSelection().removeAllRanges(); } catch (ex) {}
+    annotateElement(el, undefined, true, { x: hold.x, y: hold.y });
+    return true;
+  }
+  function touchById(list, id) {
+    for (var i = 0; list && i < list.length; i++) if (list[i].identifier === id) return list[i];
+    return null;
+  }
+  document.addEventListener('touchstart', function(e) {
+    if (document.body && !document.body.hasAttribute('data-plannotator-touch')) {
+      document.body.setAttribute('data-plannotator-touch', '');
+    }
+    cancelLinkHold();
+    // A new touch: whatever click comes next is its own, not a hold's release.
+    if (holdSwallowsClickUntil !== Infinity) holdSwallowsClickUntil = 0;
+    if (!holdArmed() || !e.touches || e.touches.length !== 1) return;
+    if (isViewerOverlayNode(e.target) || !followableLinkAt(e.target)) return;
+    var t = e.touches[0];
+    linkHold = { x: t.clientX, y: t.clientY, id: t.identifier, target: e.target, timer: 0 };
+    linkHold.timer = setTimeout(fireLinkHold, HOLD_PIN_MS);
+  }, { capture: true, passive: true });
+  document.addEventListener('touchmove', function(e) {
+    if (!linkHold) return;
+    var t = touchById(e.touches, linkHold.id);
+    if (!t || e.touches.length !== 1 || Math.abs(t.clientX - linkHold.x) > HOLD_SLOP_PX || Math.abs(t.clientY - linkHold.y) > HOLD_SLOP_PX) {
+      cancelLinkHold();
+    }
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', function(e) {
+    if (holdSwallowsClickUntil === Infinity) {
+      // The release of a hold that pinned: no click, no navigation.
+      if (e.cancelable) e.preventDefault();
+      holdSwallowsClickUntil = Date.now() + 800;
+      return;
+    }
+    cancelLinkHold(); // a tap: the click that follows it follows the link
+  }, { capture: true, passive: false });
+  document.addEventListener('touchcancel', function() {
+    cancelLinkHold();
+    if (holdSwallowsClickUntil === Infinity) holdSwallowsClickUntil = Date.now() + 800;
+  }, true);
+  window.addEventListener('scroll', cancelLinkHold, true);
+  document.addEventListener('contextmenu', function(e) {
+    if (linkHold) {
+      e.preventDefault();
+      fireLinkHold();
+      return;
+    }
+    if (Date.now() < holdSwallowsClickUntil) e.preventDefault();
+  }, true);
+  // Registered before every other click handler of the bridge, so the
+  // release of a hold reaches neither the link handler nor the pinpoint one,
+  // nor the page (a live app would navigate).
+  document.addEventListener('click', function(e) {
+    if (!holdSwallowsClickUntil) return;
+    if (Date.now() >= holdSwallowsClickUntil) { holdSwallowsClickUntil = 0; return; }
+    holdSwallowsClickUntil = 0;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
 
   // --- Local-site link navigation (srcdoc sessions only) ---
   // A srcdoc document has no URL of its own: its base URL is the PARENT page's,

@@ -12,7 +12,9 @@
  * beside it that is not attached opens in the lightbox, loaded; a PDF says
  * why it does not open. Each linked page is a history entry: the browser's
  * Back, Escape and the band's Back step back one page. Beside the thread
- * and on a phone the same.
+ * and on a phone the same. On a phone (WebKit iPhone 15 and Chromium Pixel
+ * 7) a tap on a link follows it and a press-and-hold opens a comment on it,
+ * whose release follows nothing.
  *
  * Screenshots (light and dark, desktop and phone) go to
  * PLANNOTATOR_HTML_LINKS_SHOTS when it is set.
@@ -20,7 +22,7 @@
  * Build the binary first (see inbox.spec.ts), then `bun run test:e2e:inbox`.
  */
 
-import { expect, test, type Page } from '@playwright/test';
+import { chromium, devices, expect, test, webkit, type Browser, type Locator, type Page } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -355,3 +357,89 @@ test('on a phone the same links open, with Back in reach', async ({ browser }) =
     await removeInboxScratch(root);
   }
 });
+
+/**
+ * Press and hold a link inside the page's frame for `ms`, then lift. Chromium:
+ * a real touch through the DevTools protocol (the browser's own gesture
+ * handling runs, Android's long-press context menu included). WebKit has no
+ * such channel, so the touch events are dispatched in the frame (what iOS
+ * sends a page for a hold), and the click iOS may send on release after them.
+ */
+async function holdLink(page: Page, link: Locator, browserName: string, ms = 750) {
+  const box = (await link.boundingBox())!;
+  const x = box.x + Math.min(12, box.width / 2);
+  const y = box.y + box.height / 2;
+  if (browserName === 'chromium') {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    await page.waitForTimeout(ms);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+    return;
+  }
+  await link.evaluate(async (el, hold) => {
+    const r = el.getBoundingClientRect();
+    const point = { identifier: 1, clientX: r.left + Math.min(12, r.width / 2), clientY: r.top + r.height / 2, target: el };
+    const fire = (type: string, touches: unknown[]) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'touches', { value: touches });
+      Object.defineProperty(event, 'changedTouches', { value: [point] });
+      el.dispatchEvent(event);
+      return event;
+    };
+    fire('touchstart', [point]);
+    await new Promise((done) => setTimeout(done, hold));
+    const end = fire('touchend', []);
+    if (!end.defaultPrevented) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: point.clientX, clientY: point.clientY }));
+  }, ms);
+}
+
+for (const phone of [
+  { name: 'iPhone 15 (WebKit)', device: devices['iPhone 15'], browserName: 'webkit' as const },
+  { name: 'Pixel 7 (Chromium)', device: devices['Pixel 7'], browserName: 'chromium' as const },
+]) {
+  test(`on a phone, ${phone.name}: a tap on a link follows it, a press-and-hold opens a comment on it`, async () => {
+    const { root, url, agent, thread, ids } = await world();
+    const browser: Browser = phone.browserName === 'webkit' ? await webkit.launch() : await chromium.launch();
+    try {
+      const context = await browser.newContext({ ...phone.device });
+      const page = await context.newPage();
+      const { frame } = await openSheet(page, url, thread, ids['SHEET.html']!);
+      const link = frame.getByRole('link', { name: 'A: Story page' });
+      // Armed, links lose the platform's own long-press (iOS's callout, the selection) so the hold is ours.
+      await link.tap();
+      await expect(page.locator('[data-linked-page="A-story.html"]')).toBeVisible();
+      await shot(page, `10-phone-tap-follows-${phone.browserName}`);
+      await page.locator('[data-linked-back]').click();
+      await expect(page.locator('[data-linked-page]')).toHaveCount(0);
+      const style = await link.evaluate((el) => {
+        const cs = getComputedStyle(el) as CSSStyleDeclaration & { webkitTouchCallout?: string; webkitUserSelect?: string };
+        return {
+          callout: cs.webkitTouchCallout ?? '',
+          // iOS-only: desktop WebKit and Chromium do not know the property.
+          calloutSupported: CSS.supports('-webkit-touch-callout', 'none'),
+          calloutRule: [...document.querySelectorAll('style')].some((s) => /-webkit-touch-callout:\s*none/.test(s.textContent ?? '')),
+          select: cs.userSelect || cs.webkitUserSelect || '',
+        };
+      });
+      expect(style.select).toBe('none');
+      expect(style.calloutRule).toBe(true);
+      if (style.calloutSupported) expect(style.callout).toBe('none');
+      // Press and hold: the comment composer opens on the link, and the release follows nothing.
+      const before = page.url();
+      await holdLink(page, link, phone.browserName);
+      const composer = page.locator('[data-comment-popover]');
+      await expect(composer).toBeVisible();
+      await page.waitForTimeout(600);
+      await expect(page.locator('[data-linked-page]')).toHaveCount(0);
+      expect(page.url()).toBe(before);
+      await expect(frame.locator('[data-plannotator-pinpoint-box]')).toBeVisible();
+      await shot(page, `11-phone-hold-opens-comment-${phone.browserName}`);
+      await context.close();
+    } finally {
+      await browser.close().catch(() => {});
+      await agent.close().catch(() => {});
+      await removeInboxScratch(root);
+    }
+  });
+}
