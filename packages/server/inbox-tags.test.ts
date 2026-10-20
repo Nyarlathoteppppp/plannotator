@@ -238,11 +238,24 @@ describe("tags in a reply", () => {
     expect(sent.tags).toEqual([{ host: "codex", session: "ses-codex", name: "Codex", wakes: false }]);
 
     // Its read_thread: it sees the tag (tagged_you) and the window learns it saw it; the owner still waits.
+    // The windowed transcript: the message names its owner (`to`) and who it tags, the reader as `you`.
     const read = await client.callTool({ name: "read_thread", arguments: { thread_id: asked.thread_id, agent_session: "ses-codex" } });
-    const seen = (read.structuredContent as { thread: InboxThread }).thread.messages.at(-1) as unknown as { tagged: unknown; tagged_you?: boolean; tags?: unknown };
-    expect(seen.tagged).toEqual([{ agent: "Codex", session: "ses-codex" }]);
-    expect(seen.tagged_you).toBe(true);
+    const seen = (read.structuredContent as { thread: { messages: Record<string, unknown>[] } }).thread.messages.at(-1)!;
+    expect(seen.to).toEqual({ host: "claude-code", session: "ses-owner", you: false });
+    expect(seen.tagged).toEqual([{ agent: "Codex", session: "ses-codex", you: true }]);
     expect(seen.tags).toBeUndefined();
+    const transcript = (read.content as { type: string; text: string }[])[0]!.text;
+    expect(transcript).toContain(`${sent.id} · the person`);
+    expect(transcript).toMatch(new RegExp(`${sent.id} · the person · [^\\]]*to another session \\(Claude Code ses-owner\\) · tagged you`));
+    // The owner reads it as its own, with the others named.
+    const ownerRead = await client.callTool({ name: "read_thread", arguments: { thread_id: asked.thread_id, agent_session: "ses-owner" } });
+    expect((ownerRead.content as { text: string }[])[0]!.text).toMatch(/to you · tagged Codex \(ses-codex\)/);
+    // The full records keep the old shape for scripts: `tagged` (agent names) and `tagged_you`.
+    const full = await client.callTool({ name: "read_thread", arguments: { thread_id: asked.thread_id, agent_session: "ses-codex", format: "full" } });
+    const record = (full.structuredContent as { thread: InboxThread }).thread.messages.at(-1) as unknown as { tagged: unknown; tagged_you?: boolean; tags?: unknown };
+    expect(record.tagged).toEqual([{ agent: "Codex", session: "ses-codex" }]);
+    expect(record.tagged_you).toBe(true);
+    expect(record.tags).toBeUndefined();
     expect((await thread(server, asked.thread_id)).messages.at(-1)!.tags?.[0]?.read_at).toBeString();
     expect(await poll(server, "ses-owner", "claude-code", project)).toHaveLength(1);
 

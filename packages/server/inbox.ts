@@ -119,6 +119,7 @@ import { createInboxOpenInRoute, systemOpenInLauncher, type InboxOpenInLauncher 
 import { recordInboxAttachments, sweepStaleInboxSendTemps } from "@plannotator/shared/inbox/attachments";
 import { inboxBodyForAgent, inboxUploadAttachments, removeInboxAttachmentFiles, removeInboxUploads } from "@plannotator/shared/inbox/uploads";
 import { createInboxLiveSessions } from "./inbox-sessions";
+import { claudePluginBehindInbox, claudeRestartCommand, claudeSessionOutdated, CLAUDE_PLUGIN_UPDATE_COMMAND, createClaudePluginInstallReader, piSessionOutdated } from "./inbox-restart";
 import { createInboxCompose, INBOX_UPLOAD_SWEEP_MS } from "./inbox-compose";
 import { createInboxTagsRoute } from "./inbox-tags";
 import { createInboxDevices, DOOR_PREFIX } from "./inbox-devices";
@@ -168,6 +169,8 @@ const THEME_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const INBOX_FORBIDDEN_PORT = 19432;
 const SSE_HEARTBEAT_MS = 15_000;
 const DEFAULT_HEALTH_TICK_MS = 60_000;
+/** How often the sidebar's "Restart Claude Code N" is checked against the live sessions (a session restarted or went away). */
+const INBOX_RESTART_WATCH_MS = 5_000;
 /**
  * How often the Inbox checks that `inbox.json` is still there and still its
  * own (`probeInboxData`); two misses in a row end it, so an Inbox whose data
@@ -597,6 +600,26 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     return pending;
   };
 
+  /**
+   * The projects a path names, never making one (the agents' search writes
+   * nothing): resolveProject's lookup without its creation, plus the project
+   * an Inbox from before worktrees folded kept for the worktree itself.
+   */
+  const findProjects = async (path: string): Promise<{ projects: InboxProject[]; unresolved: boolean }> => {
+    const { root, folder, settled, worktree } = await projectRoots.resolve(path);
+    const projects: InboxProject[] = [];
+    const existing = store.projectByRoot(root);
+    if (existing) projects.push(existing);
+    else if (!settled) {
+      const repositories = store.listProjects().filter((project) => existsSync(join(project.root, ".git")));
+      const holder = nearestProjectHolding(repositories, folder);
+      if (holder) projects.push(holder);
+    }
+    const earlier = worktree ? store.projectByRoot(worktree) : null;
+    if (earlier && !projects.some((project) => project.id === earlier.id)) projects.push(earlier);
+    return { projects, unresolved: !settled && projects.length === 0 };
+  };
+
   const mcp = createMcpHandler(
     () =>
       createInboxMcpServer({
@@ -608,6 +631,9 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
           recordInboxAttachments(store.dir, paths, { base, at: new Date().toISOString() }),
         // An open wait_for_reply keeps its session present (never "ended").
         presence: { seen: (session) => live.seenOverMcp(session), hold: (session) => live.holdOverMcp(session) },
+        // The agents' read-only search reads the window's own ⌘K index, and finds projects without making one.
+        searchIndex: search.index,
+        findProjects,
       }),
     { legacy: "stateless", maxRequestBodySize: INBOX_MAX_REQUEST_BYTES },
   );
@@ -681,6 +707,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       update: updates.current(),
       /** This Inbox started on a newer version than the last one: the sidebar's "What's new in X" link. */
       updated: updates.updated(),
+      /** Claude Code sessions a restart would bring up to date (inbox-restart.ts): the sidebar's "Restart Claude Code N". Additive. */
+      restart_claude_code: live.restartCount(),
       notice: portChanged ? "The Inbox moved to a new port: allow notifications again on this page." : null,
       projects: projectFolders(rows),
       project: projectFilter,
@@ -820,6 +848,15 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
       notes_offered: loadConfig().inboxAgentNotes?.offered === true,
       notes_asked: await notesAsked(options),
       note_text: INBOX_NOTE_BLOCK,
+      // The open sessions that poll now, per host, and which need a restart or an update (inbox-restart.ts).
+      sessions: live.hostSessions((host) => {
+        if (host !== "claude-code") return { installed: host === "pi" && version !== "dev" ? version : null, update_command: null };
+        const install = claudePluginInstall.read();
+        return {
+          installed: install?.version ?? null,
+          update_command: claudePluginBehindInbox(install, version) ? CLAUDE_PLUGIN_UPDATE_COMMAND : null,
+        };
+      }),
     };
   };
 
@@ -1253,7 +1290,9 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         if (cursor !== null) for (const line of store.changesSince(cursor)) sendLine(line);
         const unsubscribe = store.subscribe(sendLine);
         // `updated` (additive): the "What's new in X" link appears or goes once its notes are fetched or cannot be.
-        const onStatus = () => send(`event: status\ndata: ${JSON.stringify({ update: updates.current(), updated: updates.updated() })}\n\n`);
+        // `restart_claude_code` (additive): the sidebar's "Restart Claude Code N" follows the sessions as they restart.
+        const onStatus = () =>
+          send(`event: status\ndata: ${JSON.stringify({ update: updates.current(), updated: updates.updated(), restart_claude_code: live.restartCount() })}\n\n`);
         statusListeners.add(onStatus);
         // An Inbox window (not the phone's door): counted while its stream is open, with what it reported.
         const windowId = parseWindowId(url.searchParams.get("window"));
@@ -1471,11 +1510,37 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
   };
 
   // ── New message (step 8): the live sessions and the window's two routes (packages/server/inbox-sessions.ts) ──
+  // Which polling sessions run an older plugin than a restart loads (inbox-restart.ts).
+  const claudePluginInstall = createClaudePluginInstallReader(agentEnvironment);
   const live = createInboxLiveSessions({
     store,
     serverSession,
     resolveRoot: async (path) => (await projectRoots.resolve(path)).root,
+    outdatedOf: (host, plugin, folder) => {
+      if (host === "claude-code") {
+        return claudeSessionOutdated({
+          loaded: plugin,
+          records: claudePluginInstall.records(),
+          folder,
+          cliVersion: version,
+          pluginsDir: claudePluginInstall.pluginsDir(),
+          changedAt: claudePluginInstall.changedAt,
+        });
+      }
+      return host === "pi" ? piSessionOutdated(plugin, version) : null;
+    },
+    displayFolder: (path) => displayPath(path, agentEnvironment) ?? path,
+    restartCommandOf: (host, folder, session) => (host === "claude-code" ? claudeRestartCommand(folder, session) : null),
   });
+  // The sidebar's "Restart Claude Code N" is pushed as it changes (a session restarts, goes away, or an update lands).
+  let lastRestartCount = 0;
+  const restartWatch = setInterval(() => {
+    const count = live.restartCount();
+    if (count === lastRestartCount) return;
+    lastRestartCount = count;
+    for (const listener of statusListeners) listener();
+  }, INBOX_RESTART_WATCH_MS);
+  (restartWatch as { unref?: () => void }).unref?.();
 
   const tagsRoute = createInboxTagsRoute({ store, serverSession, live, json });
 
@@ -2178,6 +2243,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     // No capture writes after stop (a restart to update starts the next binary on this store).
     imageCapture.stop();
     clearInterval(uploadSweep);
+    clearInterval(restartWatch);
     void mcp.close().catch(() => {});
     server.stop(true);
     // The tailnet mapping and the door listener, the Wi-Fi listener and its
