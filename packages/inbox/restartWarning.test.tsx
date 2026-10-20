@@ -172,7 +172,7 @@ async function openThread() {
   await until(() => delivered()?.getAttribute('data-delivery') === 'queued' && delivered()!.textContent!.includes('is working'), 'the queued line');
 }
 
-test.skipIf(!hasDom)('a busy session on an older plugin: the reason, then "How to restart" folds open with /exit, the resume command and Copy', async () => {
+test.skipIf(!hasDom)('a busy session on an older plugin: the reason, then "How to restart" folds open with /restart first, then the /exit fallback with the resume command and Copy', async () => {
   await sessionPolls({ busy: true, plugin: OLD(), engine: '2.1.305' });
   await openThread();
   await until(() => !!note(), 'the restart note');
@@ -188,7 +188,14 @@ test.skipIf(!hasDom)('a busy session on an older plugin: the reason, then "How t
   expect(toggle.getAttribute('aria-expanded')).toBe('true');
   expect(steps.hidden).toBe(false);
   expect(toggle.textContent).toBe('Hide steps');
-  expect(steps.textContent).toContain('type /exit. Exiting now stops the turn it is working on');
+  // /restart first (Claude Code 2.1.304+, keeps the session); the /exit fallback folded under it, with its warning.
+  const items = [...steps.querySelectorAll(':scope > ol > li')];
+  expect(items.length).toBe(1);
+  expect(items[0]!.textContent).toStartWith('Type /restart in that Claude Code. It restarts and keeps the session.');
+  const fallback = items[0]!.querySelector<HTMLElement>('[data-restart-fallback]')!;
+  expect(fallback.textContent).toStartWith("If /restart isn't there: type /exit, then run:");
+  expect(fallback.textContent).toContain('Exiting now stops the turn it is working on; to keep it, wait until it finishes.');
+  expect(fallback.querySelector('.ib-rw-cmd code')!.textContent).toBe(resumeLine());
   expect(steps.querySelector('.ib-rw-cmd code')!.textContent).toBe(resumeLine());
   expect(steps.textContent).toContain('Your reply waits here and reaches it once it is back.');
   const copy = steps.querySelector<HTMLButtonElement>('[data-restart-copy]')!;
@@ -260,7 +267,8 @@ test.skipIf(!hasDom)('the sidebar: "Restart Claude Code N", a real button, opens
   expect(sessions.querySelector('.ib-agk')!.textContent).toBe('Open sessions');
   // Other worlds' sessions run other versions: "on plugin X" when one, "on an older plugin" when several.
   expect(sessions.querySelector('.ib-agv')!.textContent).toMatch(/on (plugin 0\.28\.23|an older plugin)/);
-  expect(sessions.querySelector('.ib-agsub')!.textContent).toContain('Plugin 0.28.25 is installed.');
+  expect(sessions.querySelector('.ib-agsub')!.textContent).toContain('Plugin 0.28.25 is installed. Type /restart in each of');
+  expect(sessions.querySelector('.ib-agsub')!.textContent).toContain("it keeps the session. If /restart isn't there, type /exit and run the command Copy restart gives");
   expect(document.querySelector('[data-agent="claude-code"] .ib-agstate')!.textContent).toMatch(/Connected · \d+ needs? a restart/);
   const mine = sessions.querySelector<HTMLElement>(`[data-session-row="${ids.restart.session}"]`)!;
   expect(mine.textContent).toContain('working · plugin 0.28.23');

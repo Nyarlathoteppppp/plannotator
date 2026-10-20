@@ -65,8 +65,8 @@ function OpenSessions({ id, label, sessions }: { id: InboxToolHostId; label: str
     const them = TWO_WORDS[stale.length] ?? `these ${stale.length}`;
     sub = updating ? (
       <>
-        The installed plugin{sessions.installed ? ` (${sessions.installed})` : ''} is older than this Inbox, so a restart alone loads it again. Update it, then restart{' '}
-        {stale.length === 1 ? 'this session' : them}.
+        The installed plugin{sessions.installed ? ` (${sessions.installed})` : ''} is older than this Inbox, so a restart alone loads it again. Update it, then type{' '}
+        <code>/restart</code> in {stale.length === 1 ? 'that Claude Code' : `each of ${them}`} (or <code>/exit</code> and run the command <b>Copy restart</b> gives).
         {sessions.update_command && (
           <span className="ib-rw-cmd" data-restart-update="">
             <code>{sessions.update_command}</code>
@@ -76,8 +76,9 @@ function OpenSessions({ id, label, sessions }: { id: InboxToolHostId; label: str
       </>
     ) : (
       <>
-        {sessions.installed ? `Plugin ${sessions.installed} is installed. ` : 'A newer plugin is installed. '}Restart {stale.length === 1 ? 'it' : them} to load it. Each comes back as
-        the same session.
+        {sessions.installed ? `Plugin ${sessions.installed} is installed. ` : 'A newer plugin is installed. '}Type <code>/restart</code> in{' '}
+        {stale.length === 1 ? 'that Claude Code' : `each of ${them}`} to load it; it keeps the session. If <code>/restart</code> isn&apos;t there, type{' '}
+        <code>/exit</code> and run the command <b>Copy restart</b> gives: {stale.length === 1 ? 'it comes' : 'each comes'} back as the same session.
       </>
     );
   } else if (id === 'pi' && stale.length > 0) {
