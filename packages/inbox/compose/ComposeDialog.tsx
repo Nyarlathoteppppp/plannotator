@@ -299,20 +299,24 @@ export function ComposeDialog(props: ComposeDialogProps) {
     }
   };
 
-  // The skill picker's room: the dialog below its phone bar, above its footer and the keyboard.
+  // The skill picker's room. A desktop: the whole window (the visual viewport), so the picker floats over
+  // everything in the dialog, the footer included, and past the dialog's bottom edge when it needs to; it is
+  // in the dialog's top layer and painted after the footer, so nothing covers it. A phone (a full-screen
+  // sheet): below its top bar, above its footer and the keyboard.
   const caretMenu = useMemo<CaretMenuOptions>(
     () => ({
       prefer: phone ? 'above' : 'below',
       maxListHeight: phone ? PHONE_SKILL_LIST_HEIGHT : undefined,
       bounds: () => {
+        const viewport = window.visualViewport;
+        const seen = viewport ? { top: viewport.offsetTop, bottom: viewport.offsetTop + viewport.height } : { top: 0, bottom: window.innerHeight };
+        if (!phone) return seen;
         const dialog = dialogRef.current;
         if (!dialog) return null;
         const box = dialog.getBoundingClientRect();
         const bar = dialog.querySelector('.ib-cp-bar')?.getBoundingClientRect();
         const foot = dialog.querySelector('.ib-cp-foot, .ib-cp-ask')?.getBoundingClientRect();
-        const viewport = window.visualViewport;
-        const seen = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
-        return { top: bar ? bar.bottom : box.top, bottom: Math.min(foot ? foot.top : box.bottom, seen) };
+        return { top: Math.max(seen.top, bar ? bar.bottom : box.top), bottom: Math.min(foot ? foot.top : box.bottom, seen.bottom) };
       },
     }),
     [phone],

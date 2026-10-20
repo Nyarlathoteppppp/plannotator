@@ -814,7 +814,8 @@ button.ib-band:hover { background: var(--ib-band-hover-s, var(--ib-band)); }
 .ib-cfield [data-skill-menu] { margin-bottom: 8px; }
 .ib-cfield [data-skill-human-only-notice] { padding: 0 12px 6px; margin-top: -2px; }
 /* The picker at the caret (compose): portaled into the dialog, hung off a box laid over the caret's line
-   (ComposerField's CaretSkillMenu), above the dialog's footer. The box itself takes no clicks. */
+   (ComposerField's CaretSkillMenu). Painted after the footer, it floats over it and past the dialog's edge (the
+   dialog is overflow: visible); on a phone it stays above the footer. The box itself takes no clicks. */
 .ib-skanchor { position: absolute; z-index: 60; pointer-events: none; }
 .ib-skanchor > [data-skill-menu] { pointer-events: auto; }
 /* Files pasted into the reply box: compose's tiles, inside the box above its chips. A tile never runs past

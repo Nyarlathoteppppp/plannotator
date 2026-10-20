@@ -18,8 +18,9 @@
  * box, two lines tall, so that is at the caret). A tall field in a modal
  * dialog (compose) passes `caretMenu`: the picker then opens at the caret's
  * line, portaled into the dialog so the field's scroll container cannot clip
- * it, and kept inside the box `caretMenu.bounds` names (the dialog above its
- * footer).
+ * it, and kept inside the box `caretMenu.bounds` names (compose: the viewport
+ * on a desktop, so it floats over the footer; the sheet above its footer on a
+ * phone).
  */
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';

@@ -1,6 +1,6 @@
 /**
- * The skill picker in compose (New message) opens at the caret, inside the
- * dialog and above its footer, proved in real browsers against the compiled
+ * The skill picker in compose (New message) opens at the caret, on top of
+ * everything in the dialog, proved in real browsers against the compiled
  * binary. The bug: the picker hung off the whole (tall) message field, inside
  * the dialog's scrolling body, so it opened under the field where the
  * footer (paperclip, status, Send) covered it; only a faint border showed, or
@@ -13,10 +13,13 @@
  *
  * For each case (Chromium at 1440×900 and 1024×768, empty and with two
  * attachments, and a field scrolled by long text; an iPhone in WebKit):
- * typing `/` opens the picker; its box lies inside the dialog and above the
- * footer; the point at the middle of its first and last rows hits that row
- * (elementFromPoint: nothing covers it); it starts at the caret's line, not
- * at the field's bottom; and Escape closes the picker, not the dialog.
+ * typing `/` opens the picker; it lies fully inside the viewport (on a
+ * desktop it floats over the footer and past the dialog's edge when it needs
+ * to; on a phone it stays in the sheet above its footer); the point at the
+ * middle of its first and last visible rows hits that row (elementFromPoint:
+ * nothing covers it); at least min(6, matches) rows show (four on a phone,
+ * whose list is 4½ rows); it starts at the caret's line, not at the field's
+ * bottom; and Escape closes the picker, not the dialog.
  *
  * Build the binary first (see inbox.spec.ts), then
  * `bun run test:e2e:inbox -- inbox-compose-skill-picker.spec.ts`.
@@ -166,41 +169,44 @@ async function openCompose(page: Page, opener: string): Promise<void> {
 }
 
 /** The checks every case makes once `/` was typed. */
-async function expectPickerAtCaret(page: Page, options: { firstLine: boolean; minRowHeight?: number }): Promise<void> {
+/**
+ * The checks every case makes once `/` was typed: the picker is fully inside the viewport (it may float over
+ * the dialog's footer and past its bottom edge), on top at the middle of its first and last visible rows, at
+ * least min(`minRows`, matches) rows show, and it hangs off the caret's line.
+ */
+async function expectPickerAtCaret(page: Page, options: { firstLine: boolean; minRows: number; minRowHeight?: number }): Promise<void> {
   const menu = page.locator('dialog[data-compose] [data-skill-menu]');
   await expect(menu).toBeVisible();
   // Settle the placement (it re-measures after the caret box lands).
   await page.waitForTimeout(150);
-  const dialog = await box(page, 'dialog[data-compose]');
-  const foot = await box(page, 'dialog[data-compose] .ib-cp-foot');
+  const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
   const picker = await box(page, 'dialog[data-compose] [data-skill-menu]');
   const field = await box(page, 'dialog[data-compose] textarea.ib-rtext');
-  // Inside the dialog, and never under its footer.
-  expect(picker.y).toBeGreaterThanOrEqual(dialog.y - 0.5);
-  expect(picker.x).toBeGreaterThanOrEqual(dialog.x - 0.5);
-  expect(picker.x + picker.width).toBeLessThanOrEqual(dialog.x + dialog.width + 0.5);
-  expect(picker.y + picker.height).toBeLessThanOrEqual(foot.y + 0.5);
-  // At least two rows show (the bug showed none, or a sliver).
-  const listHeight = await page.locator('dialog[data-compose] [data-skill-menu-list]').evaluate((el) => el.clientHeight);
-  expect(listHeight).toBeGreaterThanOrEqual(80);
+  // Fully inside the viewport.
+  expect(picker.y).toBeGreaterThanOrEqual(-0.5);
+  expect(picker.x).toBeGreaterThanOrEqual(-0.5);
+  expect(picker.x + picker.width).toBeLessThanOrEqual(viewport.width + 0.5);
+  expect(picker.y + picker.height).toBeLessThanOrEqual(viewport.height + 0.5);
   // Nothing covers the rows: the first and the last one that shows are hit at their middle.
   const rows = page.locator('dialog[data-compose] [data-skill-item]');
-  const hits = await rows.evaluateAll((all) => {
+  const seen = await rows.evaluateAll((all) => {
     const list = all[0]?.parentElement;
-    if (!list) return [];
+    if (!list) return { total: 0, shown: 0, hits: [] };
     const view = list.getBoundingClientRect();
     const shown = all.filter((row) => {
       const r = row.getBoundingClientRect();
       return r.top >= view.top - 0.5 && r.bottom <= view.bottom + 0.5;
     });
-    return [shown[0], shown[shown.length - 1]].map((row) => {
+    const hits = [shown[0], shown[shown.length - 1]].map((row) => {
       const r = row!.getBoundingClientRect();
       const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
       return { name: row!.getAttribute('data-skill-item'), hit: !!hit && row!.contains(hit), height: r.height };
     });
+    return { total: all.length, shown: shown.length, hits };
   });
-  expect(hits.length).toBe(2);
-  for (const hit of hits) {
+  expect(seen.shown).toBeGreaterThanOrEqual(Math.min(options.minRows, seen.total));
+  expect(seen.hits.length).toBe(2);
+  for (const hit of seen.hits) {
     expect(hit.hit, `${hit.name} is covered`).toBe(true);
     if (options.minRowHeight) expect(hit.height).toBeGreaterThanOrEqual(options.minRowHeight);
   }
@@ -230,7 +236,7 @@ for (const size of [
   { name: '1440', viewport: { width: 1440, height: 900 } },
   { name: '1024', viewport: { width: 1024, height: 768 } },
 ]) {
-  test(`desktop ${size.name}: empty, the picker opens at the caret above the footer; Escape closes it first`, async ({ browser }: { browser: Browser }) => {
+  test(`desktop ${size.name}: empty, the picker opens at the caret on top of the footer; Escape closes it first`, async ({ browser }: { browser: Browser }) => {
     const context = await browser.newContext({ viewport: size.viewport, colorScheme: 'light' });
     const page = await context.newPage();
     try {
@@ -238,7 +244,7 @@ for (const size of [
       await page.keyboard.type('The skill selector in the new message box is broken /');
       await expect(page.locator('dialog[data-compose] [data-skill-menu]')).toBeVisible();
       if (size.name === '1440') await shot(page, `desktop-${size.name}-empty`);
-      await expectPickerAtCaret(page, { firstLine: true });
+      await expectPickerAtCaret(page, { firstLine: true, minRows: 6 });
       // A query filters in place and the picker stays at the caret.
       await page.keyboard.type('an');
       await expect(page.locator('dialog[data-compose] [data-skill-item]').first()).toHaveAttribute('data-skill-item', /an/);
@@ -248,7 +254,7 @@ for (const size of [
     }
   });
 
-  test(`desktop ${size.name}: with two attachments the picker still opens at the caret above the footer`, async ({ browser }: { browser: Browser }) => {
+  test(`desktop ${size.name}: with two attachments the picker still opens at the caret on top of everything`, async ({ browser }: { browser: Browser }) => {
     const context = await browser.newContext({ viewport: size.viewport, colorScheme: 'light' });
     const page = await context.newPage();
     try {
@@ -260,7 +266,7 @@ for (const size of [
       await page.keyboard.type('The skill selector in the new message box is broken /');
       await expect(dialog.locator('[data-skill-menu]')).toBeVisible();
       if (size.name === '1440') await shot(page, `desktop-${size.name}-two-attachments`);
-      await expectPickerAtCaret(page, { firstLine: true });
+      await expectPickerAtCaret(page, { firstLine: true, minRows: 6 });
       // A pointer pick inserts the skill and keeps the dialog.
       await dialog.locator('[data-skill-item="anatomy"]').dispatchEvent('pointerdown');
       await expect(dialog.getByRole('textbox', { name: 'Message' })).toHaveValue(/\/anatomy /);
@@ -274,7 +280,7 @@ for (const size of [
   });
 }
 
-test('desktop 1440: in a field scrolled by a long message the picker follows the caret and stays above the footer', async ({ browser }: { browser: Browser }) => {
+test('desktop 1440: in a field scrolled by a long message the picker follows the caret and stays on screen', async ({ browser }: { browser: Browser }) => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   const page = await context.newPage();
   try {
@@ -286,7 +292,7 @@ test('desktop 1440: in a field scrolled by a long message the picker follows the
     const scrolled = await field.evaluate((el) => el.scrollTop);
     expect(scrolled).toBeGreaterThan(0);
     await shot(page, 'desktop-1440-scrolled-field', ['light']);
-    await expectPickerAtCaret(page, { firstLine: false });
+    await expectPickerAtCaret(page, { firstLine: false, minRows: 6 });
     // The caret's line is at the field's bottom: the picker sits next to it, not at the field's top.
     const picker = await box(page, 'dialog[data-compose] [data-skill-menu]');
     const text = await box(page, 'dialog[data-compose] textarea.ib-rtext');
@@ -310,7 +316,14 @@ test('an iPhone (WebKit): the picker opens full width at the caret, 44 px rows, 
     await page.keyboard.type('Broken /');
     await expect(page.locator('dialog[data-compose] [data-skill-menu]')).toBeVisible();
     await shot(page, 'phone-iphone15');
-    await expectPickerAtCaret(page, { firstLine: true, minRowHeight: 43.5 });
+    // A phone keeps the reply box's rule: 4½ rows of 44 px, so four whole rows show.
+    await expectPickerAtCaret(page, { firstLine: true, minRows: 4, minRowHeight: 43.5 });
+    // The sheet's picker stays below its top bar and above its footer (the keyboard sits there).
+    const sheetPicker = await box(page, 'dialog[data-compose] [data-skill-menu]');
+    const bar = await box(page, 'dialog[data-compose] .ib-cp-bar');
+    const sheetFoot = await box(page, 'dialog[data-compose] .ib-cp-foot');
+    expect(sheetPicker.y).toBeGreaterThanOrEqual(bar.y + bar.height - 0.5);
+    expect(sheetPicker.y + sheetPicker.height).toBeLessThanOrEqual(sheetFoot.y + 0.5);
     // Full width: the field's width.
     const picker = await box(page, 'dialog[data-compose] [data-skill-menu]');
     const text = await box(page, 'dialog[data-compose] textarea.ib-rtext');
