@@ -1397,7 +1397,7 @@ function Inbox() {
     showToast({
       ...copy,
       // Stopped partway: the warning, and why, whole (it may wrap); Undo still covers what did apply.
-      ...(incomplete ? { icon: 'warn' as const, detail: `${incomplete} · ${name}`, wrap: true } : {}),
+      ...(incomplete ? { icon: 'warn' as const, detail: `${incomplete} · ${name}`, speech: undefined, wrap: true } : {}),
       onUndo: () => {
         void (async () => {
           try {
