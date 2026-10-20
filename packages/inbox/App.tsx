@@ -66,7 +66,7 @@ import { SettingsPage } from './components/Settings';
 import { ArchivedBlock } from './components/Archived';
 import { NotificationAsk, TabSleptLine } from './components/NotificationAsk';
 import { useInboxNotifications } from './notify';
-import { useInboxSound } from './sound';
+import { pageInFront, useInboxSound } from './sound';
 import { notificationLine, SoundIntroDialog } from './components/SoundIntro';
 import { GuidePane } from './components/GuidePane';
 import { AboutBlock, FailedDialog, RestartDialog, UpdateDialog, WhatsNewPage } from './components/Updates';
@@ -760,14 +760,28 @@ function Inbox() {
     return () => clearInterval(timer);
   }, [route.page, route.board, refreshCards]);
   // Opening Dropped (the Icebox page) is the person looking at an agent's drops: they leave "N dropped by an agent".
-  const unseenDrops = cards ? boardOf(cards.cards).droppedByAgent.length : 0;
+  // Only the drops the page drew, and only while it is in front (visible, with focus): a tab in the background
+  // marks nothing, and waits until the person brings it forward.
+  const unseenDropIds = cards ? boardOf(cards.cards).droppedByAgent.map((c) => c.id).join(',') : '';
   useEffect(() => {
-    if (route.page !== 'board' || route.board !== 'icebox' || unseenDrops === 0) return;
-    void inboxApi
-      .cardDropsSeen()
-      .then(() => refreshCards())
-      .catch(() => {});
-  }, [route.page, route.board, unseenDrops, refreshCards]);
+    if (route.page !== 'board' || route.board !== 'icebox' || !unseenDropIds) return;
+    let done = false;
+    const mark = () => {
+      if (done || !pageInFront()) return;
+      done = true;
+      void inboxApi
+        .cardDropsSeen(unseenDropIds.split(','))
+        .then(() => refreshCards())
+        .catch(() => {});
+    };
+    mark();
+    window.addEventListener('focus', mark);
+    document.addEventListener('visibilitychange', mark);
+    return () => {
+      window.removeEventListener('focus', mark);
+      document.removeEventListener('visibilitychange', mark);
+    };
+  }, [route.page, route.board, unseenDropIds, refreshCards]);
 
   /** Read the agents; while `plannotator inbox` is still connecting them, read again until it is done. */
   const refreshAgents = useCallback(async () => {
@@ -1356,7 +1370,10 @@ function Inbox() {
 
   // ── The Board's moves (approval "inbox-board"): the person's only. ──
   /** One move on a card; the card on screen takes the answer at once, the rest follows the next read. */
-  const moveCard = async (card: InboxCardWire, move: CardMove): Promise<InboxCardWire | null> => {
+  // From the open card (a modal dialog: a toast under it could not be reached), what happened, or what failed, is
+  // said in the card itself, and its own Restore or Take out undoes it. From the page, the window's one toast, with Undo.
+  const [cardNote, setCardNote] = useState<{ card: string; text: string; error?: boolean } | null>(null);
+  const moveCard = async (card: InboxCardWire, move: CardMove, inCard = false): Promise<InboxCardWire | null> => {
     setCardBusy(true);
     try {
       const { card: next } = await inboxApi.moveCard(card.id, move);
@@ -1364,15 +1381,16 @@ function Inbox() {
       void refreshCards();
       return next;
     } catch (cause) {
-      showToast({ icon: 'warn', lead: cause instanceof Error ? cause.message : 'The card did not change.', wrap: true });
+      const text = cause instanceof Error ? cause.message : 'The card did not change.';
+      if (inCard) {
+        setCardNote({ card: card.id, text, error: true });
+        say(text);
+      } else showToast({ icon: 'warn', lead: text, wrap: true });
       return null;
     } finally {
       setCardBusy(false);
     }
   };
-  // From the open card (a modal dialog: a toast under it could not be reached), what happened is said in the
-  // card itself, and its own Restore or Take out undoes it. From the page, the window's one toast, with Undo.
-  const [cardNote, setCardNote] = useState<{ card: string; text: string } | null>(null);
   const cardDone = (card: InboxCardWire, inCard: boolean, toast: Omit<InboxToastModel, 'id'>, note: string) => {
     if (inCard) {
       setCardNote({ card: card.id, text: note });
@@ -1380,25 +1398,26 @@ function Inbox() {
     } else showToast(toast, toast.onUndo ? MARK_READ_UNDO_MS : 4200);
   };
   const restoreCard = async (card: InboxCardWire, inCard = false) => {
-    const next = await moveCard(card, { op: 'restore' });
+    const next = await moveCard(card, { op: 'restore' }, inCard);
     if (next) cardDone(card, inCard, { icon: 'check', lead: `Back in ${INBOX_CARD_COLUMN_LABELS[next.column]}`, detail: `“${card.title}”` }, `Back in ${INBOX_CARD_COLUMN_LABELS[next.column]}.`);
   };
   const iceboxCard = async (card: InboxCardWire, inCard = false) => {
-    const next = await moveCard(card, { op: 'icebox' });
+    const next = await moveCard(card, { op: 'icebox' }, inCard);
     if (next)
       cardDone(card, inCard, { icon: 'check', lead: 'Paused', detail: `“${card.title}” is in the Icebox`, onUndo: () => void restoreCard(next) }, 'Paused: it is in the Icebox. Take out puts it back.');
   };
   const dropCard = async (card: InboxCardWire, reason: string, inCard = false) => {
-    const next = await moveCard(card, reason ? { op: 'drop', reason } : { op: 'drop' });
+    const next = await moveCard(card, reason ? { op: 'drop', reason } : { op: 'drop' }, inCard);
     if (next) cardDone(card, inCard, { icon: 'archive', lead: 'Dropped', detail: `“${card.title}”`, onUndo: () => void restoreCard(next) }, 'Dropped. Restore puts it back.');
   };
   const moveCardTo = async (card: InboxCardWire, column: InboxCardColumn, inCard = false) => {
-    const next = await moveCard(card, { op: 'move', column });
+    const next = await moveCard(card, { op: 'move', column }, inCard);
     if (next) cardDone(card, inCard, { icon: 'check', lead: `Moved to ${INBOX_CARD_COLUMN_LABELS[column]}`, detail: `“${card.title}”` }, `Moved to ${INBOX_CARD_COLUMN_LABELS[column]}.`);
   };
-  const dropsSeen = async () => {
+  /** Got it: the drops the notice showed are seen (never one that arrived after it was drawn). */
+  const dropsSeen = async (cardIds: readonly string[]) => {
     try {
-      await inboxApi.cardDropsSeen();
+      await inboxApi.cardDropsSeen(cardIds);
     } catch (cause) {
       showToast({ icon: 'warn', lead: cause instanceof Error ? cause.message : 'Not saved.', wrap: true });
     }
@@ -2043,7 +2062,10 @@ function Inbox() {
   // The open card (`#board…&card=crd_…`), and where "Ask where this is" would go.
   const openCard = route.page === 'board' && route.card ? (cards?.cards.find((c) => c.id === route.card) ?? null) : null;
   const { model: cardSessions } = useComposeSessions(openCard !== null);
-  const askSession = openCard ? askTarget(openCard, cardSessions?.projects) : null;
+  const ask = openCard ? askTarget(openCard, cardSessions?.projects) : null;
+  const askSession = ask?.session ?? null;
+  /** The card's own agent has ended: "Ask where this is" asks another session in its project, and the card says so. */
+  const askOther = ask && !ask.own ? { host: hostLabel(ask.host), project: cards?.projects?.[openCard!.project_id]?.name ?? null } : null;
   const closeCard = () => {
     setCardNote(null);
     const next = { ...routeRef.current, card: null };
@@ -2136,8 +2158,8 @@ function Inbox() {
   } else if (route.page === 'board') {
     const boardActions: BoardActions = {
       onOpenCard: (card) => go({ page: 'board', project: null, thread: null, board: route.board ?? 'live', card: card.id }),
-      onRestore: (card) => void restoreCard(card),
-      onDropsSeen: () => void dropsSeen(),
+      onRestore: (card) => restoreCard(card),
+      onDropsSeen: (cardIds) => void dropsSeen(cardIds),
       onView: (view) => go({ page: 'board', project: null, thread: null, board: view, card: null }),
     };
     main =
@@ -2322,7 +2344,8 @@ function Inbox() {
             onSearch={(opener) => openSearch(opener)}
             onCompose={(opener) => openCompose({}, opener)}
             onBoard={() => go({ page: 'board', project: null, thread: null, board: 'live', card: null })}
-            boardCount={cards ? boardOf(cards.cards).onYou : 0}
+            boardCount={cards ? boardOf(cards.cards).onYou + boardOf(cards.cards).droppedByAgent.length : 0}
+            boardDropped={cards ? boardOf(cards.cards).droppedByAgent.length : 0}
             draftsCount={drafts?.length ?? 0}
             onDrafts={() => go({ page: 'drafts', project: null, thread: null })}
             onInbox={() => go({ page: 'inbox', project: null, thread: null })}
@@ -2403,7 +2426,8 @@ function Inbox() {
           now={boardNow}
           canAsk={askSession !== null}
           busy={cardBusy}
-          note={cardNote?.card === openCard.id ? cardNote.text : null}
+          note={cardNote?.card === openCard.id ? cardNote : null}
+          askOther={askOther}
           onClose={closeCard}
           onMove={(column) => void moveCardTo(openCard, column, true)}
           onIcebox={() => void iceboxCard(openCard, true)}

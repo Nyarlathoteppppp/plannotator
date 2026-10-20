@@ -3650,6 +3650,8 @@ svg.ib-ic.ib-glyph { stroke: currentColor; fill: none; stroke-width: 1.6; stroke
 .ib-cd-said { color: var(--ib-raise-mfg); }
 .ib-cd-done { display: flex; align-items: center; gap: 7px; margin: 12px 0 0; font-size: var(--ib-fs-13, 13px); font-weight: 550; color: var(--foreground); }
 .ib-cd-done > svg.ib-ic { color: var(--success, var(--primary)); flex: none; }
+.ib-cd-done[hidden] { display: none; }
+.ib-cd-done[data-error] > svg.ib-ic { color: var(--destructive); }
 .ib-cd-state { display: flex; align-items: center; gap: 12px; margin: 12px 0 0; padding: 10px 12px; border-radius: var(--ib-rl-md-s, 9px); background: color-mix(in oklch, var(--muted) 55%, transparent); font-size: var(--ib-fs-13-5, 13.5px); line-height: 1.5; }
 .ib-cd-state > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ib-cd-empty { margin: 0; color: var(--muted-foreground); font-size: var(--ib-fs-13, 13px); }

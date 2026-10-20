@@ -548,7 +548,7 @@ export const inboxApi = {
   /** One of the person's moves on a card: move, icebox (pause), drop, restore. */
   moveCard: (cardId: string, move: CardMove) => post<{ card: InboxCardWire }>(`/api/inbox/cards/${encodeURIComponent(cardId)}`, move),
   /** The person looked at Dropped: an agent's drops there stop showing in "N dropped by an agent". */
-  cardDropsSeen: () => post<{ cards: InboxCardWire[] }>('/api/inbox/cards/dropped/seen', {}),
+  cardDropsSeen: (cardIds: readonly string[]) => post<{ cards: InboxCardWire[] }>('/api/inbox/cards/dropped/seen', { cards: cardIds }),
   settings: () => get<SettingsModel>('/api/inbox/settings'),
   /**
    * The person looked at the thread. `throughSeq`: the seq of the newest

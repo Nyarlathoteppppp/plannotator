@@ -76,7 +76,7 @@
  * tests/helpers/inbox-board-world.ts (every column, real ages, the Icebox,
  * Dropped and two drops by an agent not seen yet); the first line adds
  * `board: { ids, projects, projectIds }`. A stdin line
- * `{ "card": { id, by: "agent" | "person", column?, reason?, say? } }` is a
+ * `{ "card": { id, by: "agent" | "person", column?, reason?, say?, restore? } }` is a
  * write to a card (an agent's drop, say); the server answers `{ "carded": <column> }`.
  */
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -440,12 +440,12 @@ void (async () => {
       deliver?: { session: string };
       wait?: { thread: string; session: string };
       poll?: { session: string; body: Record<string, unknown> };
-      card?: { id: string; by: "agent" | "person"; column?: string; reason?: string; say?: string };
+      card?: { id: string; by: "agent" | "person"; column?: string; reason?: string; say?: string; restore?: boolean };
     };
     if (command.card) {
       const card = store.card(command.card.id)!;
       const by = command.card.by === "person" ? ({ kind: "person" } as const) : card.agent ?? { kind: "agent" as const, host: "claude-code", session: "ses_board", name: "Claude Code" };
-      const next = store.updateCard(command.card.id, { by, column: command.card.column, reason: command.card.reason, say: command.card.say });
+      const next = store.updateCard(command.card.id, { by, column: command.card.column, reason: command.card.reason, say: command.card.say, restore: command.card.restore });
       process.stdout.write(`${JSON.stringify({ carded: next.column })}\n`);
       continue;
     }

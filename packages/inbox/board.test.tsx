@@ -46,6 +46,10 @@ let host: HTMLElement | null = null;
 let savedFetch: typeof fetch;
 let savedEventSource: unknown;
 let lines: AsyncIterator<string> | null = null;
+/** Whether the page is in front (visible, with focus): a test puts it in the background. */
+const front = { visible: true, focused: true };
+let savedHasFocus: () => boolean;
+let savedVisibility: PropertyDescriptor | undefined;
 
 function loopback(path: string, method = 'GET', body?: string): Promise<{ status: number; text: string }> {
   return new Promise((done, fail) => {
@@ -130,10 +134,19 @@ beforeEach(() => {
     close() {}
   };
   window.location.hash = '';
+  front.visible = true;
+  front.focused = true;
+  savedHasFocus = document.hasFocus;
+  document.hasFocus = () => front.focused;
+  savedVisibility = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (front.visible ? 'visible' : 'hidden') });
 });
 
 afterEach(() => {
   if (!hasDom) return;
+  document.hasFocus = savedHasFocus;
+  if (savedVisibility) Object.defineProperty(document, 'visibilityState', savedVisibility);
+  else delete (document as unknown as Record<string, unknown>).visibilityState;
   act(() => root?.unmount());
   host?.remove();
   root = null;
@@ -189,7 +202,9 @@ test.skipIf(!hasDom)('five lanes in order; each card is two lines and an age; th
   expect(text(el.querySelector('[data-board-sum]'))).toBe('16 in flight · 8 on you');
   expect(text(el.querySelector('[data-board-link="shipped"]'))).toBe('Shipped 3');
   expect(text(el.querySelector('[data-board-link="icebox"]'))).toBe('Icebox 4');
-  expect(text(el.querySelector('[data-board-nav] .ib-n'))).toBe('8');
+  // The sidebar's Board count: the 8 on you, plus the 2 drops an agent made that the person has not seen.
+  expect(text(el.querySelector('[data-board-nav] [data-board-count]'))).toBe('10');
+  expect(el.querySelector('[data-board-nav] [data-board-count]')!.getAttribute('aria-label')).toBe('8 on you, 2 dropped by an agent');
 
   // In the person's lanes, "You: …"; in the agents', the agent's last word.
   const portless = card(el, 'portless')!;
@@ -238,6 +253,26 @@ test.skipIf(!hasDom)('an agent\'s drops show with their reasons until the person
   expect(await columnOf(board.ids.notify)).toBe('dropped');
 
   // Put the restored card back in Dropped for the tests after (the agent drops it again: unseen).
+  expect((await command({ card: { id: board.ids.cursors, by: 'agent', column: 'dropped', reason: 'Not needed after all' } })).carded).toBe('dropped');
+});
+
+test.skipIf(!hasDom)('a tab in the background marks nothing: the Icebox page drawn while hidden waits until the person brings it forward', async () => {
+  front.visible = false;
+  front.focused = false;
+  const el = await renderApp('#board=icebox');
+  await until(() => el.querySelector('[data-board-group="dropped"]') !== null, 'the Icebox page');
+  await settle(80);
+  expect((await serverCards()).dropped_unseen).toBe(1);
+  // Visible but without focus: still nothing.
+  front.visible = true;
+  act(() => document.dispatchEvent(new Event('visibilitychange')));
+  await settle(60);
+  expect((await serverCards()).dropped_unseen).toBe(1);
+  // In front: the drop it drew is seen. Put it back unseen for the next test (the agent drops it again).
+  front.focused = true;
+  act(() => window.dispatchEvent(new Event('focus')));
+  await until(async () => (await serverCards()).dropped_unseen === 0, 'the drop seen once in front');
+  await command({ card: { id: board.ids.cursors, by: 'person', restore: true } });
   expect((await command({ card: { id: board.ids.cursors, by: 'agent', column: 'dropped', reason: 'Not needed after all' } })).carded).toBe('dropped');
 });
 
@@ -303,8 +338,18 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Tak
   click(dialog()!.querySelector('[data-card-restore]'));
   await until(async () => (await columnOf(board.ids.explorer)) === 'building', 'Take out puts it back');
 
-  // Drop, with a reason the person writes.
+  // Escape in the reason field steps back: the form closes, the card stays open, focus on Drop.
   await until(() => dialog()?.querySelector('[data-card-drop]') !== null, 'Drop offered again');
+  click(dialog()!.querySelector('[data-card-drop]'));
+  await until(() => dialog()?.querySelector('[data-card-drop-form] input') !== null, 'the drop form');
+  act(() => {
+    dialog()!.querySelector('[data-card-drop-form] input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  });
+  await until(() => dialog()?.querySelector('[data-card-drop-form]') === null, 'the form closed by Escape');
+  expect(dialog()).not.toBeNull();
+  await until(() => document.activeElement === dialog()?.querySelector('[data-card-drop]'), 'focus back on Drop');
+
+  // Drop, with a reason the person writes.
   click(dialog()!.querySelector('[data-card-drop]'));
   const input = dialog()!.querySelector<HTMLInputElement>('[data-card-drop-form] input')!;
   act(() => {
@@ -318,11 +363,21 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Tak
   expect(dropped.dropped).toMatchObject({ reason: 'Splitting it into smaller cards', by: { kind: 'person' } });
   // The person's own drop never reaches the notice.
   expect((await serverCards()).dropped_unseen).toBe(0);
+  // The drop went through: the form is gone (no second Drop card to press), the card shows it dropped.
+  await until(() => dialog()?.querySelector('[data-card-state="dropped"]') !== null, 'the open card dropped');
+  expect(dialog()!.querySelector('[data-card-drop-form]')).toBeNull();
+  expect(dialog()!.querySelector('[data-card-drop-confirm]')).toBeNull();
+  expect(dialog()!.querySelector('[data-card-note]')!.getAttribute('role')).toBe('status');
+  expect(text(dialog()!.querySelector('[data-card-note]'))).toBe('Dropped. Restore puts it back.');
 
   // Restore from the open card: back where it was.
   await until(() => dialog()?.querySelector('[data-card-restore]') !== null, 'Restore offered');
   click(dialog()!.querySelector('[data-card-restore]'));
   await until(async () => (await columnOf(board.ids.explorer)) === 'building', 'restored');
+  // Back in a lane: Ask, Pause and Drop are offered again.
+  await until(() => dialog()?.querySelector('[data-card-icebox]') !== null, 'Pause offered again');
+  expect(dialog()!.querySelector('[data-card-ask]')).not.toBeNull();
+  expect(dialog()!.querySelector('[data-card-drop]')).not.toBeNull();
 
   // Opening a thread from the card goes to the thread.
   await until(() => dialog()?.querySelector('[data-card-thread]') !== null, 'the thread again');
@@ -349,4 +404,39 @@ test.skipIf(!hasDom)('Ask where this is: nobody running says so; with the card\'
   expect(body.value).toContain(board.ids.portless);
   // To is the card's own agent session.
   await until(() => text(el.ownerDocument.querySelector('dialog')).includes('Claude Code'), 'To filled with the card\'s agent');
+});
+
+test.skipIf(!hasDom)('closing the card after a move puts focus on the card in its new lane; after a Pause, on the Board heading', async () => {
+  const el = await renderApp('#board');
+  await until(() => card(el, 'vite') !== null, 'the Board');
+  click(card(el, 'vite'));
+  await until(() => dialog() !== null, 'the open card');
+  click(dialog()!.querySelector('[data-card-move="designing"]'));
+  await until(() => card(el, 'vite')?.closest('[data-lane]')?.getAttribute('data-lane') === 'designing', 'the card in Designing');
+  click(dialog()!.querySelector('[data-card-close]'));
+  await until(() => document.querySelector('[data-open-card]') === null, 'the card closed');
+  await settle();
+  expect(document.activeElement).toBe(card(el, 'vite'));
+  expect(document.activeElement).not.toBe(document.body);
+
+  click(card(el, 'vite'));
+  await until(() => dialog() !== null, 'the card again');
+  click(dialog()!.querySelector('[data-card-icebox]'));
+  await until(() => dialog()?.querySelector('[data-card-state="icebox"]') !== null, 'paused');
+  click(dialog()!.querySelector('[data-card-close]'));
+  await until(() => document.querySelector('[data-open-card]') === null, 'the card closed');
+  await settle();
+  expect(document.activeElement).toBe(el.querySelector('.ib-board .ib-bhead h1'));
+  // Put it back for the tests after.
+  await command({ card: { id: board.ids.vite, by: 'person', restore: true } });
+  await command({ card: { id: board.ids.vite, by: 'agent', column: 'building' } });
+});
+
+test.skipIf(!hasDom)('Ask where this is, when the card\'s own agent has ended: the card says it asks another session in its project', async () => {
+  // A Claude Code session is live in plannotator (the test before polled one); the caret card's own session is not.
+  await command({ poll: { session: 'ses_cc_other', body: { project_path: board.projects.plannotator, started_at: Date.now() - 60_000 } } });
+  await renderApp(`#board&card=${board.ids.caret}`);
+  await until(() => dialog()?.querySelector('[data-card-ask-other]') !== null, 'the note');
+  expect(text(dialog()!.querySelector('[data-card-ask-other]'))).toBe("Its agent's session ended; this asks another Claude Code session in plannotator.");
+  expect(dialog()!.querySelector<HTMLButtonElement>('[data-card-ask]')!.disabled).toBe(false);
 });

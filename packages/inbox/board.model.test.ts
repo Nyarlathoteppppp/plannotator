@@ -85,9 +85,10 @@ test('Ask where this is: the card\'s own live session, else a live one in its pr
   const own = (c.agent as { session: string }).session;
   const projects = (sessions: Record<string, string[]>): InboxComposeProject[] =>
     Object.entries(sessions).map(([id, list]) => ({ project: { id, name: id, root: `/${id}` }, sessions: list.map((session) => ({ session, host: 'claude-code' }) as never) }));
-  expect(askTarget(c, projects({ prj_b: [own], prj_a: ['ses_other'] }))).toBe(own);
-  expect(askTarget(c, projects({ prj_a: ['ses_other'] }))).toBe('ses_other');
+  expect(askTarget(c, projects({ prj_b: [own], prj_a: ['ses_other'] }))).toEqual({ session: own, own: true, host: 'claude-code' });
+  // Its own agent ended: another session in the project, said as not its own.
+  expect(askTarget(c, projects({ prj_a: ['ses_other'] }))).toEqual({ session: 'ses_other', own: false, host: 'claude-code' });
   expect(askTarget(c, projects({ prj_b: ['ses_other'] }))).toBeNull();
   expect(askTarget(c, null)).toBeNull();
-  expect(askTarget(card({ agent: null }), projects({ prj_a: ['ses_x'] }))).toBe('ses_x');
+  expect(askTarget(card({ agent: null }), projects({ prj_a: ['ses_x'] }))).toEqual({ session: 'ses_x', own: true, host: 'claude-code' });
 });

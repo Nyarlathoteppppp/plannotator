@@ -43,9 +43,10 @@ import { Modal } from './Updates';
 
 export interface BoardActions {
   onOpenCard: (card: InboxCardWire, opener: HTMLElement) => void;
-  onRestore: (card: InboxCardWire) => void;
-  /** The person looked at the agents' drops: they leave the notice. */
-  onDropsSeen: () => void;
+  /** Resolves once the card is back (or the move failed): the button stays busy until then. */
+  onRestore: (card: InboxCardWire) => Promise<unknown>;
+  /** The person looked at the agents' drops the notice showed (these ids): they leave the notice. */
+  onDropsSeen: (cardIds: string[]) => void;
   onView: (view: BoardView) => void;
 }
 
@@ -99,12 +100,42 @@ function BoardCard({ card, now, onOpen }: { card: InboxCardWire; now: number; on
   );
 }
 
+/**
+ * Restore (or Take out) in one click, busy until the answer: a double click
+ * never sends the move twice.
+ */
+function RestoreButton({ card, label, onRestore }: { card: InboxCardWire; label: string; onRestore: BoardActions['onRestore'] }) {
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  return (
+    <button
+      type="button"
+      className="ib-btn ib-sm"
+      disabled={busy}
+      aria-busy={busy || undefined}
+      onClick={() => {
+        if (busyRef.current) return;
+        busyRef.current = true;
+        setBusy(true);
+        void onRestore(card).finally(() => {
+          busyRef.current = false;
+          setBusy(false);
+        });
+      }}
+      data-restore={card.id}
+      aria-label={`${label} ${card.title}`}
+    >
+      {label}
+    </button>
+  );
+}
+
 /** "N dropped by an agent": each card, its agent's reason, and Restore, until the person has looked. */
 export function DropNotice({ cards, now, onRestore, onSeen, onOpen, onDropped }: {
   cards: readonly InboxCardWire[];
   now: number;
-  onRestore: (card: InboxCardWire) => void;
-  onSeen: () => void;
+  onRestore: BoardActions['onRestore'];
+  onSeen: (cardIds: string[]) => void;
   onOpen: (card: InboxCardWire, opener: HTMLElement) => void;
   onDropped: () => void;
 }) {
@@ -120,7 +151,7 @@ export function DropNotice({ cards, now, onRestore, onSeen, onOpen, onDropped }:
           <button type="button" className="ib-btn ib-sm ib-ghost" onClick={onDropped} data-drop-notice-see="">
             See Dropped
           </button>
-          <button type="button" className="ib-btn ib-sm" onClick={onSeen} data-drop-notice-ok="">
+          <button type="button" className="ib-btn ib-sm" onClick={() => onSeen(cards.map((card) => card.id))} data-drop-notice-ok="">
             Got it
           </button>
         </span>
@@ -141,9 +172,7 @@ export function DropNotice({ cards, now, onRestore, onSeen, onOpen, onDropped }:
               </span>
             </span>
             <span className="ib-bcard-age">{card.dropped ? ageShort(card.dropped.at, now) : ''}</span>
-            <button type="button" className="ib-btn ib-sm" onClick={() => onRestore(card)} data-restore={card.id} aria-label={`Restore ${card.title}`}>
-              Restore
-            </button>
+            <RestoreButton card={card} label="Restore" onRestore={onRestore} />
           </li>
         ))}
       </ul>
@@ -341,11 +370,7 @@ export function BoardListPage({
                 now={now}
                 onOpen={actions.onOpenCard}
                 fact={`Paused ${shortTime(card.moved_at)}${card.aside_from ? ` from ${INBOX_CARD_COLUMN_LABELS[card.aside_from]}` : ''}`}
-                action={
-                  <button type="button" className="ib-btn ib-sm" onClick={() => actions.onRestore(card)} data-restore={card.id} aria-label={`Take out ${card.title}`}>
-                    Take out
-                  </button>
-                }
+                action={<RestoreButton card={card} label="Take out" onRestore={actions.onRestore} />}
               />
             ))}
           </BoardGroup>
@@ -362,11 +387,7 @@ export function BoardListPage({
                     {card.dropped?.reason ? <span className="ib-brow-why">: {card.dropped.reason}</span> : null}
                   </>
                 }
-                action={
-                  <button type="button" className="ib-btn ib-sm" onClick={() => actions.onRestore(card)} data-restore={card.id} aria-label={`Restore ${card.title}`}>
-                    Restore
-                  </button>
-                }
+                action={<RestoreButton card={card} label="Restore" onRestore={actions.onRestore} />}
               />
             ))}
           </BoardGroup>
@@ -396,8 +417,10 @@ export interface CardDialogProps {
   /** Whether a live session can take "Ask where this is" (the card's agent, or one in its project). */
   canAsk: boolean;
   busy: boolean;
-  /** What the person's last move here did ("Paused: it is in the Icebox."), shown in the card. */
-  note?: string | null;
+  /** What the person's last move here did ("Paused: it is in the Icebox."), or why it failed (`error`), shown in the card. */
+  note?: { text: string; error?: boolean } | null;
+  /** The card's own agent has ended: who "Ask where this is" asks instead (null: its own agent, or nobody). */
+  askOther?: { host: string; project: string | null } | null;
   onClose: () => void;
   onMove: (column: InboxCardColumn) => void;
   onIcebox: () => void;
@@ -408,7 +431,7 @@ export interface CardDialogProps {
 }
 
 /** The open card: what it is, where it stands, its threads and PRs, and the person's moves. */
-export function CardDialog({ card, model, now, canAsk, busy, note, onClose, onMove, onIcebox, onDrop, onRestore, onOpenThread, onAsk }: CardDialogProps) {
+export function CardDialog({ card, model, now, canAsk, busy, note, askOther, onClose, onMove, onIcebox, onDrop, onRestore, onOpenThread, onAsk }: CardDialogProps) {
   const titleId = useId();
   const reasonId = useId();
   const [dropping, setDropping] = useState(false);
@@ -424,6 +447,21 @@ export function CardDialog({ card, model, now, canAsk, busy, note, onClose, onMo
   useEffect(() => {
     if (dropping) reasonRef.current?.focus();
   }, [dropping]);
+  // A drop that went through (or any other move: Restore, a move from the event stream) closes the drop form.
+  const dropButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    setDropping(false);
+    setReason('');
+  }, [card.column]);
+  /** Escape in the reason field steps back to the card (the form closes, the card stays), focus on Drop. */
+  const leaveDropForm = () => {
+    setDropping(false);
+    requestAnimationFrame(() => dropButtonRef.current?.focus());
+  };
+  /** When the card closes and what opened it is gone (it moved lanes, or left the Board): the card on the page, else the Board's heading. */
+  const fallbackFocus = () =>
+    document.querySelector<HTMLElement>(`.ib-bcard[data-card-id="${CSS.escape(card.id)}"], .ib-brow[data-card-id="${CSS.escape(card.id)}"] .ib-brow-t`) ??
+    document.querySelector<HTMLElement>('.ib-board .ib-bhead h1');
   const line = cardLine(card);
   const project = model?.projects?.[card.project_id] ?? null;
   const live = isInboxCardLiveColumn(card.column);
@@ -431,7 +469,7 @@ export function CardDialog({ card, model, now, canAsk, busy, note, onClose, onMo
   const threads = card.threads.map((id) => ({ id, row: model?.threads?.[id] ?? null }));
   const agent = cardAgentName(card);
   return (
-    <Modal labelledBy={titleId} onClose={onClose} testId="card" ownKeys className="ib-cardlg">
+    <Modal labelledBy={titleId} onClose={onClose} testId="card" ownKeys className="ib-cardlg" fallbackFocus={fallbackFocus}>
       <div className="ib-cd" data-open-card={card.id} data-column={card.column}>
         <div className="ib-cd-head">
           <span className="ib-cd-mk" aria-hidden="true">
@@ -468,12 +506,11 @@ export function CardDialog({ card, model, now, canAsk, busy, note, onClose, onMo
           </Tip>
         </div>
 
-        {note && (
-          <p className="ib-cd-done" data-card-note="">
-            <Icon name="check" size={15} />
-            {note}
-          </p>
-        )}
+        {/* What the last move here did, or why it failed: said here, since a toast under the modal could not be reached. */}
+        <p className="ib-cd-done" role="status" data-card-note="" data-error={note?.error ? '' : undefined} hidden={!note}>
+          {note && <Icon name={note.error ? 'warn' : 'check'} size={15} />}
+          {note?.text}
+        </p>
 
         {line && (
           <p className={`ib-cd-line${line.you ? ' ib-cd-you' : ''}`} dir="auto" data-card-line="">
@@ -580,9 +617,23 @@ export function CardDialog({ card, model, now, canAsk, busy, note, onClose, onMo
             }}
           >
             <label htmlFor={reasonId}>Why drop it? (optional)</label>
-            <input id={reasonId} ref={reasonRef} type="text" value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} placeholder="Not needed any more" />
+            <input
+              id={reasonId}
+              ref={reasonRef}
+              type="text"
+              value={reason}
+              maxLength={500}
+              onChange={(event) => setReason(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return;
+                event.preventDefault();
+                event.stopPropagation();
+                leaveDropForm();
+              }}
+              placeholder="Not needed any more"
+            />
             <div className="ib-cd-acts">
-              <button type="button" className="ib-btn" onClick={() => setDropping(false)}>
+              <button type="button" className="ib-btn" onClick={leaveDropForm}>
                 Cancel
               </button>
               <button type="submit" className="ib-btn ib-danger" disabled={busy} data-card-drop-confirm="">
@@ -605,13 +656,18 @@ export function CardDialog({ card, model, now, canAsk, busy, note, onClose, onMo
                     Pause
                   </button>
                 )}
-                <button type="button" className="ib-btn" onClick={() => setDropping(true)} disabled={busy} data-card-drop="">
+                <button type="button" className="ib-btn" ref={dropButtonRef} onClick={() => setDropping(true)} disabled={busy} data-card-drop="">
                   <Icon name="trash" size={15} />
                   Drop
                 </button>
               </>
             ) : null}
           </div>
+        )}
+        {(live || card.column === 'shipped') && canAsk && askOther && !dropping && (
+          <p className="ib-cd-note" data-card-ask-other="">
+            Its agent's session ended; this asks another {askOther.host} session in {askOther.project ? <bdi>{askOther.project}</bdi> : 'its project'}.
+          </p>
         )}
         {(live || card.column === 'shipped') && !canAsk && !dropping && (
           <p className="ib-cd-note" data-card-ask-note="">No agent is running in {project ? <bdi>{project.name}</bdi> : 'this project'} now, so there is no one to ask.</p>

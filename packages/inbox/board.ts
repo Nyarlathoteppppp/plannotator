@@ -129,13 +129,23 @@ export function cardCount(n: number): string {
 
 /**
  * Where "Ask where this is" goes (the owner's accepted default): the card's
- * own agent session while it is live, else a live session in the card's
- * project, else nowhere (null: nobody can be asked now).
+ * own agent session while it is live (`own`), else a live session in the
+ * card's project, else nowhere (null: nobody can be asked now). `host` names
+ * the session's agent.
  */
-export function askTarget(card: Pick<InboxCardWire, 'agent' | 'project_id'>, projects: readonly InboxComposeProject[] | null | undefined): string | null {
+export function askTarget(
+  card: Pick<InboxCardWire, 'agent' | 'project_id'>,
+  projects: readonly InboxComposeProject[] | null | undefined,
+): { session: string; own: boolean; host: string } | null {
   if (!projects) return null;
   const own = card.agent?.kind === 'agent' ? card.agent.session : null;
-  if (own && projects.some((p) => p.sessions.some((s) => s.session === own))) return own;
-  const here = projects.find((p) => p.project.id === card.project_id);
-  return here?.sessions[0]?.session ?? null;
+  if (own) {
+    for (const p of projects) {
+      const live = p.sessions.find((s) => s.session === own);
+      if (live) return { session: own, own: true, host: live.host };
+    }
+  }
+  const other = projects.find((p) => p.project.id === card.project_id)?.sessions[0];
+  // A card the person made has no agent of its own: any live session in its project is "its" session.
+  return other ? { session: other.session, own: !own, host: other.host } : null;
 }
