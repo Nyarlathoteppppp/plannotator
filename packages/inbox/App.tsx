@@ -1085,7 +1085,9 @@ function Inbox() {
       {
         icon: 'check',
         lead: `Sent to ${hostLabel(sent.host)}`,
-        detail: `in ${sent.projectName}. It takes it as its next turn.`,
+        // Short enough for one line; the thread's own line says Queued / Sending / Delivered.
+        detail: `in ${sent.projectName}`,
+        speech: `Sent to ${hostLabel(sent.host)} in ${sent.projectName}. It takes it as its next turn.`,
         action: { label: 'Open', onPress: () => {
           dismissToast();
           go({ page: 'inbox', project: routeRef.current.page === 'inbox' ? routeRef.current.project : null, thread: sent.threadId });
