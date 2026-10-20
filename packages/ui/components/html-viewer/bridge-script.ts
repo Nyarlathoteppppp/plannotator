@@ -72,17 +72,18 @@ body[data-plannotator-pinpoint-cursor]:not([data-plannotator-pin-modifier]) svg 
   cursor: pointer !important;
 }
 /* Touch, armed: a tap on a link follows it and a press-and-hold pins it for
- * a comment. The platform's own long-press (iOS's link callout, Android's
- * context menu and text selection) would take that hold, so it is off on
- * links while armed. Set once a touch is seen (data-plannotator-touch), and
- * on screens without hover, so a desktop keeps selecting link text. */
+ * a comment. iOS's link callout would take that hold, so it is off on links
+ * while armed, once a touch is seen (data-plannotator-touch) or on screens
+ * without hover. The callout is all: link text stays selectable, so a drag
+ * across a link (a trackpad, a touchscreen laptop) still quotes its words.
+ * Only while a hold on a link is in progress (data-plannotator-link-hold,
+ * from its touchstart to its release) is selection off too, so the platform's
+ * long-press does not start a native text selection under the finger. */
 body[data-plannotator-pinpoint-cursor][data-plannotator-touch] :is(a, area),
 body[data-plannotator-pinpoint-cursor][data-plannotator-touch] :is(a, area) *,
 body[data-plannotator-pinpoint-cursor][data-plannotator-touch] svg a,
 body[data-plannotator-pinpoint-cursor][data-plannotator-touch] svg a * {
   -webkit-touch-callout: none !important;
-  -webkit-user-select: none !important;
-  user-select: none !important;
 }
 @media (hover: none) {
   body[data-plannotator-pinpoint-cursor] :is(a, area),
@@ -90,9 +91,15 @@ body[data-plannotator-pinpoint-cursor][data-plannotator-touch] svg a * {
   body[data-plannotator-pinpoint-cursor] svg a,
   body[data-plannotator-pinpoint-cursor] svg a * {
     -webkit-touch-callout: none !important;
-    -webkit-user-select: none !important;
-    user-select: none !important;
   }
+}
+body[data-plannotator-link-hold] :is(a, area),
+body[data-plannotator-link-hold] :is(a, area) *,
+body[data-plannotator-link-hold] svg a,
+body[data-plannotator-link-hold] svg a * {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
 }
 /* Armed pinpoint over an EMBEDDED local document: the embed is one element
  * from the outer page's point of view, and the bridge is never injected into a
@@ -3972,57 +3979,124 @@ export const BRIDGE_SCRIPT = `(function() {
   // The owner's amendment to html-link-click (2026-10-20): on a phone there is
   // no Cmd/Ctrl, so while armed a TAP on a link follows it (the click handlers
   // below take it as a plain click) and a PRESS-AND-HOLD of HOLD_PIN_MS opens
-  // a comment on it, pinned like a Cmd-click. Every surface alike: srcdoc
-  // pages (annotate, plan review's HTML, the Inbox) and live apps.
-  // A finger that moves past HOLD_SLOP_PX (a scroll) cancels the hold. The
-  // release after a hold never follows the link: touchend is cancelled, which
-  // stops the click a browser would synthesize, and any click that still
-  // arrives (some engines send one) is swallowed once. The platform's own
-  // long-press (iOS's callout, Android's context menu and selection) is off
-  // on links while armed (the CSS above), and Android's contextmenu, which
-  // is its long-press signal, fires the hold at once.
+  // a comment on it, pinned exactly as a Cmd-click pins it. Every surface
+  // alike: srcdoc pages (annotate, plan review's HTML, the Inbox) and live apps.
+  // A finger that moves past HOLD_SLOP_PX (a scroll), a second finger, or a
+  // scroll cancels the hold. The release of a hold that pinned never follows
+  // the link and never reaches the page: its pointerup and touchend are
+  // stopped at the window (registered before a live app's own listeners),
+  // touchend is cancelled so no click is synthesized, and a click that still
+  // arrives is swallowed once. That swallow ends at the next touch, mouse
+  // press or key, so it never eats an unrelated click.
+  // While a hold is in progress, link text is not selectable (the CSS above),
+  // so the platform's long-press starts no native selection under the finger;
+  // Android's contextmenu, its long-press signal, fires the hold at once.
   var HOLD_PIN_MS = 500;
   var HOLD_SLOP_PX = 10;
+  var HOLD_SWALLOW_MAX_MS = 10000; // a release never seen (an app stopped touchend)
   var linkHold = null; // { timer, x, y, id, target }
-  var holdSwallowsClickUntil = 0; // a click before this is the hold's own release
+  // After a hold pinned: { pointerId, released, until } until its release's
+  // click (if any) is swallowed or the next gesture starts.
+  var heldGesture = null;
+  var lastTouchPointerId = null;
   function holdArmed() {
     return annotateModeActive && currentInputMethod === 'pinpoint' && !(vimEnabled && vimPhase !== 'inactive');
+  }
+  function setLinkHoldStyle(on) {
+    if (!document.body) return;
+    if (on) document.body.setAttribute('data-plannotator-link-hold', '');
+    else document.body.removeAttribute('data-plannotator-link-hold');
   }
   function cancelLinkHold() {
     if (!linkHold) return;
     clearTimeout(linkHold.timer);
     linkHold = null;
+    setLinkHoldStyle(false);
   }
   function fireLinkHold() {
     var hold = linkHold;
     if (!hold) return false;
     clearTimeout(hold.timer);
     linkHold = null;
-    if (!holdArmed() || !hold.target.isConnected) return false;
+    if (!holdArmed() || !hold.target.isConnected) {
+      setLinkHoldStyle(false);
+      return false;
+    }
     var el = resolvePinpointTargetAt(hold.x, hold.y, hold.target);
-    if (!el) return false;
-    // Until the finger lifts (touchend sets the real deadline).
-    holdSwallowsClickUntil = Infinity;
+    if (!el) {
+      setLinkHoldStyle(false);
+      return false;
+    }
+    heldGesture = { pointerId: lastTouchPointerId, released: false, pointerUpSeen: false, until: Date.now() + HOLD_SWALLOW_MAX_MS };
+    // The same pin a Cmd-click makes: the link's own words as a text range.
+    // Selection is back on for that, then off again until the finger lifts.
+    setLinkHoldStyle(false);
     try { window.getSelection().removeAllRanges(); } catch (ex) {}
     annotateElement(el, undefined, true, { x: hold.x, y: hold.y });
+    setLinkHoldStyle(true);
     return true;
+  }
+  function endHeldGesture() {
+    heldGesture = null;
   }
   function touchById(list, id) {
     for (var i = 0; list && i < list.length; i++) if (list[i].identifier === id) return list[i];
     return null;
   }
+  // Pointer events come before touch events; the touch's pointerId names the
+  // release's pointerup.
+  window.addEventListener('pointerdown', function(e) {
+    if (e.pointerType === 'touch') {
+      lastTouchPointerId = e.pointerId;
+      if (heldGesture && heldGesture.released) endHeldGesture();
+      return;
+    }
+    // A mouse or pen press: whatever click comes next is its own.
+    endHeldGesture();
+  }, true);
+  window.addEventListener('keydown', function() { if (heldGesture && heldGesture.released) endHeldGesture(); }, true);
+  window.addEventListener('pointerup', function(e) {
+    if (!heldGesture || heldGesture.pointerUpSeen || e.pointerType !== 'touch') return;
+    if (heldGesture.pointerId !== null && e.pointerId !== heldGesture.pointerId) return;
+    heldGesture.pointerUpSeen = true;
+    e.stopImmediatePropagation();
+  }, true);
+  window.addEventListener('touchend', function(e) {
+    if (heldGesture && !heldGesture.released) {
+      // The release of the hold that pinned: no click, no navigation, and
+      // the page's own touchend never runs on it.
+      if (e.cancelable) e.preventDefault();
+      e.stopImmediatePropagation();
+      heldGesture.released = true;
+      heldGesture.until = Date.now() + 800;
+      setLinkHoldStyle(false);
+      return;
+    }
+    cancelLinkHold(); // a tap: the click that follows it follows the link
+  }, { capture: true, passive: false });
+  window.addEventListener('touchcancel', function() {
+    cancelLinkHold();
+    setLinkHoldStyle(false);
+    if (heldGesture) {
+      heldGesture.released = true;
+      heldGesture.until = Date.now() + 800;
+    }
+  }, true);
   document.addEventListener('touchstart', function(e) {
     if (document.body && !document.body.hasAttribute('data-plannotator-touch')) {
       document.body.setAttribute('data-plannotator-touch', '');
     }
     cancelLinkHold();
-    // A new touch: whatever click comes next is its own, not a hold's release.
-    if (holdSwallowsClickUntil !== Infinity) holdSwallowsClickUntil = 0;
+    // A new touch: whatever click comes next is its own, even if the last
+    // hold's release was never seen.
+    endHeldGesture();
+    setLinkHoldStyle(false);
     if (!holdArmed() || !e.touches || e.touches.length !== 1) return;
     if (isViewerOverlayNode(e.target) || !followableLinkAt(e.target)) return;
     var t = e.touches[0];
     linkHold = { x: t.clientX, y: t.clientY, id: t.identifier, target: e.target, timer: 0 };
     linkHold.timer = setTimeout(fireLinkHold, HOLD_PIN_MS);
+    setLinkHoldStyle(true);
   }, { capture: true, passive: true });
   document.addEventListener('touchmove', function(e) {
     if (!linkHold) return;
@@ -4031,19 +4105,6 @@ export const BRIDGE_SCRIPT = `(function() {
       cancelLinkHold();
     }
   }, { capture: true, passive: true });
-  document.addEventListener('touchend', function(e) {
-    if (holdSwallowsClickUntil === Infinity) {
-      // The release of a hold that pinned: no click, no navigation.
-      if (e.cancelable) e.preventDefault();
-      holdSwallowsClickUntil = Date.now() + 800;
-      return;
-    }
-    cancelLinkHold(); // a tap: the click that follows it follows the link
-  }, { capture: true, passive: false });
-  document.addEventListener('touchcancel', function() {
-    cancelLinkHold();
-    if (holdSwallowsClickUntil === Infinity) holdSwallowsClickUntil = Date.now() + 800;
-  }, true);
   window.addEventListener('scroll', cancelLinkHold, true);
   document.addEventListener('contextmenu', function(e) {
     if (linkHold) {
@@ -4051,15 +4112,16 @@ export const BRIDGE_SCRIPT = `(function() {
       fireLinkHold();
       return;
     }
-    if (Date.now() < holdSwallowsClickUntil) e.preventDefault();
+    if (heldGesture && Date.now() < heldGesture.until) e.preventDefault();
   }, true);
-  // Registered before every other click handler of the bridge, so the
-  // release of a hold reaches neither the link handler nor the pinpoint one,
-  // nor the page (a live app would navigate).
-  document.addEventListener('click', function(e) {
-    if (!holdSwallowsClickUntil) return;
-    if (Date.now() >= holdSwallowsClickUntil) { holdSwallowsClickUntil = 0; return; }
-    holdSwallowsClickUntil = 0;
+  // On the window, before every other click handler of the bridge and a live
+  // app's own, so the release of a hold reaches neither the link handler nor
+  // the pinpoint one, nor the page (a live app would navigate).
+  window.addEventListener('click', function(e) {
+    if (!heldGesture) return;
+    var swallow = Date.now() < heldGesture.until;
+    endHeldGesture();
+    if (!swallow) return;
     e.preventDefault();
     e.stopImmediatePropagation();
   }, true);

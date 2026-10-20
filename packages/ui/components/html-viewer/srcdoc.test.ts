@@ -4556,6 +4556,11 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
       const anchor = selections[0]!.anchor as { selector: string; tagName: string };
       expect(anchor.tagName).toBe("a");
       expect(document.querySelector(anchor.selector)).toBe(document.querySelector("#rel"));
+      // The same pin a Cmd-click makes: the link's words as a text range, not a bare element.
+      expect(selections[0]!.text).toBe("Entry point");
+      expect(selections[0]!.element).toBeUndefined();
+      // Selection is off on links only while the finger is down.
+      expect(document.body.hasAttribute("data-plannotator-link-hold")).toBe(true);
       // The release: cancelled, so no click is synthesized; one that arrives anyway is swallowed.
       const end = touch("touchend", "#rel", 10, 10, false);
       expect(end.defaultPrevented).toBe(true);
@@ -4565,6 +4570,7 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
       expect(click.defaultPrevented).toBe(true);
       expect(capturedLinkPosts).toEqual([]);
       expect(selections.length).toBe(1);
+      expect(document.body.hasAttribute("data-plannotator-link-hold")).toBe(false);
       // The next tap is a tap again.
       touch("touchstart", "#rel", 10, 10);
       touch("touchend", "#rel", 10, 10, false);
@@ -4572,6 +4578,73 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
       await flushPosts();
       expect(capturedLinkPosts.map((p) => p.href)).toEqual(["next.html"]);
       postBridge({ type: "plannotator-bridge-cancel-selection" });
+      document.body.removeAttribute("data-plannotator-touch");
+    });
+
+    function pointer(type: string, selector: string, pointerType: string, pointerId = 1): Event {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "pointerType", { value: pointerType });
+      Object.defineProperty(event, "pointerId", { value: pointerId });
+      document.querySelector(selector)!.dispatchEvent(event);
+      return event;
+    }
+
+    for (const [label, next] of [
+      ["a mouse press", () => pointer("pointerdown", "#rel", "mouse", 9)],
+      ["a key", () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))],
+      ["a new touch", () => { touch("touchstart", "#rel", 10, 10); touch("touchend", "#rel", 10, 10, false); }],
+    ] as const) {
+      test(`touch, armed: after a hold's release with no click, ${label} ends the swallow, so its click follows`, async () => {
+        setUp('<a id="rel" href="next.html">Next</a>', true);
+        await flushPosts();
+        touch("touchstart", "#rel", 10, 10);
+        await wait(560);
+        touch("touchend", "#rel", 10, 10, false);
+        postBridge({ type: "plannotator-bridge-cancel-selection" });
+        await flushPosts();
+        next();
+        const click = clickLink("#rel");
+        await flushPosts();
+        expect(click.defaultPrevented).toBe(true); // the frame never navigates itself
+        expect(capturedLinkPosts.map((p) => p.href)).toEqual(["next.html"]);
+        document.body.removeAttribute("data-plannotator-touch");
+      });
+    }
+
+    test("touch, armed: a hold whose release was never seen (the page stopped touchend) does not eat the next tap", async () => {
+      setUp('<a id="rel" href="next.html">Next</a>', true);
+      await flushPosts();
+      touch("touchstart", "#rel", 10, 10);
+      await wait(560);
+      postBridge({ type: "plannotator-bridge-cancel-selection" });
+      // No touchend reached the bridge. The next tap is a tap.
+      touch("touchstart", "#rel", 10, 10);
+      touch("touchend", "#rel", 10, 10, false);
+      clickLink("#rel");
+      await flushPosts();
+      expect(capturedLinkPosts.map((p) => p.href)).toEqual(["next.html"]);
+      document.body.removeAttribute("data-plannotator-touch");
+    });
+
+    test("touch, armed: a tap never turns selection off, so link text stays quotable by a drag", async () => {
+      setUp('<p>Start with <a id="rel" href="next.html">the detail page</a> today.</p>', true);
+      await flushPosts();
+      touch("touchstart", "#rel", 10, 10);
+      expect(document.body.hasAttribute("data-plannotator-link-hold")).toBe(true);
+      touch("touchend", "#rel", 10, 10, false);
+      expect(document.body.hasAttribute("data-plannotator-link-hold")).toBe(false);
+      clickLink("#rel");
+      await flushPosts();
+      // The only rule that turns link selection off is scoped to a hold in progress.
+      const css = ANNOTATION_HIGHLIGHT_CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+      const rules = css.split("}").filter((r) => /user-select:\s*none/.test(r));
+      expect(rules.length).toBeGreaterThan(0);
+      for (const rule of rules) {
+        const selectors = rule.slice(0, rule.indexOf("{"));
+        if (/:is\(a, area\)/.test(selectors)) {
+          for (const sel of selectors.split(/,\s*\n/)) expect(sel).toContain("data-plannotator-link-hold");
+        }
+      }
       document.body.removeAttribute("data-plannotator-touch");
     });
 

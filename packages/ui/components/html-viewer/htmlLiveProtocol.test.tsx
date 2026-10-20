@@ -643,6 +643,50 @@ describe.if(hasDom)('live bridge gate (composed body in the eval harness)', () =
     postToBridge({ type: 'plannotator-bridge-cancel-selection', token: bridgeToken });
   });
 
+  function pointerProbe(type: string, el: Element, pointerId = 7): Event {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'pointerType', { value: 'touch' });
+    Object.defineProperty(event, 'pointerId', { value: pointerId });
+    el.dispatchEvent(event);
+    return event;
+  }
+
+  test("ARMED, touch: the release of a hold never reaches the app's own pointerup, touchend or click; a tap's does", async () => {
+    const link = probeLink();
+    const seen: string[] = [];
+    const app = (e: Event) => seen.push(e.type);
+    // The app's listeners, on the window and the link, as a router or a gesture library adds them.
+    for (const type of ['pointerup', 'touchend', 'click']) {
+      bridgeWindow.addEventListener(type, app, true);
+      link.addEventListener(type, app);
+    }
+    const stopNavigation = (e: Event) => e.preventDefault();
+    bridgeWindow.addEventListener('click', stopNavigation);
+    try {
+      pointerProbe('pointerdown', link);
+      touchProbe('touchstart', link);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      pointerProbe('pointerup', link);
+      touchProbe('touchend', link, false);
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(seen).toEqual([]);
+      postToBridge({ type: 'plannotator-bridge-cancel-selection', token: bridgeToken });
+      // A tap afterwards is the app's: every event reaches it.
+      pointerProbe('pointerdown', link, 8);
+      touchProbe('touchstart', link);
+      pointerProbe('pointerup', link, 8);
+      touchProbe('touchend', link, false);
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(seen).toEqual(['pointerup', 'pointerup', 'touchend', 'touchend', 'click', 'click']);
+    } finally {
+      for (const type of ['pointerup', 'touchend', 'click']) {
+        bridgeWindow.removeEventListener(type, app, true);
+        link.removeEventListener(type, app);
+      }
+      bridgeWindow.removeEventListener('click', stopNavigation);
+    }
+  });
+
   test('ARMED, touch: a tap on a link follows it natively (no pin, never prevented)', () => {
     const link = probeLink();
     const selectionsBefore = selectionPosts().length;

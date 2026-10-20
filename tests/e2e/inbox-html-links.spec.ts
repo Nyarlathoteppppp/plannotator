@@ -406,7 +406,7 @@ for (const phone of [
       const page = await context.newPage();
       const { frame } = await openSheet(page, url, thread, ids['SHEET.html']!);
       const link = frame.getByRole('link', { name: 'A: Story page' });
-      // Armed, links lose the platform's own long-press (iOS's callout, the selection) so the hold is ours.
+      // Armed, links lose iOS's callout so the hold is ours; their text stays selectable outside a hold.
       await link.tap();
       await expect(page.locator('[data-linked-page="A-story.html"]')).toBeVisible();
       await shot(page, `10-phone-tap-follows-${phone.browserName}`);
@@ -422,7 +422,7 @@ for (const phone of [
           select: cs.userSelect || cs.webkitUserSelect || '',
         };
       });
-      expect(style.select).toBe('none');
+      expect(style.select).not.toBe('none');
       expect(style.calloutRule).toBe(true);
       if (style.calloutSupported) expect(style.callout).toBe('none');
       // Press and hold: the comment composer opens on the link, and the release follows nothing.

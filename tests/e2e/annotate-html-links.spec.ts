@@ -4,7 +4,8 @@
  * real browser against the compiled binary: armed (Annotate, the default), a
  * plain click on a link follows it and a Cmd/Ctrl-click pins it for a
  * comment; on a phone a tap follows and a press-and-hold pins, and the
- * release after a hold follows nothing.
+ * release after a hold follows nothing. On a touchscreen laptop (touch seen,
+ * then a mouse drag) a selection across a link still quotes the link's words.
  *
  * Two surfaces: a local HTML file (`plannotator annotate index.html`, the
  * srcdoc viewer) and a live app (`plannotator annotate http://localhost:<port>/`,
@@ -144,7 +145,7 @@ async function holdLink(page: Page, link: Locator, browserName: string, ms = 750
   }, ms);
 }
 
-const LOCAL_INDEX = `<!doctype html><html><head><meta charset="utf-8"><title>Index</title>${STYLE}</head><body><h1>Report index</h1><p>Start with <a href="02-detail.html">the detail page</a>.</p></body></html>`;
+const LOCAL_INDEX = `<!doctype html><html><head><meta charset="utf-8"><title>Index</title>${STYLE}</head><body><h1>Report index</h1><p id="lead">Start with <a href="02-detail.html">the detail page</a> today.</p></body></html>`;
 const LOCAL_DETAIL = `<!doctype html><html><head><meta charset="utf-8"><title>Detail</title>${STYLE}</head><body><h1>Detail page</h1><p><a href="index.html">Back to the index</a></p></body></html>`;
 
 function writeSite(root: string) {
@@ -173,6 +174,48 @@ test('a local HTML file, armed: a plain click follows the link, a Cmd/Ctrl-click
       await expect(frame.locator('h1')).toHaveText('Detail page');
       await expect(composer).toHaveCount(0);
       await shot(page, 'annotate-2-click-follows');
+    } finally {
+      await context.close();
+    }
+  } finally {
+    await close();
+  }
+});
+
+test('a touchscreen laptop: after a touch, a mouse drag across a link still quotes the link text', async ({ browser }) => {
+  const { url, close } = await annotate(writeSite);
+  try {
+    const { context, page } = await newSession(browser, url, { viewport: { width: 1280, height: 860 }, hasTouch: true });
+    try {
+      const frame = page.frameLocator('iframe[sandbox]');
+      await expect(frame.locator('h1')).toHaveText('Report index');
+      // One touch: a tap on the heading pins it; Escape closes the composer.
+      await frame.locator('h1').tap();
+      const composer = page.locator('[data-comment-popover]');
+      await expect(composer).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(composer).toHaveCount(0);
+      expect(await frame.locator('body').evaluate((b) => b.hasAttribute('data-plannotator-touch'))).toBe(true);
+      // A mouse drag from the paragraph's first word to its last, across the link.
+      const lead = frame.locator('#lead');
+      const box = (await lead.boundingBox())!;
+      const right = await lead.evaluate((p) => {
+        const r = document.createRange();
+        r.selectNodeContents(p);
+        const rects = r.getClientRects();
+        return rects[rects.length - 1]!.right - p.getBoundingClientRect().left;
+      });
+      await page.mouse.move(box.x + 1, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + right / 2, box.y + box.height / 2, { steps: 5 });
+      await page.mouse.move(box.x + right - 1, box.y + box.height / 2, { steps: 5 });
+      await page.mouse.up();
+      expect(await lead.evaluate(() => (getSelection()?.toString() ?? '').replace(/\s+/g, ' ').trim())).toBe('Start with the detail page today.');
+      // The selection toolbar's Comment opens the composer quoting the whole sentence, link words included.
+      await page.getByRole('button', { name: 'Comment', exact: true }).click();
+      await expect(composer).toBeVisible();
+      await expect(composer).toContainText('Start with the detail page today.');
+      await shot(page, 'annotate-3-touch-laptop-drag-quotes-link');
     } finally {
       await context.close();
     }
