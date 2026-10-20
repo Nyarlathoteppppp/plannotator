@@ -23,7 +23,7 @@ import { ComposeFileTiles, attachedAnnouncement, useComposeFiles } from './Compo
 import { ToPicker } from './ToPicker';
 import { ThreadNameChip } from './ThreadNameChip';
 import { useComposeSessions } from './useComposeSessions';
-import { InboxComposerField } from '../components/ComposerField';
+import { InboxComposerField, type CaretMenuOptions } from '../components/ComposerField';
 import { Tip } from '../components/Tip';
 import { INBOX_MESSAGE_SKILL_AUDIENCE, inboxSkillsBlock, withSkillsBlock } from '../skills';
 import {
@@ -44,6 +44,9 @@ import {
   type ThreadNameState,
   type ComposeTarget,
 } from './model';
+
+/** A phone's picker shows at most 4½ rows of 44 px (the reply box's rule, inbox.css). */
+const PHONE_SKILL_LIST_HEIGHT = 198;
 
 export interface ComposeRequest {
   /** A draft to reopen (the Drafts page). */
@@ -296,6 +299,25 @@ export function ComposeDialog(props: ComposeDialogProps) {
     }
   };
 
+  // The skill picker's room: the dialog below its phone bar, above its footer and the keyboard.
+  const caretMenu = useMemo<CaretMenuOptions>(
+    () => ({
+      prefer: phone ? 'above' : 'below',
+      maxListHeight: phone ? PHONE_SKILL_LIST_HEIGHT : undefined,
+      bounds: () => {
+        const dialog = dialogRef.current;
+        if (!dialog) return null;
+        const box = dialog.getBoundingClientRect();
+        const bar = dialog.querySelector('.ib-cp-bar')?.getBoundingClientRect();
+        const foot = dialog.querySelector('.ib-cp-foot, .ib-cp-ask')?.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        const seen = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+        return { top: bar ? bar.bottom : box.top, bottom: Math.min(foot ? foot.top : box.bottom, seen) };
+      },
+    }),
+    [phone],
+  );
+
   // ── keys ──
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDialogElement>) => {
     // A key the skill picker took (Escape closing it, Enter on a row) is not the dialog's.
@@ -523,6 +545,10 @@ export function ComposeDialog(props: ComposeDialogProps) {
             ariaDescribedBy={statusId}
             destination="your message"
             placeholder="Write an idea or a request. It starts a new thread."
+            // The field is tall and sits in a scrolling body above the footer: the picker opens at the
+            // caret, inside the dialog and above its footer, and Escape closes it before the dialog.
+            caretMenu={caretMenu}
+            escapeClosesMenu
             value={body}
             onChange={(value) => {
               setBody(value);
