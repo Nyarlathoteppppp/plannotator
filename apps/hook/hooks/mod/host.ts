@@ -27,8 +27,8 @@ export interface TranscriptMessage {
 export interface LoadedPluginInfo {
   /** plugin.json's version; null when unreadable. */
   version: string | null
-  /** The plugin's folder (`$.plugin.root`). */
-  root: string
+  /** The plugin's folder (`$.plugin.root`); null when it could not be read. */
+  root: string | null
   /** When the module loaded, ms since the epoch. */
   loaded_at: number
 }
@@ -82,7 +82,8 @@ export interface Host {
    * The plugin this process loaded: its plugin.json version, its folder
    * (`$.plugin.root`) and when the module loaded (ms). Read once per process.
    * The Inbox poll carries it, so the Inbox can say when a restart would
-   * load a newer plugin. Optional: absent or null, the poll says nothing.
+   * load a newer plugin. The engine's host always answers (with null parts
+   * when a read failed); optional for test hosts, which then send nothing.
    */
   loadedPlugin?(): Promise<LoadedPluginInfo | null>
   /** Claude Code's own version (`$.session.version()`'s `base`); null when unknown. Optional. */

@@ -296,6 +296,12 @@ export interface InboxLinkOptions {
   steerableTurn?: () => string | null
   /** The session's working folder, sent with each poll so New message can find the session by project. */
   cwd?: () => Promise<string>
+  /**
+   * The session's root (`$.session.root()`), read once when the link starts
+   * (a later /cd moves it) and sent as `session_folder`: the folder
+   * `claude --resume` runs in, for the Inbox's restart command.
+   */
+  root?: () => Promise<string>
   /** Names this process in the lease and the claims. */
   instanceId: string
 }
@@ -358,6 +364,8 @@ export class InboxLink {
   private steerRefused = false
   /** What this process loaded, read once (`loadedNow`). */
   private loaded: Promise<{ plugin: LoadedPluginInfo | null; engine: string | null }> | null = null
+  /** Where the session started, read once (`folderNow`). */
+  private folder: Promise<string | null> | null = null
 
   constructor(private readonly options: InboxLinkOptions) {
     this.host = options.host
@@ -564,6 +572,15 @@ export class InboxLink {
     return this.options.steerableTurn?.() ?? null
   }
 
+  /** Where the session started, asked once (the first answer stands; a later /cd moves `$.session.root()`). */
+  private async folderNow(): Promise<string | null> {
+    this.folder ??= (async () => {
+      if (!this.options.root) return this.options.cwd ? await this.options.cwd().catch(() => null) : null
+      return (await this.options.root().catch(() => null)) ?? (this.options.cwd ? await this.options.cwd().catch(() => null) : null)
+    })()
+    return this.folder
+  }
+
   /** What this process loaded (plugin and engine), asked once and remembered: it never changes while the process runs. */
   private async loadedNow(): Promise<{ plugin: LoadedPluginInfo | null; engine: string | null }> {
     this.loaded ??= (async () => ({
@@ -637,6 +654,7 @@ export class InboxLink {
   private async pendingNow(waitMs: number): Promise<InboxReplyCommand[] | null> {
     const cwd = this.options.cwd ? await this.options.cwd().catch(() => '') : ''
     const loaded = await this.loadedNow()
+    const folder = await this.folderNow()
     const response = await this.bridge(INBOX_BRIDGE_POLL_PATH, {
       waitMs,
       ...(cwd ? { project_path: cwd } : {}),
@@ -647,6 +665,7 @@ export class InboxLink {
       // What this process loaded (additive): the Inbox says when a restart would load a newer plugin.
       ...(loaded.plugin ? { plugin: loaded.plugin } : {}),
       ...(loaded.engine ? { engine: loaded.engine } : {}),
+      ...(folder ? { session_folder: folder } : {}),
     })
     return response && response.status === 200 ? parseInboxBridgeCommands(response.text) : null
   }

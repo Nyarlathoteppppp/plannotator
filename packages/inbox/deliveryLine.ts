@@ -13,7 +13,7 @@
  * it when it next reads this thread". Pure: Thread.tsx draws it.
  */
 
-import { inboxEngineTooOldForSendNow, type InboxSessionOutdated } from '@plannotator/core/inbox-types';
+import { inboxEngineTooOldForSendNow, inboxLoadedPredatesSendNow, type InboxSessionOutdated } from '@plannotator/core/inbox-types';
 
 /** How the session the message goes to is connected now (the sessions route's `asker.connection`). */
 export interface RecipientConnection {
@@ -54,6 +54,9 @@ export function restartNote(name: string, connection: RecipientConnection | null
   const outdated = connection?.outdated;
   if (!connection || !outdated || connection.busy !== true || connection.send_now) return null;
   if (inboxEngineTooOldForSendNow(connection.engine)) return null;
+  // A session that loaded a plugin with Send now lacks it for another reason (its own Ask question holds the
+  // turn, the engine refused a row): a restart would not change that, so the line never blames the plugin.
+  if (!inboxLoadedPredatesSendNow(outdated.loaded)) return null;
   const command = connection.restart_command ?? null;
   if (outdated.fix === 'update_plugin') {
     const behind = outdated.installed ? ` (${outdated.installed})` : '';

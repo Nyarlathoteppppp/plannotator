@@ -48,6 +48,7 @@ import {
 import { INBOX_REMINDER_TEXT, inboxAgentTool, type InboxReplyCommand } from "./generated/inbox/connection.ts";
 import { isCtxAlive } from "./current-pi-session.ts";
 import { piExtensionVersion } from "./server/update-advert.ts";
+import { detectPiHost } from "./pi-host.ts";
 import { PI_INBOX_REMINDER_CUSTOM_TYPE } from "./pi-session-bridge.ts";
 
 /**
@@ -162,6 +163,7 @@ function userText(message: { content?: unknown } | undefined): string {
 
 function registerPiInbox(pi: InboxPi, connection: InboxAgentConnection, options: PiInboxOptions & { reminder: boolean }): void {
 	const spec = inboxAgentTool(connection.tools);
+	const ohMyPi = detectPiHost(pi) === "oh-my-pi";
 	if (!spec) return;
 
 	pi.registerTool({
@@ -255,7 +257,8 @@ function registerPiInbox(pi: InboxPi, connection: InboxAgentConnection, options:
 			}
 		},
 		// The extension version this process loaded: the Inbox says when it is behind (`pi update --extensions`, then /reload).
-		pluginVersion: () => piExtensionVersion(),
+		// Not inside Oh My Pi, which updates the extension its own way (as update-advert.ts skips it).
+		pluginVersion: () => (ohMyPi ? null : piExtensionVersion()),
 		// The session's working folder, so the Inbox lists it under its project from its first poll.
 		projectPath: () => {
 			const current = ctx;

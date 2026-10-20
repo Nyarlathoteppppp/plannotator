@@ -41,7 +41,7 @@ import { checkServerSession, INBOX_SERVER_SESSION_MISMATCH_ERROR, serverSessionM
 import { INBOX_SEND_NOW_POLL_FIELD, INBOX_SESSION_LIVE_MS } from "@plannotator/shared/inbox/connection";
 import { InboxError } from "@plannotator/shared/inbox/schema";
 import type { InboxStore } from "@plannotator/shared/inbox/store";
-import { parseEngine, parseLoadedPlugin, type LoadedPlugin } from "./inbox-restart";
+import { parseEngine, parseLoadedPlugin, parseSessionFolder, type LoadedPlugin } from "./inbox-restart";
 
 /** One live session as the window reads it. */
 export interface InboxLiveSession {
@@ -95,6 +95,12 @@ interface SeenSession {
   sendNow: boolean;
   /** The working folder its poll named (`project_path`), as sent; null when it sent none. */
   cwd: string | null;
+  /**
+   * Where the session started (`session_folder`, the Claude Code mod's
+   * `$.session.root()` as it was at session start): the folder its
+   * `claude --resume` runs in. Null when its connection sends none.
+   */
+  folder: string | null;
   /** What its poll said it loaded (`plugin`); null when it sent none (a connection older than the field). */
   plugin: LoadedPlugin | null;
   /** Claude Code's version (`engine`); null when it sent none. */
@@ -120,7 +126,7 @@ export function createInboxLiveSessions(options: {
    * Whether a session on `host` that loaded `plugin` (null: its poll sent
    * none) is outdated (packages/server/inbox-restart.ts). Absent: never.
    */
-  outdatedOf?: (host: string, plugin: LoadedPlugin | null) => InboxSessionOutdated | null;
+  outdatedOf?: (host: string, plugin: LoadedPlugin | null, folder: string | null) => InboxSessionOutdated | null;
   /** A working folder as the window shows it (the home folder as `~`). */
   displayFolder?: (path: string) => string;
   /** The command that restarts a session as itself, in its folder (shown); null for a host without one. */
@@ -199,6 +205,7 @@ export function createInboxLiveSessions(options: {
       idleSince: null,
       sendNow: false,
       cwd: null,
+      folder: null,
       plugin: null,
       engine: null,
     };
@@ -208,6 +215,8 @@ export function createInboxLiveSessions(options: {
     entry.plugin = parseLoadedPlugin(body.plugin);
     entry.engine = parseEngine(body.engine);
     if (typeof body.project_path === "string" && body.project_path) entry.cwd = body.project_path;
+    const folder = parseSessionFolder(body.session_folder);
+    if (folder) entry.folder = folder;
     if (root !== null) entry.root = root;
     entry.startedAt = finiteMs(body.started_at) ?? entry.startedAt;
     entry.lastSeen = at;
@@ -332,13 +341,17 @@ export function createInboxLiveSessions(options: {
     };
   };
 
-  const folderOf = (entry: SeenSession): string | null => (entry.cwd ? (options.displayFolder?.(entry.cwd) ?? entry.cwd) : null);
+  /** The folder a restart runs in (shown with ~): where the session started, else where it works now. */
+  const folderOf = (entry: SeenSession): string | null => {
+    const path = entry.folder ?? entry.cwd;
+    return path ? (options.displayFolder?.(path) ?? path) : null;
+  };
   const restartCommandOf = (session: string, entry: SeenSession): string | null => {
     const folder = folderOf(entry);
     return folder && options.restartCommandOf ? options.restartCommandOf(entry.host, folder, session) : null;
   };
 
-  const outdatedOf = (entry: SeenSession): InboxSessionOutdated | null => options.outdatedOf?.(entry.host, entry.plugin) ?? null;
+  const outdatedOf = (entry: SeenSession): InboxSessionOutdated | null => options.outdatedOf?.(entry.host, entry.plugin, entry.folder ?? entry.cwd) ?? null;
 
   /**
    * The live sessions of the three Plannotator hosts, for Settings → Agents'

@@ -9,7 +9,7 @@
  * Claude Code's registry; the real ~/.claude is never read). A Claude Code
  * agent writes through `plannotator inbox mcp` with the wake meta; its
  * connection is the bridge's real poll, driven as the mod drives it, saying
- * it loaded plugin 0.28.24 (`plugin: { version, root, loaded_at }`). The
+ * it loaded plugin 0.28.23 (`plugin: { version, root, loaded_at }`). The
  * person replies in the window. What is proved: the line under the reply
  * ("Steps"), its "How to restart" disclosure and Copy; the sidebar's "Restart
  * Claude Code 2" and Settings → Agents' "Open sessions"; the row going away by
@@ -83,6 +83,7 @@ class Connection {
           host: 'claude-code',
           waitMs: 1_000,
           project_path: this.project,
+          session_folder: this.project,
           started_at: this.startedAt,
           busy: this.busy,
           idle_since: Date.now() - 60_000,
@@ -183,7 +184,7 @@ test.afterAll(async () => {
   }
 });
 
-const OLD = () => ({ version: '0.28.24', root: world.pluginFolder('0.28.24'), loaded_at: Date.parse('2026-10-16T09:14:00Z') });
+const OLD = () => ({ version: '0.28.23', root: world.pluginFolder('0.28.23'), loaded_at: Date.parse('2026-10-16T09:14:00Z') });
 const CURRENT = () => ({ version: '0.28.25', root: world.pluginFolder('0.28.25'), loaded_at: Date.now() });
 
 test('a working Claude Code on an older plugin: the reason under the reply, then "How to restart" with /exit, the resume command and Copy', async () => {
@@ -214,7 +215,7 @@ test('a working Claude Code on an older plugin: the reason under the reply, then
   const line = pane.locator('[data-delivery]');
   await expect(line).toContainText('Queued · Claude Code is working; it gets this when its turn ends.');
   const note = line.locator('[data-restart-note]');
-  await expect(note).toContainText('No Send now here: this Claude Code runs an older Plannotator plugin (0.28.24; 0.28.25 is installed). Restart it to get Send now.');
+  await expect(note).toContainText('No Send now here: this Claude Code runs an older Plannotator plugin (0.28.23; 0.28.25 is installed). Restart it to get Send now.');
   await expect(pane.locator('[data-send-now]')).toHaveCount(0);
   const toggle = note.locator('[data-restart-toggle]');
   await expect(toggle).toHaveAccessibleName('How to restart');
@@ -248,10 +249,10 @@ test('the sidebar: "Restart Claude Code 2" under the What\'s new spot opens Sett
   await row.click();
   await expect(page).toHaveURL(/#settings\/agents/);
   const sessions = page.locator('[data-agent-sessions="claude-code"]');
-  await expect(sessions).toContainText('2 running · 2 on plugin 0.28.24');
+  await expect(sessions).toContainText('2 running · 2 on plugin 0.28.23');
   await expect(sessions).toContainText('Plugin 0.28.25 is installed. Restart these two to load it. Each comes back as the same session.');
   await expect(page.locator('[data-agent="claude-code"] .ib-agstate')).toHaveText('Connected · 2 need a restart');
-  await expect(sessions.locator(`[data-session-row="${BILLING_SESSION}"]`)).toContainText('working · plugin 0.28.24');
+  await expect(sessions.locator(`[data-session-row="${BILLING_SESSION}"]`)).toContainText('working · plugin 0.28.23');
   await expect(sessions.getByRole('button', { name: 'Copy the command that restarts the billing-api session' })).toBeVisible();
   await shot(page, '2-agents-desktop');
 });

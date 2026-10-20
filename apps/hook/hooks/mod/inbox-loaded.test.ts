@@ -58,18 +58,38 @@ describe('the poll says what this process loaded', () => {
     expect(engineReads).toBe(1)
   })
 
-  test('a host that cannot say sends neither field (the Inbox reads it as an older mod)', async () => {
+  test('a read that failed still sends the field, with null parts: a missing field only ever means an older mod', async () => {
     const host = fakeHost()
-    host.loadedPlugin = async () => {
-      throw new Error('no $.plugin')
-    }
+    // What register.ts answers when $.plugin.root or plugin.json could not be read.
+    host.loadedPlugin = async () => ({ version: null, root: null, loaded_at: 1_700_000_000_000 })
     const { link, polls } = linkOver(host)
     link.start()
     await ticks(host, 5)
     link.dispose()
     expect(polls.length).toBeGreaterThanOrEqual(1)
-    expect('plugin' in polls[0]!).toBe(false)
-    expect('engine' in polls[0]!).toBe(false)
+    expect(polls[0]!.plugin).toEqual({ version: null, root: null, loaded_at: 1_700_000_000_000 })
+  })
+
+  test('the session folder is read once, at the start: a later /cd does not move the restart command', async () => {
+    const host = fakeHost()
+    let root = '/home/me/code/billing-api'
+    host.files.set(inboxRegistryPathOf(DATA), REGISTRY)
+    const polls: Record<string, unknown>[] = []
+    host.onFetch = (url, body) => {
+      if (url.endsWith('/api/inbox/bridge/poll')) polls.push(body as Record<string, unknown>)
+      return { status: 200, ok: true, text: JSON.stringify({ commands: [] }) }
+    }
+    const link = new InboxLink({ host, dataDir: DATA, sessionId: 'sess-1', tools: [], isBusy: () => false, instanceId: 'me', root: async () => root, cwd: async () => root })
+    link.start()
+    await ticks(host, 5)
+    root = '/home/me/code/billing-api/services/api'
+    host.clock += 60_000
+    await ticks(host, 5)
+    link.dispose()
+    expect(polls.length).toBeGreaterThanOrEqual(2)
+    for (const poll of polls) expect(poll.session_folder).toBe('/home/me/code/billing-api')
+    // Where it works now still follows the session (New message's project).
+    expect(polls[polls.length - 1]!.project_path).toBe('/home/me/code/billing-api/services/api')
   })
 })
 

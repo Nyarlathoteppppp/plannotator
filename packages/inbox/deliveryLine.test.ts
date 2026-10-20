@@ -5,6 +5,7 @@
  * or the agent had to poll for it.
  */
 import { describe, expect, test } from 'bun:test';
+import { INBOX_SEND_NOW_SINCE } from '@plannotator/core/inbox-types';
 import { deliveryLine, restartNote, sentRowLine, type DeliveryLineInput } from './deliveryLine';
 
 const base: DeliveryLineInput = {
@@ -91,6 +92,15 @@ describe('restartNote', () => {
     expect(note!.fix).toBe('update_plugin');
     expect(note!.updateCommand).toBe('claude plugin update x');
     expect(note!.text).toContain('Update the plugin, then restart Claude Code to get Send now.');
+  });
+  test('a session that loaded a plugin with Send now (0.28.24 on) lacks it for another reason: the line never blames the plugin', () => {
+    expect(INBOX_SEND_NOW_SINCE).toBe('0.28.24');
+    expect(restartNote('Claude Code', { ...busy, outdated: { loaded: '0.28.24', installed: '0.28.25', fix: 'restart' } })).toBeNull();
+    expect(restartNote('Claude Code', { ...busy, outdated: { loaded: '0.29.0', installed: '0.29.1', fix: 'restart' } })).toBeNull();
+    // A development build counts as having it; an unknown version (an older mod) and anything older do not.
+    expect(restartNote('Claude Code', { ...busy, outdated: { loaded: '0.0.0-dev', installed: '0.28.25', fix: 'restart' } })).toBeNull();
+    expect(restartNote('Claude Code', { ...busy, outdated: { loaded: null, installed: '0.28.25', fix: 'restart' } })).not.toBeNull();
+    expect(restartNote('Claude Code', { ...busy, outdated: { loaded: '0.28.23', installed: '0.28.25', fix: 'restart' } })).not.toBeNull();
   });
   test('nothing while idle, with Send now, up to date, for an engine too old, for Pi, or from an older Inbox', () => {
     expect(restartNote('Claude Code', { ...busy, busy: false })).toBeNull();

@@ -70,10 +70,10 @@ async function sessionPolls(body: Record<string, unknown>): Promise<void> {
 /** The command as the Inbox writes it: the home folder (the server's HOME, the scratch dir) as ~. */
 const resumeLine = () => `cd ~${ids.restart.project.slice(dir!.length)} && claude --resume ${ids.restart.session}`;
 
-const OLD = () => ({ version: '0.28.24', root: ids.restart.oldPath, loaded_at: Date.parse('2026-10-16T00:00:00Z') });
+const OLD = () => ({ version: '0.28.23', root: ids.restart.oldPath, loaded_at: Date.parse('2026-10-16T00:00:00Z') });
 const CURRENT = () => ({ version: '0.28.25', root: ids.restart.installPath, loaded_at: Date.now() });
 
-const TESTS = 6;
+const TESTS = 7;
 
 beforeAll(async () => {
   if (!hasDom) return;
@@ -176,7 +176,7 @@ test.skipIf(!hasDom)('a busy session on an older plugin: the reason, then "How t
   await sessionPolls({ busy: true, plugin: OLD(), engine: '2.1.305' });
   await openThread();
   await until(() => !!note(), 'the restart note');
-  expect(note()!.textContent).toContain('No Send now here: this Claude Code runs an older Plannotator plugin (0.28.24; 0.28.25 is installed). Restart it to get Send now.');
+  expect(note()!.textContent).toContain('No Send now here: this Claude Code runs an older Plannotator plugin (0.28.23; 0.28.25 is installed). Restart it to get Send now.');
   expect(!!delivered()!.querySelector('[data-send-now]')).toBe(false);
   const toggle = note()!.querySelector<HTMLButtonElement>('[data-restart-toggle]')!;
   expect(toggle.tagName).toBe('BUTTON');
@@ -216,6 +216,13 @@ test.skipIf(!hasDom)('no line while the session is idle, or while it has Send no
   expect(!!note()).toBe(false);
 }, 30_000);
 
+test.skipIf(!hasDom)('a session on a plugin that has Send now (0.28.24 on) without it now (its own Ask question holds the turn): no line blaming the plugin', async () => {
+  await sessionPolls({ busy: true, plugin: { version: '0.28.24', root: ids.restart.oldPath, loaded_at: Date.parse('2026-10-16T00:00:00Z') }, engine: '2.1.305' });
+  await openThread();
+  await settle();
+  expect(!!note()).toBe(false);
+}, 30_000);
+
 test.skipIf(!hasDom)('an engine too old for Send now: the line says nothing about a restart (a restart would not bring it)', async () => {
   await sessionPolls({ busy: true, plugin: OLD(), engine: '2.1.290' });
   await openThread();
@@ -251,11 +258,12 @@ test.skipIf(!hasDom)('the sidebar: "Restart Claude Code N", a real button, opens
   await until(() => !!document.querySelector('[data-agent-sessions="claude-code"]'), 'Open sessions');
   const sessions = document.querySelector<HTMLElement>('[data-agent-sessions="claude-code"]')!;
   expect(sessions.querySelector('.ib-agk')!.textContent).toBe('Open sessions');
-  expect(sessions.querySelector('.ib-agv')!.textContent).toContain(`on plugin 0.28.24`);
+  // Other worlds' sessions run other versions: "on plugin X" when one, "on an older plugin" when several.
+  expect(sessions.querySelector('.ib-agv')!.textContent).toMatch(/on (plugin 0\.28\.23|an older plugin)/);
   expect(sessions.querySelector('.ib-agsub')!.textContent).toContain('Plugin 0.28.25 is installed.');
   expect(document.querySelector('[data-agent="claude-code"] .ib-agstate')!.textContent).toMatch(/Connected · \d+ needs? a restart/);
   const mine = sessions.querySelector<HTMLElement>(`[data-session-row="${ids.restart.session}"]`)!;
-  expect(mine.textContent).toContain('working · plugin 0.28.24');
+  expect(mine.textContent).toContain('working · plugin 0.28.23');
   const copy = mine.querySelector<HTMLButtonElement>('[data-restart-copy]')!;
   expect(copy.textContent).toBe('Copy restart');
   await act(async () => copy.click());

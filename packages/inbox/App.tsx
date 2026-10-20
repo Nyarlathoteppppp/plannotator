@@ -2122,7 +2122,8 @@ function Inbox() {
             onSettings={() => go({ page: 'settings', project: null, thread: null })}
             onUpdate={pressUpdate}
             onWhatsNew={openWhatsNew}
-            restartClaudeCode={restartClaudeCode}
+            // Not on a page opened over the tailnet: Settings → Agents is local only there.
+            restartClaudeCode={settings && settings.via !== 'tailnet' ? restartClaudeCode : 0}
             onRestartSessions={() => go({ page: 'settings', project: null, thread: null, section: 'agents' })}
             mcpCommand={settings?.mcp_command ?? null}
           />

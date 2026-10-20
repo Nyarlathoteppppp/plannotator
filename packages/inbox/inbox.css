@@ -3353,7 +3353,7 @@ svg.ib-ic.ib-glyph { stroke: currentColor; fill: none; stroke-width: 1.6; stroke
 /* Phones: 44 px targets for the new controls (the Inbox's ::after pattern), nothing past 320 px. */
 @media (max-width: 767px), (max-height: 500px) and (max-width: 1023px) and (pointer: coarse) {
   .pn-inbox :is(.ib-rw-lnk, .ib-rw-copy) { position: relative; }
-  .pn-inbox .ib-rw-lnk::after { content: ''; position: absolute; inset: -12px -6px; }
+  .pn-inbox .ib-rw-lnk::after { content: ''; position: absolute; inset: -13px -6px; }
   .pn-inbox .ib-rw-copy { height: 32px; }
   .pn-inbox .ib-rw-copy::after { content: ''; position: absolute; inset: -6px -4px; }
   .ib-rw-steps { margin-left: 0; }

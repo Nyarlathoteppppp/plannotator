@@ -351,7 +351,7 @@ for (let i = 0; i < count; i++) {
       wakes: true,
     }).message;
     store.sendReply(asked.id, { idempotency_key: `restart-${i}`, words: "Queue it. Cap retries at 5 and dead-letter after." });
-    restart = { thread: asked.id, session, project: root, installPath: pluginFolder("0.28.25"), oldPath: pluginFolder("0.28.24") };
+    restart = { thread: asked.id, session, project: root, installPath: pluginFolder("0.28.25"), oldPath: pluginFolder("0.28.23") };
   }
   worlds.push({
     ...(restart ? { restart } : {}),

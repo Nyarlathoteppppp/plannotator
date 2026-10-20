@@ -1459,9 +1459,16 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     store,
     serverSession,
     resolveRoot: async (path) => (await projectRoots.resolve(path)).root,
-    outdatedOf: (host, plugin) => {
+    outdatedOf: (host, plugin, folder) => {
       if (host === "claude-code") {
-        return claudeSessionOutdated({ loaded: plugin, install: claudePluginInstall.read(), cliVersion: version, pluginsDir: claudePluginInstall.pluginsDir() });
+        return claudeSessionOutdated({
+          loaded: plugin,
+          records: claudePluginInstall.records(),
+          folder,
+          cliVersion: version,
+          pluginsDir: claudePluginInstall.pluginsDir(),
+          changedAt: claudePluginInstall.changedAt,
+        });
       }
       return host === "pi" ? piSessionOutdated(plugin, version) : null;
     },

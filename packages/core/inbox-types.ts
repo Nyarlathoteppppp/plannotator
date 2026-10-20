@@ -1291,6 +1291,39 @@ export interface InboxComposeProject {
 }
 
 /**
+ * The first Plannotator release whose Claude Code mod reports `plugin` on its
+ * bridge poll (packages/server/inbox-restart.ts). A new mod ALWAYS sends the
+ * field (version or root null when it could not read them), so a poll without
+ * it means a mod older than this. Must merge before the version bump to it.
+ */
+export const INBOX_PLUGIN_REPORTS_LOADED_SINCE = "0.28.24";
+
+/**
+ * The first Plannotator release whose Claude Code mod has Send now (#1968).
+ * A session that loaded this or newer already has Send now, so a missing Send
+ * now there has another cause (its own Ask question holds the turn, the engine
+ * refused a row) and the reply line never blames the plugin for it.
+ */
+export const INBOX_SEND_NOW_SINCE = "0.28.24";
+
+/**
+ * Whether a session that loaded `version` (null: unknown, an older mod)
+ * predates Send now. A version that is not a plain release (a development
+ * build) is taken as having it.
+ */
+export function inboxLoadedPredatesSendNow(version: string | null | undefined): boolean {
+  if (version === null || version === undefined || version === "") return true;
+  const parts = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(version.trim());
+  if (!parts) return false;
+  const min = INBOX_SEND_NOW_SINCE.split(".").map(Number);
+  const have = parts.slice(1, 4).map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (have[i]! !== min[i]!) return have[i]! < min[i]!;
+  }
+  return false;
+}
+
+/**
  * The oldest Claude Code engine the mod offers Send now on (a copy of the
  * mod's `SESSION_APPEND_MIN_ENGINE`, apps/hook/hooks/mod/inbox.ts; the mod's
  * send-now-engine test keeps them equal). The restart line under a reply uses

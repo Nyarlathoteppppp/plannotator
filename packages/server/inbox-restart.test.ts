@@ -8,7 +8,7 @@
  * model's `restart_claude_code`. Nothing reads the real ~/.claude.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
@@ -17,12 +17,16 @@ import { INBOX_BRIDGE_POLL_PATH, INBOX_SEND_NOW_POLL_FIELD, INBOX_WAKES_META_KEY
 import { startInboxServer, type InboxServer } from "./inbox";
 import { createAgentEnvironmentFor } from "./inbox-agents";
 import {
+  chooseClaudePluginInstall,
   claudeRestartCommand,
   CLAUDE_PLUGIN_UPDATE_COMMAND,
   claudeSessionOutdated,
   parseClaudePluginInstall,
+  parseClaudePluginInstalls,
   piSessionOutdated,
+  pluginFolderChangedAt,
   PLUGIN_REPORTS_LOADED_SINCE,
+  realish,
   type ClaudePluginInstall,
   type LoadedPlugin,
 } from "./inbox-restart";
@@ -34,16 +38,19 @@ const install = (version: string, overrides: Partial<ClaudePluginInstall> = {}):
   version,
   installPath: folder(version),
   lastUpdated: UPDATED_AT,
+  scope: "user",
+  projectPath: null,
   ...overrides,
 });
-const loaded = (version: string, overrides: Partial<LoadedPlugin> = {}): LoadedPlugin => ({
+const loaded = (version: string | null, overrides: Partial<LoadedPlugin> = {}): LoadedPlugin => ({
   version,
-  root: folder(version),
+  root: version ? folder(version) : null,
   loadedAt: UPDATED_AT + 60_000,
   ...overrides,
 });
-const judge = (plugin: LoadedPlugin | null, record: ClaudePluginInstall | null, cliVersion = "0.28.25") =>
-  claudeSessionOutdated({ loaded: plugin, install: record, cliVersion, pluginsDir: PLUGINS });
+/** The install folder changed when the registry says (a real reinstall), unless a test says otherwise. */
+const judge = (plugin: LoadedPlugin | null, record: ClaudePluginInstall | null, cliVersion = "0.28.25", changedAt: number | null = UPDATED_AT) =>
+  claudeSessionOutdated({ loaded: plugin, records: record ? [record] : [], folder: null, cliVersion, pluginsDir: PLUGINS, changedAt: () => changedAt });
 
 describe("claudeSessionOutdated: the rules", () => {
   test("up to date: the installed plugin, from its folder, loaded after the update", () => {
@@ -51,7 +58,7 @@ describe("claudeSessionOutdated: the rules", () => {
   });
 
   test("the versions differ: restart", () => {
-    expect(judge(loaded("0.28.24"), install("0.28.25"))).toEqual({ loaded: "0.28.24", installed: "0.28.25", fix: "restart" });
+    expect(judge(loaded("0.28.23"), install("0.28.25"))).toEqual({ loaded: "0.28.23", installed: "0.28.25", fix: "restart" });
   });
 
   test("the folder differs (same version reported): restart", () => {
@@ -62,9 +69,16 @@ describe("claudeSessionOutdated: the rules", () => {
     });
   });
 
-  test("an update that reused the folder and kept the version: only loaded_at < lastUpdated catches it", () => {
+  test("an update that reused the folder and kept the version: loaded before lastUpdated AND before the folder changed", () => {
     expect(judge(loaded("0.28.25", { loadedAt: UPDATED_AT - 1 }), install("0.28.25"))).toEqual({ loaded: "0.28.25", installed: "0.28.25", fix: "restart" });
     expect(judge(loaded("0.28.25", { loadedAt: UPDATED_AT }), install("0.28.25"))).toBeNull();
+  });
+
+  test("lastUpdated moved but the folder did not change (a project-scope install of the same folder): not outdated", () => {
+    // The folder last changed before the session loaded it, though the registry's lastUpdated is later.
+    expect(judge(loaded("0.28.25", { loadedAt: UPDATED_AT - 1 }), install("0.28.25"), "0.28.25", UPDATED_AT - 60_000)).toBeNull();
+    // A folder that is gone (no mtime) never reads as reinstalled.
+    expect(judge(loaded("0.28.25", { loadedAt: UPDATED_AT - 1 }), install("0.28.25"), "0.28.25", null)).toBeNull();
   });
 
   test("no plugin field while the installed plugin reports it: outdated, version unknown", () => {
@@ -74,6 +88,11 @@ describe("claudeSessionOutdated: the rules", () => {
       fix: "restart",
     });
     expect(judge(null, install("0.28.25"))?.fix).toBe("restart");
+  });
+
+  test("a new mod that could not read its root or version still sends the field: judged by what it has, never as an old mod", () => {
+    // Nothing read but the load time, loaded after the install: not outdated (an old mod's missing field would be).
+    expect(judge(loaded(null, { root: null }), install("0.28.25"))).toBeNull();
   });
 
   test("no plugin field while the installed plugin predates the field: the Inbox cannot tell", () => {
@@ -91,7 +110,7 @@ describe("claudeSessionOutdated: the rules", () => {
     expect(judge(loaded("0.28.23"), install("0.28.23"), "dev")).toBeNull();
   });
 
-  test("a plugin loaded with --plugin-dir (outside Claude Code's plugin folder) reloads that folder: never outdated", () => {
+  test("a plugin loaded from outside Claude Code's plugin folder (--plugin-dir, a local marketplace) reloads that folder: never outdated", () => {
     expect(judge(loaded("0.28.20", { root: "/home/me/code/plannotator/apps/hook", loadedAt: 1 }), install("0.28.25"))).toBeNull();
   });
 
@@ -108,19 +127,121 @@ describe("claudeSessionOutdated: the rules", () => {
   });
 });
 
+describe("which record a restart loads", () => {
+  const user = install("0.28.25");
+  const project = install("0.28.20", { scope: "project", projectPath: "/home/me/code/billing-api", installPath: folder("0.28.20") });
+  const local = install("0.28.21", { scope: "local", projectPath: "/home/me/code/billing-api/services/api", installPath: folder("0.28.21") });
+
+  test("the record whose installPath is the folder the session loaded, first", () => {
+    expect(chooseClaudePluginInstall([user, project], { loadedRoot: folder("0.28.20"), folder: "/elsewhere" })).toBe(project);
+  });
+
+  test("then the record whose projectPath holds the session's folder (the deepest), then the user record", () => {
+    expect(chooseClaudePluginInstall([user, project, local], { loadedRoot: null, folder: "/home/me/code/billing-api/services/api/src" })).toBe(local);
+    expect(chooseClaudePluginInstall([user, project], { loadedRoot: null, folder: "/home/me/code/billing-api" })).toBe(project);
+    expect(chooseClaudePluginInstall([project, user], { loadedRoot: null, folder: "/home/me/code/other" })).toBe(user);
+  });
+
+  test("a session in a project with its own install is judged against that install, not the user's", () => {
+    // It runs the project's 0.28.20 from the project's folder: a restart there loads the same, so nothing to say.
+    const outdated = claudeSessionOutdated({
+      loaded: loaded("0.28.20"),
+      records: [user, project],
+      folder: "/home/me/code/billing-api",
+      cliVersion: "dev",
+      pluginsDir: PLUGINS,
+      changedAt: () => UPDATED_AT,
+    });
+    expect(outdated).toBeNull();
+  });
+
+  test("only plannotator@plannotator: a fork from another marketplace is another plugin", () => {
+    const text = JSON.stringify({
+      version: 2,
+      plugins: {
+        "plannotator@my-fork": [{ scope: "user", version: "9.9.9", installPath: "/fork", lastUpdated: "2026-01-01T00:00:00Z" }],
+        "plannotator@plannotator": [{ scope: "user", version: "0.28.25", installPath: folder("0.28.25"), lastUpdated: "2026-10-17T05:27:07.299Z" }],
+      },
+    });
+    expect(parseClaudePluginInstalls(text).map((r) => r.version)).toEqual(["0.28.25"]);
+    expect(parseClaudePluginInstalls(JSON.stringify({ plugins: { "plannotator@my-fork": [{ version: "1.0.0" }] } }))).toEqual([]);
+  });
+});
+
+describe("real paths on both sides", () => {
+  test("a symlinked ~/.claude neither hides nor invents a difference", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "plannotator-inbox-realish-")));
+    try {
+      const real = join(root, "dotfiles", "claude");
+      const cache = join(real, "plugins", "cache", "plannotator", "plannotator", "0.28.25");
+      mkdirSync(join(cache, ".claude-plugin"), { recursive: true });
+      writeFileSync(join(cache, ".claude-plugin", "plugin.json"), '{"version":"0.28.25"}');
+      const link = join(root, "home", ".claude");
+      mkdirSync(join(root, "home"));
+      symlinkSync(real, link);
+      const viaLink = join(link, "plugins", "cache", "plannotator", "plannotator", "0.28.25");
+      expect(realish(viaLink)).toBe(realish(cache));
+      // A folder gone since (an older version's cache) still compares by where it was, through the link.
+      expect(realish(join(link, "plugins", "cache", "plannotator", "plannotator", "0.28.20"))).toBe(join(real, "plugins", "cache", "plannotator", "plannotator", "0.28.20"));
+      // The registry names the link, the session loaded the real folder (or the other way round): the same plugin.
+      const record = install("0.28.25", { installPath: viaLink });
+      for (const [installPath, root2, pluginsDir] of [
+        [viaLink, cache, join(link, "plugins")],
+        [cache, viaLink, join(real, "plugins")],
+      ] as const) {
+        const outdated = claudeSessionOutdated({
+          loaded: { version: "0.28.25", root: root2, loadedAt: Date.now() + 60_000 },
+          records: [{ ...record, installPath }],
+          folder: null,
+          cliVersion: "0.28.25",
+          pluginsDir,
+        });
+        expect(outdated).toBeNull();
+      }
+      // An older folder through the link is still under Claude Code's plugin folder: flagged.
+      const old = claudeSessionOutdated({
+        loaded: { version: "0.28.23", root: join(link, "plugins", "cache", "plannotator", "plannotator", "0.28.23"), loadedAt: Date.now() },
+        records: [{ ...record, installPath: cache }],
+        folder: null,
+        cliVersion: "0.28.25",
+        pluginsDir: join(real, "plugins"),
+      });
+      expect(old?.fix).toBe("restart");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the install folder's change time: plugin.json first, else the folder", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "plannotator-inbox-mtime-")));
+    try {
+      const dir = join(root, "0.28.25");
+      mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
+      writeFileSync(join(dir, ".claude-plugin", "plugin.json"), "{}");
+      const at = new Date("2026-10-18T12:00:00.000Z");
+      utimesSync(join(dir, ".claude-plugin", "plugin.json"), at, at);
+      expect(pluginFolderChangedAt(dir)).toBe(at.getTime());
+      expect(pluginFolderChangedAt(join(root, "gone"))).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("parseClaudePluginInstall", () => {
-  test("v2: the user-scope record of plannotator@*", () => {
+  test("v2: the user-scope record of plannotator@plannotator", () => {
     const text = JSON.stringify({
       version: 2,
       plugins: {
         "other@x": [{ scope: "user", version: "9.9.9", installPath: "/x", lastUpdated: "2026-01-01T00:00:00Z" }],
         "plannotator@plannotator": [
-          { scope: "project", version: "0.28.1", installPath: "/p", lastUpdated: "2026-01-01T00:00:00Z" },
+          { scope: "project", version: "0.28.1", installPath: "/p", projectPath: "/work/p", lastUpdated: "2026-01-01T00:00:00Z" },
           { scope: "user", version: "0.28.23", installPath: folder("0.28.23"), installedAt: "2026-10-04T22:07:24.658Z", lastUpdated: "2026-10-17T05:27:07.299Z" },
         ],
       },
     });
-    expect(parseClaudePluginInstall(text)).toEqual({ version: "0.28.23", installPath: folder("0.28.23"), lastUpdated: UPDATED_AT });
+    expect(parseClaudePluginInstall(text)).toEqual({ version: "0.28.23", installPath: folder("0.28.23"), lastUpdated: UPDATED_AT, scope: "user", projectPath: null });
+    expect(parseClaudePluginInstalls(text)[0]).toMatchObject({ scope: "project", projectPath: "/work/p" });
   });
 
   test("v1 (an object per id), installedAt when lastUpdated is missing; junk is null", () => {
@@ -128,6 +249,8 @@ describe("parseClaudePluginInstall", () => {
       version: "0.27.1",
       installPath: "/a",
       lastUpdated: UPDATED_AT,
+      scope: null,
+      projectPath: null,
     });
     expect(parseClaudePluginInstall("{")).toBeNull();
     expect(parseClaudePluginInstall(JSON.stringify({ plugins: {} }))).toBeNull();
@@ -167,6 +290,12 @@ async function world(options: { inboxVersion: string; installed: { version: stri
   mkdirSync(project, { recursive: true });
   const installPath = (version: string) => join(pluginsDir, "cache", "plannotator", "plannotator", version);
   if (options.installed) {
+    // The install folder, written when the registry says it was (a real install's plugin.json).
+    const pluginJson = join(installPath(options.installed.version), ".claude-plugin", "plugin.json");
+    mkdirSync(join(pluginJson, ".."), { recursive: true });
+    writeFileSync(pluginJson, JSON.stringify({ name: "plannotator", version: options.installed.version }));
+    const at = new Date(options.installed.lastUpdated ?? "2026-10-17T05:27:07.299Z");
+    utimesSync(pluginJson, at, at);
     writeFileSync(
       join(pluginsDir, "installed_plugins.json"),
       JSON.stringify({
@@ -303,5 +432,20 @@ describe("over a real Inbox", () => {
     await poll(server, "ses-x", { project_path: project, busy: true });
     expect((await connection(server, thread.thread_id, "ses-x"))!.outdated).toBeNull();
     expect((await list(server)).restart_claude_code).toBe(0);
+  });
+
+  test("the restart command runs in the folder the session started in (session_folder), not where /cd took it", async () => {
+    const { server, client, project, installPath } = await world({ inboxVersion: "0.28.25", installed: { version: "0.28.25" } });
+    const thread = await asked(client, project, "ses-cd");
+    const moved = join(project, "services", "api");
+    mkdirSync(moved, { recursive: true });
+    await poll(server, "ses-cd", {
+      project_path: moved,
+      session_folder: project,
+      busy: true,
+      plugin: { version: "0.28.23", root: installPath("0.28.23"), loaded_at: Date.parse("2026-10-16T00:00:00Z") },
+    });
+    const conn = (await connection(server, thread.thread_id, "ses-cd"))!;
+    expect(conn.restart_command).toBe("cd ~/code/billing-api && claude --resume ses-cd");
   });
 });

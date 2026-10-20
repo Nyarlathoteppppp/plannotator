@@ -99,12 +99,19 @@ const PLUGIN_NAME = 'plannotator'
 const MODULE_LOADED_AT = Date.now()
 
 /** The plugin this process loaded (plugin.json's version, its folder, the load time), read once. */
-let loadedPlugin: Promise<LoadedPluginInfo | null> | null = null
-function readLoadedPlugin($: Engine): Promise<LoadedPluginInfo | null> {
+let loadedPlugin: Promise<LoadedPluginInfo> | null = null
+// Never null: a mod of this release always reports `plugin`, with `root` or `version` null when it could not
+// read them, so a poll without the field only ever means an older mod (the Inbox flags that as outdated).
+function readLoadedPlugin($: Engine): Promise<LoadedPluginInfo> {
   loadedPlugin ??= (async () => {
-    const raw: unknown = $.plugin.root
-    const root = typeof raw === 'string' ? raw.replace(/\/+$/, '') : ''
-    if (!root) return null
+    let root: string | null = null
+    try {
+      const raw: unknown = $.plugin.root
+      root = typeof raw === 'string' && raw ? raw.replace(/\/+$/, '') || null : null
+    } catch {
+      root = null
+    }
+    if (!root) return { version: null, root: null, loaded_at: MODULE_LOADED_AT }
     // `$.plugin.root` is the folder holding `.claude-plugin/plugin.json`.
     const text = (await $.fs.read(`${root}/.claude-plugin/plugin.json`).catch(() => null)) ?? (await $.fs.read(`${root}/plugin.json`).catch(() => null))
     return { version: pluginVersionOf(typeof text === 'string' ? text : null), root, loaded_at: MODULE_LOADED_AT }
@@ -258,7 +265,14 @@ async function currentMod($: Engine): Promise<PlannotatorMod | null> {
       sessionId,
       dataDir: settings.dataDir,
       interactive: true,
-      ...(inboxTools ? { inboxTools, cwd: async () => String(await $.session.cwd()) } : {}),
+      ...(inboxTools
+        ? {
+            inboxTools,
+            cwd: async () => String(await $.session.cwd()),
+            // The session's root (where it started; a shell cd does not move it): its `claude --resume` folder.
+            root: async () => String(await $.session.root()),
+          }
+        : {}),
     })
     mod = instance
     await instance.restore().catch(() => undefined)
