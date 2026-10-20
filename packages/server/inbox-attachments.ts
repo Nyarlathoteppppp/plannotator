@@ -29,7 +29,7 @@
 import { checkServerSession, INBOX_SERVER_SESSION_MISMATCH_ERROR, serverSessionMismatchBody } from "@plannotator/core/server-session";
 import type { FileHandle } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat, open, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, relative as relativeTo, resolve as resolvePath, sep } from "node:path";
 import { htmlAssetPathRefused, isWithinDirectory } from "@plannotator/shared/html-assets-node";
 import { HTML_ASSET_DOCUMENT_CSP, htmlAssetDocumentHeaders, MAX_HTML_ASSET_DOCUMENT_BYTES, refusesHiddenHtmlAssetPath } from "@plannotator/shared/html-assets";
@@ -146,7 +146,7 @@ export async function readInboxLinkedPage(attachedPath: string, relativePath: st
     const stat = await handle.stat();
     if (!stat.isFile()) throw new InboxError("linked_page_missing", `${name} is not a file.`);
     if (stat.size > MAX_HTML_ASSET_DOCUMENT_BYTES) throw new InboxError("linked_page_too_large", `${name} is too large to show here (over 2 MB).`);
-    if (!(await stillSameFile(real, stat))) throw new InboxError("linked_page_outside", "Only pages in the attached page's own folder open here.");
+    if (!(await openedIsReal(handle, real, stat))) throw new InboxError("linked_page_outside", "Only pages in the attached page's own folder open here.");
     // At most the cap plus one byte, so a file that grows after the stat is never read whole.
     const buffer = Buffer.alloc(MAX_HTML_ASSET_DOCUMENT_BYTES + 1);
     let length = 0;
@@ -162,12 +162,35 @@ export async function readInboxLinkedPage(attachedPath: string, relativePath: st
   }
 }
 
-/** The path still leads to the file a descriptor holds: its realpath unchanged and the same dev and ino. */
+/**
+ * The descriptor holds the file `real` names. On Linux the descriptor's own
+ * path (`/proc/self/fd/N`) says where it really is, whatever the folders did
+ * since. Elsewhere the realpath must be unchanged and lead to the same dev
+ * and ino, judged with an lstat on both sides of the realpath: a parent
+ * swapped for a symlink between one realpath and one lstat would otherwise
+ * let the lstat follow it to the very file the descriptor holds.
+ */
+async function openedIsReal(handle: FileHandle, real: string, opened: { dev: number; ino: number }): Promise<boolean> {
+  if (process.platform === "linux") {
+    try {
+      return (await readlink(`/proc/self/fd/${handle.fd}`)) === real;
+    } catch {
+      // No /proc (a container without it): the checks below.
+    }
+  }
+  return (await stillSameFile(real, opened)) && (await stillSameFile(real, opened));
+}
+
+/** The path still leads to the file a descriptor holds: the same dev and ino before and after its realpath, which is unchanged. */
 async function stillSameFile(real: string, opened: { dev: number; ino: number }): Promise<boolean> {
   try {
+    const same = async () => {
+      const at = await lstat(real);
+      return at.isFile() && at.dev === opened.dev && at.ino === opened.ino;
+    };
+    if (!(await same())) return false;
     if ((await realpath(real)) !== real) return false;
-    const again = await lstat(real);
-    return again.isFile() && again.dev === opened.dev && again.ino === opened.ino;
+    return await same();
   } catch {
     return false;
   }
