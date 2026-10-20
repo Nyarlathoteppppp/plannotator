@@ -127,7 +127,9 @@ export function paintTagReferences(
   const registry = api();
   if (!registry || labels.length === 0) return () => {};
   const { layer = null, onMarks } = options;
+  let disposed = false;
   const paint = () => {
+    if (disposed) return;
     const refs = tagReferences(root, labels, layer);
     painted.set(key, refs);
     publish(registry);
@@ -154,7 +156,7 @@ export function paintTagReferences(
   paint();
   let frame = 0;
   const schedule = () => {
-    if (frame) return;
+    if (frame || disposed) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
       paint();
@@ -170,6 +172,7 @@ export function paintTagReferences(
   resize?.observe(root);
   void root.ownerDocument?.fonts?.ready.then(schedule).catch(() => {});
   return () => {
+    disposed = true;
     observer.disconnect();
     resize?.disconnect();
     if (frame) cancelAnimationFrame(frame);
