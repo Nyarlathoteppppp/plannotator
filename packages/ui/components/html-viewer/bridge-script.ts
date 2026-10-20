@@ -60,6 +60,13 @@ body[data-plannotator-pinpoint-cursor],
 body[data-plannotator-pinpoint-cursor] * {
   cursor: crosshair !important;
 }
+/* A plain click on a link follows it while armed (the modifier pins it), so a
+ * link keeps the pointer that says so. */
+body[data-plannotator-pinpoint-cursor] a[href]:not([href^="javascript:" i]),
+body[data-plannotator-pinpoint-cursor] a[href]:not([href^="javascript:" i]) *,
+body[data-plannotator-pinpoint-cursor] area[href] {
+  cursor: pointer !important;
+}
 /* Armed pinpoint over an EMBEDDED local document: the embed is one element
  * from the outer page's point of view, and the bridge is never injected into a
  * nested frame, so a click inside it would simply vanish into another document.
@@ -3910,8 +3917,14 @@ export const BRIDGE_SCRIPT = `(function() {
   // The frame therefore never navigates itself. In-page fragments scroll here;
   // everything else is handed to the parent, which owns resolution against the
   // current document's directory and is the trust boundary for the href.
-  // Registered BEFORE the pinpoint handler and never stopping propagation, so
-  // an armed click still pins the link element exactly as it always did.
+  // Registered BEFORE the pinpoint handler and never stopping propagation.
+  //
+  // One rule while armed (the owner's ruling, html-link-click, 2026-10-20):
+  // a plain click on a link FOLLOWS it, exactly as in Interact; a click with
+  // the platform modifier (Cmd on macOS, Ctrl elsewhere: either is taken)
+  // PINS it for a comment through the pinpoint handler below, as does a
+  // shift-click that adds it to an open multi-select draft. A drag that ended
+  // on the link owns its click: it neither follows nor pins.
   //
   // Live app sessions are excluded outright: they navigate a real origin
   // through the proxy, which is the whole point of that surface.
@@ -3934,6 +3947,14 @@ export const BRIDGE_SCRIPT = `(function() {
     return true;
   }
 
+  // While armed, whether a click on a link pins it instead of following it:
+  // the platform modifier (Cmd or Ctrl), a shift-click adding to an open
+  // multi-select draft, or the trailing click of a drag that selected text.
+  function armedClickPins(e) {
+    if (e.metaKey || e.ctrlKey || dragEndedClick) return true;
+    return !!(e.shiftKey && pendingPinEl && multiSelectArmed && pendingSelection);
+  }
+
   function navigableLinkHref(node) {
     var el = node && node.nodeType === 1 ? node : node && node.parentElement;
     if (!el || !el.closest) return '';
@@ -3953,6 +3974,12 @@ export const BRIDGE_SCRIPT = `(function() {
       if (!raw) return;
       // The page's own scripting, not a navigation: leave it alone.
       if (/^javascript:/i.test(raw)) return;
+      // Armed and pinning (or a drag's trailing click): the frame never
+      // navigates, and the pinpoint handler below takes the click.
+      if (annotateModeActive && currentInputMethod === 'pinpoint' && armedClickPins(e)) {
+        e.preventDefault();
+        return;
+      }
       if (raw.charAt(0) === '#') {
         e.preventDefault();
         scrollToLocalFragment(raw.slice(1));
@@ -3963,16 +3990,12 @@ export const BRIDGE_SCRIPT = `(function() {
       // new window, which the host's web view hands to its own delegate (the
       // frame never navigates; the host page's CSP would refuse it anyway).
       if (hostNavigates) {
-        if (e.isTrusted && !(annotateModeActive && currentInputMethod === 'pinpoint')) {
+        if (e.isTrusted) {
           var target = (e.target && e.target.closest) ? e.target.closest('a,area') : null;
           try { window.open(target && target.href ? target.href : raw, '_blank', 'noopener'); } catch (ex) {}
         }
         return;
       }
-      // Armed pinpoint: the click belongs to annotation, and the capture-phase
-      // pinpoint handler below is about to pin this element. Navigation is
-      // already suppressed above, which is all this surface owes the click.
-      if (annotateModeActive && currentInputMethod === 'pinpoint') return;
       postToParent({ type: PREFIX + 'link-click', href: raw.slice(0, 2048) });
     }, true);
   }
@@ -3991,7 +4014,12 @@ export const BRIDGE_SCRIPT = `(function() {
     // and mousedown clears a prior pin's leftover selection, so stale
     // selection state never blocks the next plain re-pin click. One-shot:
     // only the drag's own trailing click is suppressed.
-    if (dragEndedClick) { dragEndedClick = false; return; }
+    if (dragEndedClick) {
+      dragEndedClick = false;
+      // Never a navigation either (a live app's link would otherwise follow).
+      if (navigableLinkHref(e.target)) e.preventDefault();
+      return;
+    }
     // Shift-click while an ARMED pinpoint draft is open: toggle the element
     // in/out of the SAME draft comment instead of replacing the selection.
     // Unarmed drafts (modes the parent does not mirror, e.g. quickLabel)
@@ -4005,6 +4033,10 @@ export const BRIDGE_SCRIPT = `(function() {
       if (multiEl) toggleMultiTarget(multiEl, { x: e.clientX, y: e.clientY });
       return;
     }
+    // A plain click on a link follows it (the link handler above posted it;
+    // in a live app the browser navigates for real). The modifier pins it.
+    var clickedLink = navigableLinkHref(e.target);
+    if (clickedLink && !/^javascript:/i.test(clickedLink) && !armedClickPins(e)) return;
     // Click what the hover box shows: the currently hovered element is the
     // target the user aimed at. Fall back to a fresh hit-test at the click
     // point (e.g. a click with no preceding mousemove).

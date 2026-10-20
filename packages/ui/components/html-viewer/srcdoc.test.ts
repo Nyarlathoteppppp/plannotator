@@ -1264,7 +1264,8 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
     }));
   }
 
-  async function clickAndCollectSelection(el: Element, x: number, y: number) {
+  /** `init`: modifiers; a link pins only with Cmd or Ctrl held (a plain click follows it). */
+  async function clickAndCollectSelection(el: Element, x: number, y: number, init: MouseEventInit = {}) {
     await new Promise((resolve) => setTimeout(resolve, 0));
     const messages: Array<Record<string, unknown>> = [];
     const collect = (event: MessageEvent) => {
@@ -1277,6 +1278,7 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
       cancelable: true,
       clientX: x,
       clientY: y,
+      ...init,
     });
     el.dispatchEvent(click);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1859,7 +1861,7 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
     // path, in every form: absolute and relative alike.
     const home = document.querySelector<HTMLElement>('a[href^="https://acme.test"]')!;
     hoverAt(home, 10, 10);
-    const link = await clickAndCollectSelection(home, 10, 10);
+    const link = await clickAndCollectSelection(home, 10, 10, { metaKey: true });
     const linkContext = link.messages[0]!.context as { attrs: Array<[string, string]>; role: string };
     expect(linkContext.attrs).toEqual([["href", "https://acme.test/home?…"]]);
     expect(linkContext.role).toBe("link");
@@ -1868,7 +1870,7 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
     // Fresh coordinates: the hover hit-test is keyed on the pointer position.
     const about = document.querySelector<HTMLElement>('a[href="/about?tab=2"]')!;
     hoverAt(about, 90, 12);
-    const rel = await clickAndCollectSelection(about, 90, 12);
+    const rel = await clickAndCollectSelection(about, 90, 12, { metaKey: true });
     expect((rel.messages[0]!.context as { attrs: Array<[string, string]> }).attrs).toEqual([["href", "/about?…"]]);
     expect(JSON.stringify(rel.messages[0]!.context)).not.toContain("tab=2");
     postBridge({ type: "plannotator-bridge-cancel-selection" });
@@ -4338,12 +4340,108 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
       expect(scrolled).toBe(1);
     });
 
-    test("armed pinpoint: the click annotates — no navigation, and no link report", async () => {
-      setUp('<a id="rel" href="01-entry-point.html">Entry</a>', true);
+    function collectSelections() {
+      const selections: Array<Record<string, unknown>> = [];
+      const collect = (event: MessageEvent) => {
+        const data = bridgeMessageData(event);
+        if (data?.type === "plannotator-bridge-selection") selections.push(data);
+      };
+      window.addEventListener("message", collect);
+      return { selections, stop: () => window.removeEventListener("message", collect) };
+    }
+
+    function clickWith(selector: string, init: MouseEventInit): MouseEvent {
+      const el = document.querySelector<HTMLElement>(selector)!;
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
+      el.dispatchEvent(event);
+      return event;
+    }
+
+    // One rule while armed (owner's ruling html-link-click, 2026-10-20): a plain click follows, the modifier pins.
+    test("armed pinpoint: a plain click on a link follows it, exactly as in Interact, and pins nothing", async () => {
+      setUp('<a id="rel" href="./sub/02-detail.html#top">Entry</a>', true);
+      await flushPosts();
+      const { selections, stop } = collectSelections();
       const event = clickLink("#rel");
       await flushPosts();
+      stop();
+      expect(event.defaultPrevented).toBe(true);
+      expect(capturedLinkPosts.map((p) => p.href)).toEqual(["./sub/02-detail.html#top"]);
+      expect(selections).toEqual([]);
+    });
+
+    test("armed pinpoint: a click on a child of the link follows the link too", async () => {
+      setUp('<a id="rel" href="a.html"><span id="inner">deep</span></a>', true);
+      clickLink("#inner");
+      await flushPosts();
+      expect(capturedLinkPosts.map((p) => p.href)).toEqual(["a.html"]);
+    });
+
+    for (const [name, init] of [["Cmd", { metaKey: true }], ["Ctrl", { ctrlKey: true }]] as const) {
+      test(`armed pinpoint: ${name}-click pins the link for a comment, with its anchor, and never follows it`, async () => {
+        setUp('<p>Intro</p><a id="rel" href="01-entry-point.html">Entry point</a>', true);
+        await flushPosts();
+        const { selections, stop } = collectSelections();
+        const event = clickWith("#rel", init);
+        await flushPosts();
+        stop();
+        expect(event.defaultPrevented).toBe(true);
+        expect(capturedLinkPosts).toEqual([]);
+        expect(selections.length).toBe(1);
+        expect(selections[0]!.pinpoint).toBe(true);
+        const anchor = selections[0]!.anchor as { selector: string; tagName: string };
+        expect(anchor.tagName).toBe("a");
+        expect(document.querySelector(anchor.selector)).toBe(document.querySelector("#rel"));
+        postBridge({ type: "plannotator-bridge-cancel-selection" });
+      });
+    }
+
+    test("Interact: Cmd-click still follows (the modifier pins only while armed)", async () => {
+      setUp('<a id="rel" href="a.html">A</a>', false);
+      clickWith("#rel", { metaKey: true });
+      await flushPosts();
+      expect(capturedLinkPosts.map((p) => p.href)).toEqual(["a.html"]);
+    });
+
+    test("armed pinpoint: a #fragment link scrolls on a plain click and pins on a Cmd-click", async () => {
+      setUp('<a id="frag" href="#target">Jump</a><h2 id="target">Target</h2>', true);
+      const target = document.querySelector<HTMLElement>("#target")!;
+      let scrolled = 0;
+      target.scrollIntoView = () => { scrolled += 1; };
+      clickLink("#frag");
+      expect(scrolled).toBe(1);
+      await flushPosts();
+      const { selections, stop } = collectSelections();
+      clickWith("#frag", { metaKey: true });
+      await flushPosts();
+      stop();
+      expect(scrolled).toBe(1);
+      expect(selections.length).toBe(1);
+      postBridge({ type: "plannotator-bridge-cancel-selection" });
+    });
+
+    test("armed pinpoint: a drag that selected text and ended on a link neither follows nor pins", async () => {
+      setUp('<p id="p">Read <a id="rel" href="a.html">the detail page</a> next.</p>', true);
+      await flushPosts();
+      const { selections, stop } = collectSelections();
+      const text = document.querySelector("#rel")!.firstChild!;
+      // A real drag: mousedown, a move past the 4 px threshold, a selection, mouseup, then the trailing click.
+      document.querySelector("#rel")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+      document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, buttons: 1, clientX: 40, clientY: 10 }));
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(text, 8);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      document.querySelector("#rel")!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0, clientX: 40, clientY: 10 }));
+      const event = clickLink("#rel");
+      await new Promise((r) => setTimeout(r, 30));
+      stop();
       expect(event.defaultPrevented).toBe(true);
       expect(capturedLinkPosts).toEqual([]);
+      // The drag's own text comment may post; the link element is never pinned.
+      expect(selections.filter((s) => s.pinpoint === true)).toEqual([]);
+      window.getSelection()!.removeAllRanges();
     });
 
     test("javascript: hrefs stay the page's own scripting", async () => {

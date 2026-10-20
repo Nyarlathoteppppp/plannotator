@@ -148,7 +148,7 @@ Live app annotation runs on the standalone CLI, the Claude Code slash command, a
 
 Live app and HTML sessions share one interaction model:
 
-- The session opens with the pen **armed**, so a click pins the element under the cursor and a drag selects text to comment on.
+- The session opens with the pen **armed**, so a click pins the element under the cursor and a drag selects text to comment on. A click on a link follows it, as in any page; hold `Cmd` (`Ctrl` on Windows and Linux) and click to pin the link for a comment instead.
 - `Esc` steps back one rung at a time: it closes an open draft, then clears the hover outline, then drops you into **Interact** mode, where clicks, forms, links, and navigation reach the page normally.
 - The pen button in the header (or `Cmd/Ctrl+Shift+A`) toggles annotation back on, and off again. Existing comment markers stay visible in both modes, and clicking one still opens it.
 - Selecting text to comment works in **both** modes, so you can leave a note without arming the pen.

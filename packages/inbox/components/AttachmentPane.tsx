@@ -974,7 +974,7 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
     props.onLinked?.(before ? linkedValue(before.relative, before.hash) : null, { back: true });
     requestAnimationFrame(() => sectionRef.current?.focus({ preventScroll: true }));
   };
-  /** A link the page's bridge handed over (in Interact; an armed click pins the link instead). `baseDir`: the folder of the page it is in. */
+  /** A link the page's bridge handed over (a plain click, armed or not; ⌘/Ctrl-click while armed pins it instead). `baseDir`: the folder of the page it is in. */
   const followLink = (href: string, baseDir: string) => {
     const link = resolveInboxHtmlLink(href, {
       folder: pageFolder,

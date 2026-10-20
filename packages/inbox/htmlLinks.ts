@@ -2,8 +2,9 @@
  * What a link inside an attached HTML page means in the Inbox.
  *
  * The page is drawn in Plannotator's sandboxed HtmlViewer, whose bridge never
- * lets the frame navigate: it hands the RAW href to the window (in Interact;
- * an armed click pins the link instead, as in annotate). The href is read
+ * lets the frame navigate: on a plain click it hands the RAW href to the
+ * window, in Annotate and Interact alike (⌘-click, Ctrl-click off macOS, pins
+ * the link for a comment while armed; one rule on every HTML surface). The href is read
  * with annotate's own rules (`resolveHtmlLinkIntent`: relative to the page's
  * folder, the query dropped, the fragment kept), then mapped onto what the
  * Inbox has:

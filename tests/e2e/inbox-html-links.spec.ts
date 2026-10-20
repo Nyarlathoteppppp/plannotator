@@ -4,8 +4,8 @@
  * under a temp PLANNOTATOR_DATA_DIR and HOME, an agent sends through
  * `plannotator inbox mcp` (scripts/inbox-sim.ts) a message attaching
  * `site/SHEET.html` and one frame of the page, and Chromium opens the page.
- * In Interact (the toolbar's pen; an armed click pins a link instead, as in
- * annotate) a real click on each link of the page: a sibling page that is
+ * Armed (Annotate, the default; no mode switch) a plain click on each link of
+ * the page follows it, and a Cmd/Ctrl-click pins it for a comment: a sibling page that is
  * not attached opens read-only over the page with Back and Open in new tab,
  * and its own links follow; Back returns to the page; the attached frame
  * opens in the pane and the browser's Back returns to the page; an image
@@ -124,7 +124,7 @@ async function world() {
   return { root, url, agent, thread: sent.thread_id as string, ids };
 }
 
-/** The attached page opened from its tile (full screen), in Interact (an armed click pins a link). */
+/** The attached page opened from its tile (full screen), armed (Annotate, the default): a plain click on a link follows it. */
 async function openSheet(page: Page, url: string, thread: string, sheet: string) {
   // From its tile, as the person opens it: HTML opens full screen.
   await page.goto(`${url}#thread=${thread}`);
@@ -134,8 +134,8 @@ async function openSheet(page: Page, url: string, thread: string, sheet: string)
   await expect(pane).toHaveAttribute('data-full-view', '');
   const frame = page.frameLocator('.ib-htmlframe iframe');
   await expect(frame.locator('h1')).toHaveText('Guided narrative: contact sheet');
-  await page.getByRole('button', { name: 'Annotate mode' }).click();
-  await expect(page.getByRole('button', { name: 'Interact mode' })).toBeVisible();
+  // No mode switch: the page stays in Annotate, where a plain click on a link follows it.
+  await expect(page.getByRole('button', { name: 'Annotate mode' })).toBeVisible();
   return { pane, frame };
 }
 
@@ -207,6 +207,15 @@ for (const scheme of ['light', 'dark'] as const) {
       await page.keyboard.press('Escape');
       await expect(lightbox).toHaveCount(0);
 
+      // Cmd-click (Ctrl-click off macOS) on a link while armed pins it for a comment and follows nothing.
+      await frame.getByRole('link', { name: 'B: Cards, at PR 1' }).click({ modifiers: ['ControlOrMeta'] });
+      const composer = page.locator('[data-comment-popover]');
+      await expect(composer).toBeVisible();
+      await expect(page.locator('[data-linked-page]')).toHaveCount(0);
+      await shot(page, `3b-cmd-click-pins-link-${scheme}`);
+      await page.keyboard.press('Escape');
+      await expect(composer).toHaveCount(0);
+
       // A PDF beside it: a note says why, never silent.
       await frame.getByRole('link', { name: 'The brief (PDF)' }).click();
       const note = page.locator('[data-link-note="shown"]');
@@ -241,7 +250,7 @@ test('beside the thread: a sibling page opens over the page, Escape and the brow
     await expect(pane).not.toHaveAttribute('data-full-view', '');
     const frame = page.frameLocator('.ib-htmlframe iframe');
     await expect(frame.locator('h1')).toHaveText('Guided narrative: contact sheet');
-    await page.getByRole('button', { name: 'Annotate mode' }).click();
+    // Armed (no mode switch): a plain click follows the link.
     await frame.getByRole('link', { name: 'A: Story page' }).click();
     await expect(page.locator('[data-linked-page="A-story.html"]')).toBeVisible();
     // The band is a row above the page; the header's pen is gone (no comments here).

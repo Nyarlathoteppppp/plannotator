@@ -567,6 +567,64 @@ describe.if(hasDom)('live bridge gate (composed body in the eval harness)', () =
     postToBridge({ type: 'plannotator-bridge-cancel-selection', token: bridgeToken });
   });
 
+  function probeLink(): HTMLAnchorElement {
+    let link = bridgeDocument.getElementById('live-probe-link') as HTMLAnchorElement | null;
+    if (!link) {
+      link = bridgeDocument.createElement('a');
+      link.id = 'live-probe-link';
+      link.href = '/settings';
+      link.textContent = 'Settings';
+      bridgeDocument.body.appendChild(link);
+    }
+    return link;
+  }
+
+  // One rule while armed (owner's ruling html-link-click): a plain click on a link follows it. A live
+  // app navigates for real, so the bridge leaves the click to the browser: no pin, no prevented default.
+  test('ARMED: a plain click on a link follows it natively (no pin, never prevented), and posts no link-click', () => {
+    const before = primaryPosts('link-click').length;
+    const selectionsBefore = selectionPosts().length;
+    // What the bridge left the click as, read last on its way up; then the test stops the
+    // navigation itself, so the harness window stays on this page for the tests after it.
+    let preventedByBridge: boolean | null = null;
+    const last = (e: Event) => {
+      preventedByBridge = e.defaultPrevented;
+      e.preventDefault();
+    };
+    bridgeWindow.addEventListener('click', last);
+    try {
+      probeLink().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    } finally {
+      bridgeWindow.removeEventListener('click', last);
+    }
+    expect(preventedByBridge).toBe(false);
+    expect(selectionPosts().length).toBe(selectionsBefore);
+    expect(primaryPosts('link-click').length).toBe(before);
+  });
+
+  test('ARMED: Cmd-click and Ctrl-click on a link pin it for a comment and never navigate', () => {
+    for (const init of [{ metaKey: true }, { ctrlKey: true }]) {
+      const before = selectionPosts().length;
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true, ...init });
+      probeLink().dispatchEvent(click);
+      expect(click.defaultPrevented).toBe(true);
+      expect(selectionPosts().length).toBe(before + 1);
+      expect(selectionPosts().at(-1)!.data.pinpoint).toBe(true);
+      expect((selectionPosts().at(-1)!.data.anchor as { tagName: string }).tagName).toBe('a');
+      postToBridge({ type: 'plannotator-bridge-cancel-selection', token: bridgeToken });
+    }
+  });
+
+  test('ARMED: a drag that selected the link text and ended on it never navigates the app', async () => {
+    const link = probeLink();
+    await dragSelectContents(link);
+    const trailing = clickProbe(link);
+    expect(trailing.prevented).toBe(true);
+    expect(trailing.selections).toBe(0);
+    postToBridge({ type: 'plannotator-bridge-cancel-selection', token: bridgeToken });
+    bridgeWindow.getSelection()!.removeAllRanges();
+  });
+
   test('ARMED: a real text drag posts a drag selection, and its trailing click never re-pins', async () => {
     const p = dragProbeParagraph();
     const before = selectionPosts().length;
