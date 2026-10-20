@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { startInboxServer, type InboxServer } from "./inbox";
+import { readInboxLinkedPage } from "./inbox-attachments";
 
 const roots: string[] = [];
 const servers: InboxServer[] = [];
@@ -89,3 +90,45 @@ test("refusals: outside the folder, hidden, not HTML, missing, too large, anothe
   const post = await fetch(`http://127.0.0.1:${server.port}/api/inbox/attachments/${sheet}/linked-page?path=B-cards.html`, { method: "POST" });
   expect(post.status).toBe(405);
 });
+
+test("a parent folder swapped for a symlink between the realpath and the open never serves the file outside", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "plannotator-inbox-linked-race-")));
+  roots.push(root);
+  const project = join(root, "design");
+  mkdirSync(join(project, "sub"), { recursive: true });
+  mkdirSync(join(root, "outdir"));
+  writeFileSync(join(project, "SHEET.html"), "<p>Sheet</p>");
+  writeFileSync(join(project, "sub", "deep.htm"), "<p>inside</p>");
+  writeFileSync(join(root, "outdir", "deep.htm"), "<p>OUTSIDE</p>");
+  // Another process swaps `sub` for a symlink to a folder outside and back, as fast as it can.
+  const swapper = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `const fs = require("node:fs"); const [p, o] = process.argv.slice(1); const end = Date.now() + 15000;
+       while (Date.now() < end) {
+         try { fs.renameSync(p + "/sub", p + "/sub_real"); fs.symlinkSync(o, p + "/sub"); } catch {}
+         try { fs.rmSync(p + "/sub"); fs.renameSync(p + "/sub_real", p + "/sub"); } catch {}
+       }`,
+      project,
+      join(root, "outdir"),
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  try {
+    await new Promise((r) => setTimeout(r, 100));
+    let outside = 0;
+    for (let i = 0; i < 20000; i++) {
+      try {
+        const page = await readInboxLinkedPage(join(project, "SHEET.html"), "sub/deep.htm");
+        if (page.text.includes("OUTSIDE")) outside++;
+      } catch {
+        // Refused while the folder is a symlink: what should happen.
+      }
+    }
+    expect(outside).toBe(0);
+  } finally {
+    swapper.kill();
+    await swapper.exited;
+  }
+}, 30000);

@@ -29,8 +29,8 @@
 import { checkServerSession, INBOX_SERVER_SESSION_MISMATCH_ERROR, serverSessionMismatchBody } from "@plannotator/core/server-session";
 import type { FileHandle } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
-import { basename, dirname, resolve as resolvePath } from "node:path";
+import { lstat, open, realpath } from "node:fs/promises";
+import { basename, dirname, relative as relativeTo, resolve as resolvePath, sep } from "node:path";
 import { htmlAssetPathRefused, isWithinDirectory } from "@plannotator/shared/html-assets-node";
 import { HTML_ASSET_DOCUMENT_CSP, htmlAssetDocumentHeaders, MAX_HTML_ASSET_DOCUMENT_BYTES, refusesHiddenHtmlAssetPath } from "@plannotator/shared/html-assets";
 import { INBOX_ANNOTATION_CURRENT, isInboxTextKind, readInboxAttachmentKind, type InboxAttachment } from "@plannotator/core/inbox-types";
@@ -128,7 +128,13 @@ export async function readInboxLinkedPage(attachedPath: string, relativePath: st
   }
   // Judged again on the path that is opened, so a link swapped in between cannot lead out.
   if (!isWithinDirectory(real, root)) throw new InboxError("linked_page_outside", "Only pages in the attached page's own folder open here.");
-  // The handle is opened on the realpath without following a link, and checked against it.
+  if (inboxRefusesAssetPath(relativeTo(root, real).split(sep).join("/"))) {
+    throw new InboxError("linked_page_refused", "Plannotator does not open hidden files or .env files.");
+  }
+  // The handle is opened on the realpath without following a link. O_NOFOLLOW covers
+  // only the last segment, so once open the realpath must still lead to the very
+  // file the descriptor holds (dev and ino): a parent folder swapped for a symlink
+  // between realpath and open is caught.
   let handle: FileHandle;
   try {
     handle = await open(real, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
@@ -139,11 +145,30 @@ export async function readInboxLinkedPage(attachedPath: string, relativePath: st
     const stat = await handle.stat();
     if (!stat.isFile()) throw new InboxError("linked_page_missing", `${name} is not a file.`);
     if (stat.size > MAX_HTML_ASSET_DOCUMENT_BYTES) throw new InboxError("linked_page_too_large", `${name} is too large to show here (over 2 MB).`);
-    const bytes = await handle.readFile();
-    if (bytes.byteLength > MAX_HTML_ASSET_DOCUMENT_BYTES) throw new InboxError("linked_page_too_large", `${name} is too large to show here (over 2 MB).`);
-    return { path: real, text: bytes.toString("utf8") };
+    if (!(await stillSameFile(real, stat))) throw new InboxError("linked_page_outside", "Only pages in the attached page's own folder open here.");
+    // At most the cap plus one byte, so a file that grows after the stat is never read whole.
+    const buffer = Buffer.alloc(MAX_HTML_ASSET_DOCUMENT_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > MAX_HTML_ASSET_DOCUMENT_BYTES) throw new InboxError("linked_page_too_large", `${name} is too large to show here (over 2 MB).`);
+    return { path: real, text: buffer.subarray(0, length).toString("utf8") };
   } finally {
     await handle.close().catch(() => {});
+  }
+}
+
+/** The path still leads to the file a descriptor holds: its realpath unchanged and the same dev and ino. */
+async function stillSameFile(real: string, opened: { dev: number; ino: number }): Promise<boolean> {
+  try {
+    if ((await realpath(real)) !== real) return false;
+    const again = await lstat(real);
+    return again.isFile() && again.dev === opened.dev && again.ino === opened.ino;
+  } catch {
+    return false;
   }
 }
 
