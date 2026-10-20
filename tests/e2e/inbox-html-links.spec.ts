@@ -84,6 +84,9 @@ const SHEET = `<!doctype html><html><head><meta charset="utf-8"><title>Contact s
 <li><a href="frames/B-1440-light.png">B frame, not attached</a></li>
 <li><a href="brief.pdf">The brief (PDF)</a></li>
 </ul>
+<p><a href="#" class="btn">Save draft</a></p>
+<ul>
+</ul>
 </body></html>`;
 
 const PAGE = (title: string, extra = '') =>
@@ -113,11 +116,16 @@ async function world() {
   writeFileSync(join(site, 'frames', 'A-1440-light.png'), png(480, 300, [80, 140, 255]));
   writeFileSync(join(site, 'frames', 'B-1440-light.png'), png(480, 300, [255, 150, 70]));
   writeFileSync(join(site, 'brief.pdf'), '%PDF-1.4\n');
+  // A page whose own script clicks its link: that never follows it.
+  writeFileSync(
+    join(site, 'autoclick.html'),
+    `<!doctype html><html><head><meta charset="utf-8"><title>Auto</title>${STYLE}</head><body><h1>Auto-click</h1><a id="go" href="B-cards.html">B</a><script>setTimeout(() => document.getElementById('go').click(), 300);</script></body></html>`,
+  );
   const agent = await SimAgent.connect({ binary, env, name: 'Claude', host: 'claude-code' });
   const sent = await agent.send({
     project_path: project,
     subject: 'Guided narrative: three directions',
-    attachments: ['guided-narrative/SHEET.html', 'guided-narrative/frames/A-1440-light.png'],
+    attachments: ['guided-narrative/SHEET.html', 'guided-narrative/frames/A-1440-light.png', 'guided-narrative/autoclick.html'],
     body: 'The contact sheet links every page and frame.',
   });
   const ids = Object.fromEntries((sent.attachments as { id: string; name: string }[]).map((a) => [a.name, a.id]));
@@ -216,6 +224,26 @@ for (const scheme of ['light', 'dark'] as const) {
       await page.keyboard.press('Escape');
       await expect(composer).toHaveCount(0);
 
+      // A link that goes nowhere (href="#", the mocks' button): a plain click pins it, as any element.
+      await frame.getByRole('link', { name: 'Save draft' }).click();
+      await expect(composer).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(composer).toHaveCount(0);
+
+      // No pin outline over a link a click follows, until Cmd/Ctrl is held.
+      const box = frame.locator('[data-plannotator-pinpoint-box]');
+      await frame.getByRole('heading', { name: 'Guided narrative: contact sheet' }).hover();
+      await expect(box).toBeVisible();
+      await frame.getByRole('link', { name: 'A: Story page' }).hover();
+      await expect(box).toBeHidden();
+      await page.keyboard.down('ControlOrMeta');
+      await frame.getByRole('link', { name: 'A: Story page' }).hover({ position: { x: 4, y: 4 } });
+      await expect(box).toBeVisible();
+      await shot(page, `3c-modifier-shows-pin-outline-${scheme}`);
+      await page.keyboard.up('ControlOrMeta');
+      await frame.getByRole('link', { name: 'A: Story page' }).hover({ position: { x: 8, y: 6 } });
+      await expect(box).toBeHidden();
+
       // A PDF beside it: a note says why, never silent.
       await frame.getByRole('link', { name: 'The brief (PDF)' }).click();
       const note = page.locator('[data-link-note="shown"]');
@@ -265,6 +293,29 @@ test('beside the thread: a sibling page opens over the page, Escape and the brow
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-linked-page]')).toHaveCount(0);
     await expect(pane).toBeVisible();
+  } finally {
+    await agent.close().catch(() => {});
+    await context.close().catch(() => {});
+    await removeInboxScratch(root);
+  }
+});
+
+test("a page's own script clicking its link never follows it", async ({ browser }) => {
+  const { root, url, agent, thread, ids } = await world();
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.goto(`${url}#thread=${thread}`);
+    await page.locator(`button[data-attachment-id="${ids['autoclick.html']}"]`).first().click();
+    const frame = page.frameLocator('.ib-htmlframe iframe');
+    await expect(frame.locator('h1')).toHaveText('Auto-click');
+    // Its timer has fired (a.click() on its own link); nothing followed, nothing pushed.
+    await page.waitForTimeout(1200);
+    await expect(page.locator('[data-linked-page]')).toHaveCount(0);
+    expect(new URL(page.url()).hash).not.toContain('linked=');
+    // A person's click on the same link does follow it.
+    await frame.getByRole('link', { name: 'B' }).click();
+    await expect(page.locator('[data-linked-page="B-cards.html"]')).toBeVisible();
   } finally {
     await agent.close().catch(() => {});
     await context.close().catch(() => {});

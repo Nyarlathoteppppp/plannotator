@@ -171,6 +171,9 @@ test.skipIf(!hasDom)('a sibling page that is not attached opens read-only over t
   // The page is in the route (one history entry each), and the panel says comments are off on it.
   expect(new URLSearchParams(window.location.hash.slice(1)).get('linked')).toBe('B-cards.html#pr1');
   expect(el.querySelector('[data-annotation-panel-note]')?.textContent).toBe('Off on B-cards.html');
+  // The empty panel says where comments go, never "Select text to annotate" beside "Off on".
+  expect(el.querySelector('.ib-view')!.textContent).not.toContain('Select text to annotate');
+  expect(el.querySelector('.ib-view')!.textContent).toContain('Comment on SHEET.html, not on this page');
   // From the sibling, a further sibling: Back names the page before it.
   const linkedFrame = el.querySelector<HTMLIFrameElement>('.ib-linkedframe iframe')!;
   await clickLink(linkedFrame, 'C-between.html');

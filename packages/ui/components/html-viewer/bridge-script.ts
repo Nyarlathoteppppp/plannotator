@@ -60,11 +60,15 @@ body[data-plannotator-pinpoint-cursor],
 body[data-plannotator-pinpoint-cursor] * {
   cursor: crosshair !important;
 }
-/* A plain click on a link follows it while armed (the modifier pins it), so a
- * link keeps the pointer that says so. */
-body[data-plannotator-pinpoint-cursor] a[href]:not([href^="javascript:" i]),
-body[data-plannotator-pinpoint-cursor] a[href]:not([href^="javascript:" i]) *,
-body[data-plannotator-pinpoint-cursor] area[href] {
+/* A plain click on a link with a real destination follows it while armed
+ * (Cmd/Ctrl-click pins it), so such a link keeps the pointer that says so,
+ * until the modifier is held. A link that goes nowhere (no href, "", "#",
+ * javascript:) is not followed and keeps the crosshair. SVG links may carry
+ * only xlink:href, hence the any-namespace attribute. */
+body[data-plannotator-pinpoint-cursor]:not([data-plannotator-pin-modifier]) :is(a, area)[href]:not([href=""]):not([href="#"]):not([href^="javascript:" i]),
+body[data-plannotator-pinpoint-cursor]:not([data-plannotator-pin-modifier]) :is(a, area)[href]:not([href=""]):not([href="#"]):not([href^="javascript:" i]) *,
+body[data-plannotator-pinpoint-cursor]:not([data-plannotator-pin-modifier]) svg a:not([href])[*|href]:not([*|href=""]):not([*|href="#"]):not([*|href^="javascript:" i]),
+body[data-plannotator-pinpoint-cursor]:not([data-plannotator-pin-modifier]) svg a:not([href])[*|href]:not([*|href=""]):not([*|href="#"]):not([*|href^="javascript:" i]) * {
   cursor: pointer !important;
 }
 /* Armed pinpoint over an EMBEDDED local document: the embed is one element
@@ -1364,6 +1368,14 @@ export const BRIDGE_SCRIPT = `(function() {
   // changes); shared by mousemove and the scroll/resize reconcile pass.
   // Per-event hit-testing only — never builds the semantic graph.
   function updatePinpointHover(x, y, fallbackNode) {
+    // A link a plain click follows shows no pin outline unless Cmd/Ctrl is
+    // held: the outline always matches what a click there will do.
+    if (!pinModifierHeld && !pendingPinEl && (followableLinkAt(fallbackNode) || followableLinkAt(deepElementFromPoint(x, y)))) {
+      pinpointHover = null;
+      hidePinpointBox();
+      hidePinpointLabel();
+      return;
+    }
     var el = pinpointLeafAt(x, y, fallbackNode);
     // The 25px marker bubble owns clicks over it (they select its comment),
     // so hover must advertise the MARKER's own identity — no annotate box,
@@ -1394,9 +1406,36 @@ export const BRIDGE_SCRIPT = `(function() {
     positionPinpointLabel(el, pinpointHoverLabel(el));
   }
 
+  // Cmd or Ctrl held (the pin modifier): a link under the pointer shows the
+  // pin outline and the crosshair instead of the follow pointer. Read from
+  // the key itself (as the token-hover gate does) and from every pointer
+  // move, so a key pressed with focus outside this frame still counts.
+  var pinModifierHeld = false;
+  function setPinModifier(held) {
+    if (held === pinModifierHeld) return;
+    pinModifierHeld = held;
+    if (document.body) {
+      if (held) document.body.setAttribute('data-plannotator-pin-modifier', '');
+      else document.body.removeAttribute('data-plannotator-pin-modifier');
+    }
+    if (annotateModeActive && currentInputMethod === 'pinpoint' && lastPointer && !(vimEnabled && vimPhase !== 'inactive')) {
+      updatePinpointHover(lastPointer.x, lastPointer.y, lastPointerNode || pinpointHover);
+    }
+  }
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Meta' || e.key === 'Control') setPinModifier(true);
+  }, true);
+  document.addEventListener('keyup', function(e) {
+    if (e.key === 'Meta' || e.key === 'Control') setPinModifier(e.metaKey || e.ctrlKey);
+  }, true);
+  window.addEventListener('blur', function() { setPinModifier(false); });
+
   var lastPointer = null;
+  var lastPointerNode = null;
   document.addEventListener('mousemove', function(e) {
     lastPointer = { x: e.clientX, y: e.clientY };
+    lastPointerNode = e.target && e.target.nodeType === 1 ? e.target : null;
+    if (!!(e.metaKey || e.ctrlKey) !== pinModifierHeld) setPinModifier(!!(e.metaKey || e.ctrlKey));
     updateDragYield(e);
     if (!annotateModeActive) return; // Interact mode: no hover affordances
     if (currentInputMethod !== 'pinpoint') {
@@ -3955,6 +3994,17 @@ export const BRIDGE_SCRIPT = `(function() {
     return !!(e.shiftKey && pendingPinEl && multiSelectArmed && pendingSelection);
   }
 
+  // A link with a real destination: one a plain click follows while armed.
+  // No href, "", "#" and javascript: go nowhere, so a click on them pins
+  // the element as on any other (agents' mocks use <a href="#"> for buttons).
+  function isFollowableHref(raw) {
+    return !!raw && raw !== '#' && !/^javascript:/i.test(raw);
+  }
+
+  function followableLinkAt(node) {
+    return !!node && isFollowableHref(navigableLinkHref(node));
+  }
+
   function navigableLinkHref(node) {
     var el = node && node.nodeType === 1 ? node : node && node.parentElement;
     if (!el || !el.closest) return '';
@@ -3974,9 +4024,10 @@ export const BRIDGE_SCRIPT = `(function() {
       if (!raw) return;
       // The page's own scripting, not a navigation: leave it alone.
       if (/^javascript:/i.test(raw)) return;
-      // Armed and pinning (or a drag's trailing click): the frame never
-      // navigates, and the pinpoint handler below takes the click.
-      if (annotateModeActive && currentInputMethod === 'pinpoint' && armedClickPins(e)) {
+      // Armed and pinning (a link that goes nowhere, the modifier, or a
+      // drag's trailing click): the frame never navigates, and the pinpoint
+      // handler below takes the click.
+      if (annotateModeActive && currentInputMethod === 'pinpoint' && (!isFollowableHref(raw) || armedClickPins(e))) {
         e.preventDefault();
         return;
       }
@@ -3986,14 +4037,15 @@ export const BRIDGE_SCRIPT = `(function() {
         return;
       }
       e.preventDefault();
+      // Only a person's click follows a link: a page's own script calling
+      // a.click() never navigates the viewer or pushes the host's history.
+      if (!e.isTrusted) return;
       // A native host decides links itself: a person's tap opens the link as a
       // new window, which the host's web view hands to its own delegate (the
       // frame never navigates; the host page's CSP would refuse it anyway).
       if (hostNavigates) {
-        if (e.isTrusted) {
-          var target = (e.target && e.target.closest) ? e.target.closest('a,area') : null;
-          try { window.open(target && target.href ? target.href : raw, '_blank', 'noopener'); } catch (ex) {}
-        }
+        var target = (e.target && e.target.closest) ? e.target.closest('a,area') : null;
+        try { window.open(target && target.href ? target.href : raw, '_blank', 'noopener'); } catch (ex) {}
         return;
       }
       postToParent({ type: PREFIX + 'link-click', href: raw.slice(0, 2048) });
@@ -4035,8 +4087,7 @@ export const BRIDGE_SCRIPT = `(function() {
     }
     // A plain click on a link follows it (the link handler above posted it;
     // in a live app the browser navigates for real). The modifier pins it.
-    var clickedLink = navigableLinkHref(e.target);
-    if (clickedLink && !/^javascript:/i.test(clickedLink) && !armedClickPins(e)) return;
+    if (isFollowableHref(navigableLinkHref(e.target)) && !armedClickPins(e)) return;
     // Click what the hover box shows: the currently hovered element is the
     // target the user aimed at. Fall back to a fresh hit-test at the click
     // point (e.g. a click with no preceding mousemove).

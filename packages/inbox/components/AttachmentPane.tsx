@@ -1641,7 +1641,8 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
           <AnnotationPanel
             // The sheet and the drawer draw the timeline under their own title and close (and a phone's window-wide overlay below 768 px would have no close here).
             presentation={folded || full ? 'embedded' : undefined}
-            emptyHint={isImage ? 'Comment below the image' : isVideo ? 'Pause at a moment and comment below the film' : isCode ? 'Click a line to comment' : undefined}
+            // A linked page takes no comments: the hint says where they can be written instead.
+            emptyHint={linkedTop ? `Comment on ${attachment.name}, not on this page` : isImage ? 'Comment below the image' : isVideo ? 'Pause at a moment and comment below the film' : isCode ? 'Click a line to comment' : undefined}
             isOpen
             annotations={annotations}
             blocks={blocks}

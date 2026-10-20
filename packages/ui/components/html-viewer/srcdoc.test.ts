@@ -4262,10 +4262,16 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
     /** postMessage delivery is queued; one macrotask turn settles it. */
     const flushPosts = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+    /** A person's click: `isTrusted`, which only the browser sets (a page script's a.click() is untrusted). */
+    function trusted<T extends Event>(event: T): T {
+      Object.defineProperty(event, "isTrusted", { value: true });
+      return event;
+    }
+
     function clickLink(selector: string): MouseEvent {
       const el = document.querySelector<HTMLElement>(selector);
       if (!el) throw new Error("missing link " + selector);
-      const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+      const event = trusted(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
       el.dispatchEvent(event);
       return event;
     }
@@ -4352,10 +4358,73 @@ describe.if(hasDom)("bridge theme handler (DOM)", () => {
 
     function clickWith(selector: string, init: MouseEventInit): MouseEvent {
       const el = document.querySelector<HTMLElement>(selector)!;
-      const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
+      const event = trusted(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init }));
       el.dispatchEvent(event);
       return event;
     }
+
+    for (const armed of [false, true]) {
+      test(`${armed ? "armed" : "Interact"}: the page's own script clicking its link on a timer never follows it`, async () => {
+        setUp('<a id="rel" href="next.html">Next</a>', armed);
+        await flushPosts();
+        let prevented: boolean | null = null;
+        const link = document.querySelector<HTMLAnchorElement>("#rel")!;
+        link.addEventListener("click", (e) => { prevented = e.defaultPrevented; });
+        // What a page would do: a.click() from its own script, later.
+        await new Promise<void>((resolve) => setTimeout(() => { link.click(); resolve(); }, 5));
+        await flushPosts();
+        expect(prevented).toBe(true); // the frame still never navigates itself
+        expect(capturedLinkPosts).toEqual([]);
+      });
+    }
+
+    for (const [label, markup] of [
+      ['href="#"', '<a id="go" href="#" class="btn">Save</a>'],
+      ['href=""', '<a id="go" href="" class="btn">Save</a>'],
+      ["javascript:", '<a id="go" href="javascript:void 0" class="btn">Save</a>'],
+      ["no href", '<a id="go" class="btn">Save</a>'],
+    ] as const) {
+      test(`armed pinpoint: a link that goes nowhere (${label}) pins on a plain click, as before`, async () => {
+        setUp(`<p>Intro</p>${markup}`, true);
+        await flushPosts();
+        const { selections, stop } = collectSelections();
+        const event = clickLink("#go");
+        await flushPosts();
+        stop();
+        expect(event.defaultPrevented).toBe(true);
+        expect(capturedLinkPosts).toEqual([]);
+        expect(selections.length).toBe(1);
+        expect(selections[0]!.pinpoint).toBe(true);
+        postBridge({ type: "plannotator-bridge-cancel-selection" });
+      });
+    }
+
+    test("armed pinpoint: no pin outline over a link a click follows, until Cmd/Ctrl is held (key or pointer)", () => {
+      setUp('<p id="intro">Intro</p><a id="rel" href="next.html">Next</a><a id="btn" href="#">Button</a>', true);
+      postBridge({ type: "plannotator-bridge-set-vim-mode", enabled: false });
+      let at = 0;
+      const box = () => document.querySelector<HTMLElement>("[data-plannotator-pinpoint-box]")?.style.display ?? "none";
+      const move = (selector: string, init: MouseEventInit = {}) =>
+        document.querySelector(selector)!.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, cancelable: true, clientX: 5 + (at += 7), clientY: 5, ...init }));
+      move("#intro");
+      expect(box()).toBe("block");
+      move("#rel");
+      expect(box()).toBe("none");
+      expect(document.body.hasAttribute("data-plannotator-pin-modifier")).toBe(false);
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
+      expect(document.body.hasAttribute("data-plannotator-pin-modifier")).toBe(true);
+      expect(box()).toBe("block");
+      document.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", bubbles: true }));
+      expect(box()).toBe("none");
+      // Held during the move itself (focus elsewhere when the key went down).
+      move("#rel", { ctrlKey: true });
+      expect(box()).toBe("block");
+      move("#rel");
+      expect(box()).toBe("none");
+      // A link that goes nowhere outlines like any element.
+      move("#btn");
+      expect(box()).toBe("block");
+    });
 
     // One rule while armed (owner's ruling html-link-click, 2026-10-20): a plain click follows, the modifier pins.
     test("armed pinpoint: a plain click on a link follows it, exactly as in Interact, and pins nothing", async () => {
