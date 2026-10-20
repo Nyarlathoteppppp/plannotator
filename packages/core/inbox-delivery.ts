@@ -76,6 +76,41 @@ export function inboxDeliveryState(input: InboxDeliveryInput): InboxDeliveryDeci
   return { state: "queued", reason: "next_turn", ...no };
 }
 
+/** The question states a message holds, as the asking rule reads them. */
+type AskingQuestionState = "open" | "picked" | "sent" | "closed" | "superseded";
+
+/**
+ * Whether a Send skips the questions it leaves unanswered, by default (no
+ * choice made on the chip): only when it carries an answer, i.e. some
+ * question in the thread holds a saved pick not yet sent.
+ */
+export function inboxDefaultSkip<M>(messages: readonly M[], statesOf: (message: M) => readonly AskingQuestionState[]): boolean {
+  return messages.some((message) => statesOf(message).includes("picked"));
+}
+
+/**
+ * The agent message whose session a Send with nothing riding on the latest
+ * message reaches (the thread's `askingSessionOf` without words or files):
+ * the last agent message a pick answers or, when the Send skips (`skip`),
+ * an open question it skips; with none, the latest agent message. Null when
+ * no agent wrote. One rule for the thread's "the session that asked" and the
+ * list row's delivery, so the two name the same session.
+ */
+export function inboxAskingMessage<M extends { author: { kind: string } }>(
+  messages: readonly M[],
+  statesOf: (message: M) => readonly AskingQuestionState[],
+  skip: boolean,
+): M | null {
+  let latest: M | null = null;
+  let answered: M | null = null;
+  for (const message of messages) {
+    if (message.author.kind !== "agent") continue;
+    latest = message;
+    if (statesOf(message).some((state) => state === "picked" || (skip && state === "open"))) answered = message;
+  }
+  return answered ?? latest;
+}
+
 /**
  * The delivery of the person's latest sent item in a thread, on its list row
  * (`InboxListRow.delivery`): a reply, a message the person addressed to a
@@ -99,4 +134,10 @@ export interface InboxRowDelivery {
   name: string | null;
   /** It went to another session of the asker's own host ("Claude Code (another session)"). */
   another_session?: boolean;
+  /**
+   * `reason: "ended"`: the agent of the session that asked and has ended
+   * (`inboxAskingMessage`), which the line names ("Saved for <it>. The
+   * session that asked has ended…"). Absent otherwise.
+   */
+  asking?: { host: string | null; name: string | null };
 }

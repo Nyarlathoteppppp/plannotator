@@ -18,7 +18,9 @@ export function rowDeliveryName(d: InboxRowDelivery): string {
 /** The tooltip: the thread's delivery line for the same state (a 👍's says so first). */
 export function rowDeliveryLine(d: InboxRowDelivery, time: (iso: string) => string = whenTime): string {
   const name = rowDeliveryName(d);
-  const text = deliveryText(d.reason, { name, at: d.at, time, undeliveredHost: name, endedName: name });
+  // "Saved for <the agent that asked>": the session that asked may be another than the thread's first agent.
+  const endedName = d.asking ? inboxAgentName({ kind: 'agent', ...d.asking }) : name;
+  const text = deliveryText(d.reason, { name, at: d.at, time, undeliveredHost: name, endedName });
   return d.kind === 'ack' ? `👍 Looks good · ${text}` : text;
 }
 
@@ -41,7 +43,13 @@ export function rowTimeIso(row: InboxListRow): string {
   return row.delivery?.state === 'delivered' && row.delivery.at ? row.delivery.at : row.last_at;
 }
 
-/** Some row's delivery can still move with the live sessions (anything but delivered): `event: deliveries` reads the list again. */
+/**
+ * Some row's delivery can still move with the live sessions, so
+ * `event: deliveries` reads the list again: anything but delivered, and
+ * saved for an agent that only reads the thread (`reads`), which only a store
+ * line (its read) changes.
+ */
 export function hasMovingDelivery(sections: readonly InboxListSection[] | null): boolean {
-  return !!sections?.some((section) => section.threads.some((row) => row.delivery != null && row.delivery.state !== 'delivered'));
+  const moves = (d: InboxRowDelivery | null | undefined) => !!d && d.state !== 'delivered' && !(d.state === 'saved' && d.reason === 'reads');
+  return !!sections?.some((section) => section.threads.some((row) => moves(row.delivery)));
 }

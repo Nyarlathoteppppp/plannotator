@@ -72,8 +72,11 @@ import {
   type InboxParticipant,
   type InboxSentRecipient,
   type InboxTag,
+  inboxAskingMessage,
+  inboxDefaultSkip,
   inboxDeliveryState,
   type InboxDeliveryConnection,
+  type InboxQuestionState,
   type InboxRowDelivery,
 } from "@plannotator/core/inbox-types";
 import { inboxListSections, inboxRowUnread, inboxSectionOf } from "./list";
@@ -978,21 +981,26 @@ export class InboxStore {
     let lastAgentAt: string | null = null;
     let lastAgent: InboxMessage | null = null;
     let waitingSince: string | null = null;
+    // The last message with the Inbox's notes read past: rule 7 (Sent), "came back", and the row's delivery.
+    const lastReal = lastNonNote(messages) ?? root;
+    // A person's item is last: its delivery reads which session asked (`inboxAskingMessage`), from the
+    // question states this one pass reads anyway.
+    const askingStates = lastReal.author.kind === "person" ? new Map<string, InboxQuestionState[]>() : null;
     for (const message of messages) {
       if (message.author.kind === "agent") lastAgent = message;
       // The person's reply is a look; the Inbox's own notes (Mark read's
       // set-aside note, a late Undo's reopened note) are not.
       if (message.author.kind === "person" && !isInboxNote(message)) lastPersonSeq = seqOf(message);
       if (message.author.kind === "agent") lastAgentAt = message.created_at;
-      if (waitingSince === null && this.questionsOf(message.id).some((q) => q.state === "open" && !q.orphaned)) {
-        waitingSince = message.created_at;
+      if (waitingSince === null || (askingStates && message.author.kind === "agent")) {
+        const questions = this.questionsOf(message.id);
+        if (waitingSince === null && questions.some((q) => q.state === "open" && !q.orphaned)) waitingSince = message.created_at;
+        if (askingStates && message.author.kind === "agent") askingStates.set(message.id, questions.map((q) => q.state));
       }
     }
     // A reply of the person's is a look at everything before it.
     const seenSeq = Math.max(root.person_seen_seq ?? 0, lastPersonSeq);
     const unseen = messages.filter((m) => m.author.kind === "agent" && seqOf(m) > seenSeq).length;
-    // The last message with the Inbox's notes read past: rule 7 (Sent) and "came back".
-    const lastReal = lastNonNote(messages) ?? root;
     // A reply that tags agents is read for each recipient by its own delivery:
     // it stays Sent until every session a connection wakes has it (an agent
     // that only reads the Inbox never holds it there).
@@ -1047,7 +1055,9 @@ export class InboxStore {
         summary.questions.open > 0 ||
         summary.questions.picked > 0 ||
         replyUnread);
-    const delivery = this.rowDelivery(root, messages, lastReal, sent, recipients, root.resolved_at !== null && !agentAfterArchive);
+    const statesOf = (message: InboxMessage) => askingStates?.get(message.id) ?? [];
+    const asking = askingStates ? inboxAskingMessage(messages, statesOf, inboxDefaultSkip(messages, statesOf)) : null;
+    const delivery = this.rowDelivery(root, lastReal, asking, sent, recipients, root.resolved_at !== null && !agentAfterArchive);
     const facts = {
       ...summary,
       delivery,
@@ -1085,8 +1095,9 @@ export class InboxStore {
    */
   private rowDelivery(
     root: InboxMessage,
-    messages: readonly InboxMessage[],
     lastReal: InboxMessage,
+    /** The agent message whose session asked (`inboxAskingMessage`, the thread's rule), when a person's item is last. */
+    asking: InboxMessage | null,
     sent: { checked_at: string | null } | null,
     recipients: InboxSentRecipient[] | null,
     resolved: boolean,
@@ -1148,19 +1159,10 @@ export class InboxStore {
       const deliveredAt = recipients
         ? (last.delivery?.at ?? recipients.find((r) => r.owner)?.delivered_at ?? null)
         : (sent?.checked_at ?? null);
-      // The session the next Send would reach (the thread's `askingSessionOf` with its defaults): the last
-      // agent message a pick or a skip answers, else the latest agent message. Called ended only when its
-      // message came through a waking connection and the Inbox has not heard from it (with the grace).
-      let asking: InboxMessage | null = null;
-      let latestAgent: InboxMessage | null = null;
-      for (const message of messages) {
-        if (message.author.kind !== "agent") continue;
-        latestAgent = message;
-        if (this.questionsOf(message.id).some((q) => q.state === "open" || q.state === "picked")) asking = message;
-      }
-      asking ??= latestAgent;
-      const askingSession = asking?.author.kind === "agent" ? asking.author.session : null;
-      const askerEnded = !resolved && asking?.wakes === true && !!askingSession && !askerLive(askingSession);
+      // The session that asked (the thread's own rule, with its defaults): called ended only when its message
+      // came through a waking connection and the Inbox has not heard from it (with the grace).
+      const askingAuthor = asking?.author.kind === "agent" ? asking.author : null;
+      const askerEnded = !resolved && asking?.wakes === true && !!askingAuthor?.session && !askerLive(askingAuthor.session);
       const decision = inboxDeliveryState({
         delivered: !!deliveredAt,
         undelivered: false,
@@ -1179,6 +1181,7 @@ export class InboxStore {
         at: deliveredAt,
         host: author?.host ?? null,
         name: author?.name ?? null,
+        ...(decision.reason === "ended" && askingAuthor ? { asking: { host: askingAuthor.host ?? null, name: askingAuthor.name ?? null } } : {}),
       };
     }
 

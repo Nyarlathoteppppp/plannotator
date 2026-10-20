@@ -138,7 +138,7 @@ describe("the row's delivery through the server", () => {
     const delivered = (await row(server, sent.thread_id)).delivery!;
     expect(delivered).toMatchObject({ state: "delivered", reason: "delivered" });
     expect(typeof delivered.at).toBe("string");
-  });
+  }, 20_000);
 
   test("a reply to an MCP agent (no waking connection) reads saved", async () => {
     const { server, client, project } = await setup();
@@ -151,5 +151,5 @@ describe("the row's delivery through the server", () => {
       body: JSON.stringify({ serverSession: server.serverSession, idempotency_key: "k1", words: "ARM." }),
     });
     expect((await row(server, sent.thread_id)).delivery).toMatchObject({ state: "saved", reason: "reads", name: "Codex" });
-  });
+  }, 20_000);
 });

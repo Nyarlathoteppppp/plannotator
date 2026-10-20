@@ -10,13 +10,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InboxAuthor, InboxDeliveryConnection } from "@plannotator/core/inbox-types";
+import type { InboxAuthor, InboxDeliveryConnection, InboxQuestion } from "@plannotator/core/inbox-types";
+import type { QuestionAnswer } from "@plannotator/core/question-block";
 import { InboxStore } from "./store";
 
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+const question = (prompt: string, choices: string[]) => [":::question", prompt, "", ...choices.map((c) => `- [ ] ${c}`), ":::"].join("\n");
+const pickFor = (q: InboxQuestion, label: string): QuestionAnswer => ({ v: 1, key: q.key, kind: q.kind, prompt: q.prompt, selected: [label] });
 
 const agent = (session: string, host = "claude-code"): Extract<InboxAuthor, { kind: "agent" }> => ({ kind: "agent", host, session, name: null });
 
@@ -148,5 +152,36 @@ describe("the row's delivery", () => {
     const asked = store.sendMessage({ project_id: project.id, author: agent("ses_a"), body: "Ok?", wakes: true }).message;
     store.sendReply(asked.id, { words: "Yes.", idempotency_key: "k1" });
     expect(store.listRow(asked.id)!.delivery).toMatchObject({ state: "queued", reason: "next_turn" });
+  });
+});
+
+describe("the row's delivery in a thread with two sessions (the session that asked is the thread's own rule)", () => {
+  /** M1 from ses_a (waking, an open question, ended); M2 from ses_b (waking, busy, can take Send now) in the same thread. */
+  function twoSessions() {
+    const w = world();
+    const m1 = w.store.sendMessage({ project_id: w.project.id, author: agent("ses_a", "pi"), body: question("Which region?", ["us-east", "eu-west"]), wakes: true }).message;
+    const m2 = w.store.sendMessage({ project_id: w.project.id, author: agent("ses_b"), body: "I can also clean up the old buckets.", reply_to: m1.id, wakes: true }).message;
+    expect(m2.thread_id).toBe(m1.id);
+    w.ended.add("ses_a");
+    w.connections.set("ses_b", { busy: true, send_now: true });
+    return { ...w, m1, m2 };
+  }
+
+  test("a words-only reply to the latest message (no pick): the latest session is the one asked, so queued with Send now, never 'ended'", () => {
+    const { store, row, m1, m2 } = twoSessions();
+    store.sendReply(m2.id, { words: "Yes, clean them up.", idempotency_key: "k1" });
+    // M1's question stays open, but with no pick the Send skips nothing: the session that asked is M2's.
+    expect(store.questionsOf(m1.id)[0]!.state).toBe("open");
+    // Named as the thread's line names it: the thread's first agent (the root's), whoever it goes to.
+    expect(row(m1.id).delivery).toMatchObject({ kind: "reply", state: "queued", reason: "working", send_now: true, host: "pi" });
+    expect(row(m1.id).delivery!.asking).toBeUndefined();
+  });
+
+  test("with a pick waiting on M1, the session that asked is M1's: saved, ended, naming M1's agent", () => {
+    const { store, row, m1, m2 } = twoSessions();
+    const q = store.questionsOf(m1.id)[0] as InboxQuestion;
+    store.savePicks(m1.id, [{ key: q.key, revision: q.revision, answer: pickFor(q, "eu-west") }]);
+    store.sendReply(m2.id, { words: "And keep the logs bucket.", idempotency_key: "k1" });
+    expect(row(m1.id).delivery).toMatchObject({ state: "saved", reason: "ended", asking: { host: "pi", name: null } });
   });
 });
