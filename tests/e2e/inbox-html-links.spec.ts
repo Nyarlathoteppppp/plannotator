@@ -10,7 +10,9 @@
  * and its own links follow; Back returns to the page; the attached frame
  * opens in the pane and the browser's Back returns to the page; an image
  * beside it that is not attached opens in the lightbox, loaded; a PDF says
- * why it does not open. A phone does the same.
+ * why it does not open. Each linked page is a history entry: the browser's
+ * Back, Escape and the band's Back step back one page. Beside the thread
+ * and on a phone the same.
  *
  * Screenshots (light and dark, desktop and phone) go to
  * PLANNOTATOR_HTML_LINKS_SHOTS when it is set.
@@ -155,6 +157,8 @@ for (const scheme of ['light', 'dark'] as const) {
       await expect(page.locator('[data-linked-open-tab]')).toHaveAttribute('href', /^\/api\/html-assets\/[A-Za-z0-9_-]+\/B-cards\.html$/);
       const linkedFrame = page.frameLocator('.ib-linkedframe iframe');
       await expect(linkedFrame.locator('h1')).toHaveText('B: Cards');
+      // In the route: one history entry per page.
+      expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get('linked')).toBe('B-cards.html#pr1');
       // The fragment scrolled the page to its section.
       await expect.poll(() => linkedFrame.locator('#pr1').evaluate((el) => el.getBoundingClientRect().top < window.innerHeight)).toBe(true);
       // Focus on Back.
@@ -169,16 +173,30 @@ for (const scheme of ['light', 'dark'] as const) {
       await expect(linked).toHaveCount(0);
       await expect(frame.locator('h1')).toHaveText('Guided narrative: contact sheet');
 
-      // A sibling, then its own link to another sibling, then Back twice.
+      // A sibling opened at its top: its heading starts below the floating band, never under it.
       await frame.getByRole('link', { name: 'A: Story page' }).click();
       await expect(page.locator('[data-linked-page="A-story.html"]')).toBeVisible();
-      await page.frameLocator('.ib-linkedframe iframe').getByRole('link', { name: 'On to B' }).click();
+      const storyFrame = page.frameLocator('.ib-linkedframe iframe');
+      await expect(storyFrame.locator('h1')).toHaveText('A: Story page');
+      const bandBottom = (await page.locator('.ib-linkband').boundingBox())!;
+      const frameBox = (await page.locator('.ib-linkedframe iframe').boundingBox())!;
+      const headingTop = await storyFrame.locator('h1').evaluate((el) => el.getBoundingClientRect().top);
+      expect(frameBox.y + headingTop).toBeGreaterThan(bandBottom.y + bandBottom.height);
+      await shot(page, `2b-sibling-page-top-${scheme}`);
+      // Its own link to another sibling; then the browser's Back, Escape and Back step back one page each.
+      await storyFrame.getByRole('link', { name: 'On to B' }).click();
       await expect(page.locator('[data-linked-page="B-cards.html"]')).toBeVisible();
       await expect(page.locator('[data-linked-back]')).toHaveText(/Back to A-story\.html/);
-      await page.locator('[data-linked-back]').click();
+      await page.goBack();
+      await expect(page.locator('[data-linked-page="A-story.html"]')).toBeVisible();
+      await page.goForward();
+      await expect(page.locator('[data-linked-page="B-cards.html"]')).toBeVisible();
+      await page.keyboard.press('Escape');
       await expect(page.locator('[data-linked-page="A-story.html"]')).toBeVisible();
       await page.locator('[data-linked-back]').click();
       await expect(page.locator('[data-linked-page]')).toHaveCount(0);
+      // Still full screen: Escape stepped back a page, not out of the file.
+      await expect(pane).toHaveAttribute('data-full-view', '');
 
       // An image beside the page, not attached: the lightbox, loaded through the page's asset route.
       await frame.getByRole('link', { name: 'B frame, not attached' }).click();
@@ -211,6 +229,40 @@ for (const scheme of ['light', 'dark'] as const) {
   });
 }
 
+test('beside the thread: a sibling page opens over the page, Escape and the browser Back step back', async ({ browser }) => {
+  const { root, url, agent, thread, ids } = await world();
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    // A deep link opens the page beside the thread (only a tile opens it full screen).
+    await page.goto(`${url}#thread=${thread}&file=${ids['SHEET.html']}`);
+    const pane = page.locator(`[data-attachment-pane="${ids['SHEET.html']}"]`);
+    await expect(pane).toBeVisible();
+    await expect(pane).not.toHaveAttribute('data-full-view', '');
+    const frame = page.frameLocator('.ib-htmlframe iframe');
+    await expect(frame.locator('h1')).toHaveText('Guided narrative: contact sheet');
+    await page.getByRole('button', { name: 'Annotate mode' }).click();
+    await frame.getByRole('link', { name: 'A: Story page' }).click();
+    await expect(page.locator('[data-linked-page="A-story.html"]')).toBeVisible();
+    // The band is a row above the page; the header's pen is gone (no comments here).
+    await expect(page.locator('.ib-vhead').getByRole('button', { name: /Annotate mode|Interact mode/ })).toHaveCount(0);
+    await shot(page, '9-beside-thread-sibling-page');
+    await page.frameLocator('.ib-linkedframe iframe').getByRole('link', { name: 'On to B' }).click();
+    await expect(page.locator('[data-linked-page="B-cards.html"]')).toBeVisible();
+    await page.goBack();
+    await expect(page.locator('[data-linked-page="A-story.html"]')).toBeVisible();
+    // Escape with focus in the pane: one page back; the file stays open.
+    await pane.focus();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-linked-page]')).toHaveCount(0);
+    await expect(pane).toBeVisible();
+  } finally {
+    await agent.close().catch(() => {});
+    await context.close().catch(() => {});
+    await removeInboxScratch(root);
+  }
+});
+
 test('on a phone the same links open, with Back in reach', async ({ browser }) => {
   const { root, url, agent, thread, ids } = await world();
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
@@ -226,6 +278,12 @@ test('on a phone the same links open, with Back in reach', async ({ browser }) =
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(390);
     await shot(page, '7-phone-sibling-page');
+    // The phone's swipe back is the browser's Back: one page back, the file stays open.
+    await page.goBack();
+    await expect(page.locator('[data-linked-page]')).toHaveCount(0);
+    await expect(page.locator(`[data-attachment-pane="${ids['SHEET.html']}"]`)).toBeVisible();
+    await frame.getByRole('link', { name: 'B: Cards, at PR 1' }).click();
+    await expect(page.locator('[data-linked-page="B-cards.html"]')).toBeVisible();
     await back.click();
     await expect(page.locator('[data-linked-page]')).toHaveCount(0);
     await frame.getByRole('link', { name: 'The brief (PDF)' }).click();

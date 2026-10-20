@@ -1174,6 +1174,9 @@ button.ib-band:hover { background: var(--ib-band-hover-s, var(--ib-band)); }
 :root.light .ib-view.ib-fullview .ib-linkband { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
 .ib-view.ib-fullview.ib-drawer:not(.ib-phone) .ib-linkband { max-width: calc(100% - 680px); min-width: min(320px, calc(100% - 24px)); }
 .ib-view.ib-fullview.ib-phone .ib-linkband { top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 10px; max-width: none; }
+/* The page starts below the floating band, so nothing at its top is hidden under it. */
+.ib-view.ib-fullview .ib-linkedframe { margin-top: calc(var(--ib-linkband-h, 40px) + 20px); }
+.ib-view.ib-fullview.ib-phone .ib-linkedframe { margin-top: calc(var(--ib-linkband-h, 80px) + 16px + env(safe-area-inset-top)); }
 .pn-inbox .ib-view.ib-phone .ib-linkband .ib-btn, .pn-inbox .ib-view.ib-phone .ib-linkband-tab { min-height: 44px; display: inline-flex; align-items: center; }
 /* Why a link opened nothing: a note at the foot of the page for a moment (also said in the pane's live region). */
 .ib-linknote { position: absolute; left: 50%; bottom: calc(22px + var(--ib-fvfoot, 0px)); transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: 8px; width: max-content; max-width: min(520px, calc(100% - 32px)); box-sizing: border-box; padding: 8px 14px; border-radius: 10px; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border); box-shadow: 0 12px 34px rgba(0, 0, 0, 0.3); font-size: var(--ib-fs-13, 13px); line-height: 1.35; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 150ms ease, visibility 0s linear 150ms; }

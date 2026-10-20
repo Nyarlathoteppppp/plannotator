@@ -54,7 +54,7 @@ function loopback(path: string, method = 'GET', body?: string): Promise<{ status
   });
 }
 
-const TESTS = 5;
+const TESTS = 6;
 
 beforeAll(async () => {
   if (!hasDom) return;
@@ -168,6 +168,9 @@ test.skipIf(!hasDom)('a sibling page that is not attached opens read-only over t
   // The attached page stays mounted under it, hidden and inert.
   const covered = el.querySelector<HTMLElement>('.ib-htmlframe.ib-covered')!;
   expect(covered.hasAttribute('inert')).toBe(true);
+  // The page is in the route (one history entry each), and the panel says comments are off on it.
+  expect(new URLSearchParams(window.location.hash.slice(1)).get('linked')).toBe('B-cards.html#pr1');
+  expect(el.querySelector('[data-annotation-panel-note]')?.textContent).toBe('Off on B-cards.html');
   // From the sibling, a further sibling: Back names the page before it.
   const linkedFrame = el.querySelector<HTMLIFrameElement>('.ib-linkedframe iframe')!;
   await clickLink(linkedFrame, 'C-between.html');
@@ -183,6 +186,25 @@ test.skipIf(!hasDom)('a sibling page that is not attached opens read-only over t
   await until(() => el.querySelector('[data-linked-page="B-cards.html"]') !== null, 'the linked page again');
   await clickLink(el.querySelector<HTMLIFrameElement>('.ib-linkedframe iframe')!, 'SHEET.html');
   await until(() => el.querySelector('[data-linked-page]') === null, 'home');
+});
+
+test.skipIf(!hasDom)('Escape from the pane steps back one linked page, before the rest of the ladder', async () => {
+  const el = await renderSheet();
+  await clickLink(sheetFrame(el), 'B-cards.html');
+  await until(() => el.querySelector('[data-linked-page="B-cards.html"]') !== null, 'the linked page');
+  await clickLink(el.querySelector<HTMLIFrameElement>('.ib-linkedframe iframe')!, 'C-between.html');
+  await until(() => el.querySelector('[data-linked-page="C-between.html"]') !== null, 'the second linked page');
+  const pane = el.querySelector<HTMLElement>('.ib-view')!;
+  const escape = async () => {
+    pane.focus();
+    await act(async () => pane.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+  };
+  await escape();
+  await until(() => el.querySelector('[data-linked-page="B-cards.html"]') !== null, 'back on B');
+  await escape();
+  await until(() => el.querySelector('[data-linked-page]') === null, 'back on the attached page');
+  // The file is still open: the ladder's next rung is the file's own, not the linked page's.
+  expect(el.querySelector(`[data-attachment-pane="${world.htmlLinks.ids['SHEET.html']}"]`)).not.toBeNull();
 });
 
 test.skipIf(!hasDom)('a link to another attachment of the thread opens it in the pane', async () => {

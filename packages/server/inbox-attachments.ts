@@ -126,7 +126,8 @@ export async function readInboxLinkedPage(attachedPath: string, relativePath: st
   } catch {
     throw new InboxError("linked_page_missing", `${name} is not there.`);
   }
-  // Judged again on the path that is opened, so a link swapped in between cannot lead out.
+  // Judged again on the resolved path (a symlink inside the folder that leads out). This alone does not
+  // cover a folder swapped for a link after realpath: the dev/ino check below the open does.
   if (!isWithinDirectory(real, root)) throw new InboxError("linked_page_outside", "Only pages in the attached page's own folder open here.");
   if (inboxRefusesAssetPath(relativeTo(root, real).split(sep).join("/"))) {
     throw new InboxError("linked_page_refused", "Plannotator does not open hidden files or .env files.");
