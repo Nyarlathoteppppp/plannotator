@@ -126,7 +126,7 @@ export interface DeliveryLineInput {
 
 export function deliveryLine(input: DeliveryLineInput): DeliveryLine {
   const { name } = input;
-  // The state is the shared rule's (@plannotator/core/inbox-delivery), which also decides the list row's glyph.
+  // The state is the shared rule's (packages/core/inbox-delivery.ts, through @plannotator/core/inbox-types), which also decides the list row's glyph.
   const decision = inboxDeliveryState({
     delivered: !!input.deliveredAt,
     undelivered: !!input.undelivered,
