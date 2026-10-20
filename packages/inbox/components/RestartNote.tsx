@@ -4,12 +4,12 @@
  * repo). Two pieces:
  *  - `RestartLine`: under the person's reply, when the session it goes to is
  *    working and has no Send now because it runs an older plugin ("Steps"):
- *    the reason, then "How to restart" folded open on click: type `/exit`
- *    (which stops the turn it is working on), then run a copyable
- *    `cd <folder> && claude --resume <id>`; `/restart` only as a shortcut
- *    where Claude Code has it (amended 2026-10-20: `/restart` is behind a
- *    per-account rollout, so the steps lead with what always works); and
- *    that the reply waits here.
+ *    the reason, then "How to reload" folded open on click: type
+ *    `/reload-plugins` in that Claude Code, which loads the new plugin and
+ *    keeps the session (amendment 2, 2026-10-20: the owner checked it live);
+ *    only if the note is still there after that, `/exit` (which stops the
+ *    turn it is working on) and a copyable `cd <folder> && claude --resume
+ *    <id>`; and that the reply waits here.
  *  - `CopyCommand`: the Copy button both places use. A copy says so in a
  *    polite live region ("Restart command copied.").
  * No keyboard shortcut. Real buttons with names; the disclosure uses
@@ -83,7 +83,7 @@ export function RestartLine({ note, name }: { note: RestartNote; name: string })
         <span>
           {note.text}
           <button type="button" className="ib-rw-lnk" aria-expanded={open} aria-controls={stepsId} data-restart-toggle="" onClick={() => setOpen((was) => !was)}>
-            <span>{open ? 'Hide steps' : updating ? 'How to update' : 'How to restart'}</span>
+            <span>{open ? 'Hide steps' : updating ? 'How to update' : 'How to reload'}</span>
             <Icon name="chevD" className="ib-rw-chev" />
           </button>
         </span>
@@ -96,25 +96,25 @@ export function RestartLine({ note, name }: { note: RestartNote; name: string })
               <CommandLine text={note.updateCommand} label="Copy the command that updates Plannotator's Claude Code plugin" announcement={UPDATE_COPIED_ANNOUNCEMENT} />
             </li>
           )}
-          <li>
-            {note.command ? (
-              <>
-                Type <code>/exit</code> in that {name}, then run:
-                <CommandLine text={note.command} label={`Copy the command that restarts this ${name} session`} />
-              </>
-            ) : (
-              <>
-                Type <code>/exit</code> in that {name}, then run <code>claude --resume</code> in its folder and pick the session.
-              </>
-            )}
-            <p className="ib-rw-warn">Exiting now stops the turn it is working on; to keep it, wait until it finishes.</p>
+          <li data-restart-reload="">
+            Type <code>/reload-plugins</code> in that {name}. It loads the new plugin and keeps the session; nothing is interrupted.
           </li>
         </ol>
-        {/* Only a shortcut: /restart (Claude Code 2.1.304+) is behind a per-account rollout and a setting. */}
-        <p className="ib-rw-shortcut" data-restart-shortcut="">
-          If your {name} has <code>/restart</code>, that does the same and keeps the session.
-        </p>
-        <p className="ib-rw-after">Your reply waits here and reaches it once it is back.</p>
+        {/* The fallback, only if the reload did not clear the note: exit and resume the same session. */}
+        <div className="ib-rw-fallback" data-restart-fallback="">
+          {note.command ? (
+            <>
+              If this note is still here after that, type <code>/exit</code> in that {name}, then run:
+              <CommandLine text={note.command} label={`Copy the command that restarts this ${name} session`} />
+            </>
+          ) : (
+            <>
+              If this note is still here after that, type <code>/exit</code> in that {name}, then run <code>claude --resume</code> in its folder and pick the session.
+            </>
+          )}
+          <p className="ib-rw-warn">Exiting stops the turn it is working on; to keep it, wait until it finishes.</p>
+        </div>
+        <p className="ib-rw-after">Your reply waits here until then.</p>
       </div>
     </>
   );
