@@ -687,6 +687,87 @@ describe.if(hasDom)('live bridge gate (composed body in the eval harness)', () =
     }
   });
 
+  test("ARMED, touch: after a hold the app's press ends (pointercancel and touchcancel stand in for the stopped release), and a later tap still follows", async () => {
+    const link = probeLink();
+    // A press library's shape (React Aria usePress, Motion whileTap): open on pointerdown, closed on pointerup or pointercancel.
+    let pressed = false;
+    let touching = false;
+    const cancels: Array<{ type: string; pointerId?: number; pointerType?: string; isPrimary?: boolean; touchId?: number }> = [];
+    let activations = 0;
+    const onDown = () => { pressed = true; };
+    const onUp = () => { if (pressed) activations += 1; pressed = false; };
+    const onPointerCancel = (e: Event) => {
+      pressed = false;
+      const p = e as PointerEvent;
+      cancels.push({ type: e.type, pointerId: p.pointerId, pointerType: p.pointerType, isPrimary: p.isPrimary });
+    };
+    const onTouchStart = () => { touching = true; };
+    const onTouchEnd = () => { touching = false; };
+    const onTouchCancel = (e: Event) => {
+      touching = false;
+      cancels.push({ type: e.type, touchId: (e as TouchEvent).changedTouches?.[0]?.identifier });
+    };
+    link.addEventListener('pointerdown', onDown);
+    link.addEventListener('pointerup', onUp);
+    link.addEventListener('pointercancel', onPointerCancel);
+    link.addEventListener('touchstart', onTouchStart);
+    link.addEventListener('touchend', onTouchEnd);
+    link.addEventListener('touchcancel', onTouchCancel);
+    const stopNavigation = (e: Event) => e.preventDefault();
+    bridgeWindow.addEventListener('click', stopNavigation);
+    const selectionsBefore = selectionPosts().length;
+    try {
+      pointerProbe('pointerdown', link, 11);
+      touchProbe('touchstart', link);
+      expect(pressed).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(selectionPosts().length).toBe(selectionsBefore + 1);
+      pointerProbe('pointerup', link, 11);
+      touchProbe('touchend', link, false);
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(pressed).toBe(false);
+      expect(touching).toBe(false);
+      expect(activations).toBe(0);
+      expect(cancels).toEqual([
+        { type: 'pointercancel', pointerId: 11, pointerType: 'touch', isPrimary: true },
+        { type: 'touchcancel', touchId: 7 },
+      ]);
+      // The bridge's own listeners took the stand-ins for nothing: no second pin, and the next tap is a tap.
+      expect(selectionPosts().length).toBe(selectionsBefore + 1);
+      postToBridge({ type: 'plannotator-bridge-cancel-selection', token: bridgeToken });
+      bridgeWindow.removeEventListener('click', stopNavigation);
+      // What the bridge left the tap's click as, read last; then the test stops the navigation itself.
+      let preventedByBridge: boolean | null = null;
+      const last = (e: Event) => {
+        preventedByBridge = e.defaultPrevented;
+        e.preventDefault();
+      };
+      bridgeWindow.addEventListener('click', last);
+      try {
+        pointerProbe('pointerdown', link, 12);
+        touchProbe('touchstart', link);
+        pointerProbe('pointerup', link, 12);
+        const end = touchProbe('touchend', link, false);
+        expect(end.defaultPrevented).toBe(false);
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      } finally {
+        bridgeWindow.removeEventListener('click', last);
+      }
+      expect(activations).toBe(1);
+      expect(preventedByBridge).toBe(false); // the app's link follows
+      expect(selectionPosts().length).toBe(selectionsBefore + 1);
+      expect(cancels.length).toBe(2);
+    } finally {
+      link.removeEventListener('pointerdown', onDown);
+      link.removeEventListener('pointerup', onUp);
+      link.removeEventListener('pointercancel', onPointerCancel);
+      link.removeEventListener('touchstart', onTouchStart);
+      link.removeEventListener('touchend', onTouchEnd);
+      link.removeEventListener('touchcancel', onTouchCancel);
+      bridgeWindow.removeEventListener('click', stopNavigation);
+    }
+  });
+
   test('ARMED, touch: a tap on a link follows it natively (no pin, never prevented)', () => {
     const link = probeLink();
     const selectionsBefore = selectionPosts().length;

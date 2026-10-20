@@ -4027,7 +4027,7 @@ export const BRIDGE_SCRIPT = `(function() {
       setLinkHoldStyle(false);
       return false;
     }
-    heldGesture = { pointerId: lastTouchPointerId, released: false, pointerUpSeen: false, until: Date.now() + HOLD_SWALLOW_MAX_MS };
+    heldGesture = { pointerId: lastTouchPointerId, released: false, pointerUpSeen: false, pointerEnded: false, touchEnded: false, target: hold.target, touchId: hold.id, x: hold.x, y: hold.y, until: Date.now() + HOLD_SWALLOW_MAX_MS };
     // The same pin a Cmd-click makes: the link's own words as a text range.
     // Selection is back on for that, then off again until the finger lifts.
     setLinkHoldStyle(false);
@@ -4043,9 +4043,64 @@ export const BRIDGE_SCRIPT = `(function() {
     for (var i = 0; list && i < list.length; i++) if (list[i].identifier === id) return list[i];
     return null;
   }
+  // The release of a hold is stopped, so the page never sees it end: a press
+  // library (React Aria's usePress, Motion's whileTap, dnd-kit) would keep the
+  // press open. In its place the page gets a pointercancel and a touchcancel
+  // on the element the finger went down on, which end a press without
+  // activating it. The bridge's own listeners ignore those two.
+  var bridgeSynthetic = typeof WeakSet === 'function' ? new WeakSet() : null;
+  function isBridgeSynthetic(e) {
+    return !!(bridgeSynthetic && bridgeSynthetic.has(e));
+  }
+  function dispatchSynthetic(target, event) {
+    if (bridgeSynthetic) bridgeSynthetic.add(event);
+    try { target.dispatchEvent(event); } catch (ex) {}
+  }
+  function sendPointerCancel(g, pointerId) {
+    if (g.pointerEnded || pointerId === null || pointerId === undefined) return;
+    g.pointerEnded = true;
+    var target = g.target && g.target.isConnected ? g.target : document.body;
+    if (!target) return;
+    var init = { bubbles: true, cancelable: false, composed: true, pointerId: pointerId, pointerType: 'touch', isPrimary: true, clientX: g.x, clientY: g.y };
+    var event = null;
+    try { if (typeof PointerEvent === 'function') event = new PointerEvent('pointercancel', init); } catch (ex) {}
+    if (!event) {
+      event = new Event('pointercancel', { bubbles: true, cancelable: false, composed: true });
+      try {
+        Object.defineProperty(event, 'pointerId', { value: pointerId });
+        Object.defineProperty(event, 'pointerType', { value: 'touch' });
+        Object.defineProperty(event, 'isPrimary', { value: true });
+      } catch (ex) {}
+    }
+    dispatchSynthetic(target, event);
+  }
+  function sendTouchCancel(g) {
+    if (g.touchEnded) return;
+    g.touchEnded = true;
+    var target = g.target && g.target.isConnected ? g.target : document.body;
+    if (!target) return;
+    var event = null;
+    try {
+      if (typeof TouchEvent === 'function' && typeof Touch === 'function') {
+        var t = new Touch({ identifier: g.touchId, target: target, clientX: g.x, clientY: g.y });
+        event = new TouchEvent('touchcancel', { bubbles: true, cancelable: false, composed: true, touches: [], targetTouches: [], changedTouches: [t] });
+      }
+    } catch (ex) { event = null; }
+    if (!event) {
+      event = new Event('touchcancel', { bubbles: true, cancelable: false, composed: true });
+      var point = { identifier: g.touchId, target: target, clientX: g.x, clientY: g.y };
+      try {
+        Object.defineProperty(event, 'touches', { value: [] });
+        Object.defineProperty(event, 'targetTouches', { value: [] });
+        Object.defineProperty(event, 'changedTouches', { value: [point] });
+      } catch (ex) {}
+    }
+    dispatchSynthetic(target, event);
+  }
   // Pointer events come before touch events; the touch's pointerId names the
   // release's pointerup.
   window.addEventListener('pointerdown', function(e) {
+    if (isBridgeSynthetic(e)) return;
     if (e.pointerType === 'touch') {
       lastTouchPointerId = e.pointerId;
       if (heldGesture && heldGesture.released) endHeldGesture();
@@ -4055,30 +4110,48 @@ export const BRIDGE_SCRIPT = `(function() {
     endHeldGesture();
   }, true);
   window.addEventListener('keydown', function() { if (heldGesture && heldGesture.released) endHeldGesture(); }, true);
+  function heldPointer(e) {
+    if (!heldGesture || e.pointerType !== 'touch') return false;
+    return heldGesture.pointerId === null || e.pointerId === heldGesture.pointerId;
+  }
   window.addEventListener('pointerup', function(e) {
-    if (!heldGesture || heldGesture.pointerUpSeen || e.pointerType !== 'touch') return;
-    if (heldGesture.pointerId !== null && e.pointerId !== heldGesture.pointerId) return;
+    if (isBridgeSynthetic(e) || !heldPointer(e) || heldGesture.pointerUpSeen) return;
     heldGesture.pointerUpSeen = true;
     e.stopImmediatePropagation();
+    sendPointerCancel(heldGesture, e.pointerId);
+  }, true);
+  // The browser ended the held pointer itself (it took the touch): nothing to stand in for.
+  window.addEventListener('pointercancel', function(e) {
+    if (isBridgeSynthetic(e) || !heldPointer(e)) return;
+    heldGesture.pointerUpSeen = true;
+    heldGesture.pointerEnded = true;
   }, true);
   window.addEventListener('touchend', function(e) {
+    if (isBridgeSynthetic(e)) return;
     if (heldGesture && !heldGesture.released) {
       // The release of the hold that pinned: no click, no navigation, and
-      // the page's own touchend never runs on it.
+      // the page's own touchend never runs on it; it gets cancels instead.
       if (e.cancelable) e.preventDefault();
       e.stopImmediatePropagation();
-      heldGesture.released = true;
-      heldGesture.until = Date.now() + 800;
+      var g = heldGesture;
+      g.released = true;
+      g.until = Date.now() + 800;
       setLinkHoldStyle(false);
+      // Engines that send touchend before pointerup: the pointer ends here
+      // (its own pointerup, when it comes, is still stopped).
+      sendPointerCancel(g, g.pointerId);
+      sendTouchCancel(g);
       return;
     }
     cancelLinkHold(); // a tap: the click that follows it follows the link
   }, { capture: true, passive: false });
-  window.addEventListener('touchcancel', function() {
+  window.addEventListener('touchcancel', function(e) {
+    if (isBridgeSynthetic(e)) return;
     cancelLinkHold();
     setLinkHoldStyle(false);
     if (heldGesture) {
       heldGesture.released = true;
+      heldGesture.touchEnded = true;
       heldGesture.until = Date.now() + 800;
     }
   }, true);

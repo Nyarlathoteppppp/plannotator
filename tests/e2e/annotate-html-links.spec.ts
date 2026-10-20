@@ -43,7 +43,7 @@ async function shot(page: Page, name: string) {
 /** A live app on loopback: two pages that link to each other. */
 async function liveApp(): Promise<{ server: Server; origin: string }> {
   const pages: Record<string, string> = {
-    '/': `<!doctype html><html><head><meta charset="utf-8"><title>Live home</title>${STYLE}</head><body><h1>Live home</h1><p>An app running on this computer.</p><p><a href="/settings">Settings</a></p></body></html>`,
+    '/': `<!doctype html><html><head><meta charset="utf-8"><title>Live home</title>${STYLE}</head><body><h1>Live home</h1><p>An app running on this computer.</p><p><a href="/settings">Settings</a></p><script>/* A press library's shape: open on pointerdown, closed on pointerup or pointercancel. */window.__press=false;window.__cancels=0;var l=document.querySelector('a');l.addEventListener('pointerdown',function(){window.__press=true});l.addEventListener('pointerup',function(){window.__press=false});l.addEventListener('pointercancel',function(){window.__press=false;window.__cancels++});</script></body></html>`,
     '/settings': `<!doctype html><html><head><meta charset="utf-8"><title>Settings</title>${STYLE}</head><body><h1>Settings page</h1><p><a href="/">Home</a></p></body></html>`,
   };
   const server = createServer((req, res) => {
@@ -270,6 +270,10 @@ for (const phone of [
       await expect(composer).toBeVisible();
       await page.waitForTimeout(600);
       await expect(frame.locator('h1')).toHaveText('Live home');
+      // The app's press ended (the bridge stopped the release and sent cancels in its place).
+      const press = await frame.locator('body').evaluate(() => ({ press: (window as unknown as { __press: boolean }).__press, cancels: (window as unknown as { __cancels: number }).__cancels }));
+      expect(press.press).toBe(false);
+      if (phone.browserName === 'chromium') expect(press.cancels).toBeGreaterThanOrEqual(1);
       await shot(page, `live-3-phone-hold-pins-${phone.browserName}`);
       await page.keyboard.press('Escape').catch(() => {});
       await expect(composer).toHaveCount(0);
