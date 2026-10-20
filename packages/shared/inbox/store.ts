@@ -651,7 +651,7 @@ export class InboxStore {
   }
 
   /** The seq of a resolved thread's archive line, or null for an open thread. */
-  private archiveSeq(threadId: string): number | null {
+  archiveSeq(threadId: string): number | null {
     const root = this.messages.get(threadId);
     if (!root || root.resolved_at == null) return null;
     return this.resolvedSeq.get(root.id) ?? Number.MAX_SAFE_INTEGER;
@@ -682,6 +682,15 @@ export class InboxStore {
       if (this.messages.get(id)?.author.kind === "agent" && (this.messageSeq.get(id) ?? 0) > archiveSeq) return true;
     }
     return false;
+  }
+
+  /**
+   * The seq of a question record's latest line (`<message id>/<key>`): when
+   * its pick, answer, replacement or Mark read last changed. An archive closes
+   * a question without a question line; `archiveSeq` says when that happened.
+   */
+  questionLineSeq(questionId: string): number | null {
+    return this.latest.get(`question:${questionId}`)?.seq ?? null;
   }
 
   questionsOf(messageId: string): InboxQuestion[] {

@@ -101,7 +101,7 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
           "type": "boolean"
         },
         "limit": {
-          "description": "How many: a thread's messages in full (default 6), listed threads (20), search results (10).",
+          "description": "How many: a thread's messages in full (default 6), listed threads (20), search results (10, at most 50).",
           "type": "integer",
           "minimum": 1,
           "maximum": 100
@@ -154,7 +154,7 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
   },
   {
     "name": "search",
-    "description": "Search the Inbox's messages (yours, other agents' and the person's) by words, read-only: in this project unless all_projects. Every word must match (the last may be the start of a word), questions' prompts, choices and answers included. Each result is one line: the thread, the message, who wrote it, when, and the words around the match. read_thread with that thread_id and message_id shows the message in full.",
+    "description": "Search the Inbox's messages (yours, other agents' and the person's) by words, read-only: in this project unless all_projects. Up to `limit` results (default 10, at most 50; a larger limit answers 50). Every word must match (the last may be the start of a word), questions' prompts, choices and answers included. Each result is one line: the thread, the message, who wrote it, when, and the words around the match. read_thread with that thread_id and message_id shows the message in full.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -173,7 +173,7 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
           "type": "boolean"
         },
         "limit": {
-          "description": "Results (default 10).",
+          "description": "Results (default 10, at most 50).",
           "type": "integer",
           "minimum": 1,
           "maximum": 100

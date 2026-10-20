@@ -25,8 +25,12 @@ import { InboxError } from "@plannotator/shared/inbox/schema";
 import type { InboxSendResult, InboxStore } from "@plannotator/shared/inbox/store";
 import type { InboxAttachment, InboxListRow, InboxQuestion } from "@plannotator/core/inbox-types";
 import { registerInboxGuideTools } from "./inbox-guides";
-import { INBOX_BODY_CUT_BYTES, INBOX_EARLIER_PERSON_BYTES, INBOX_THREAD_WINDOW, TEXT_COMPLETE_META, agentAnswer, clip, questionWords, shortTime, sizeText, windowedThread, windowedThreadText } from "./inbox-mcp-read";
+import { INBOX_BODY_CUT_BYTES, INBOX_EARLIER_PERSON_BYTES, INBOX_THREAD_WINDOW, clip, questionWords, shortTime, sizeText, windowedThread, windowedThreadText } from "./inbox-mcp-read";
 import { registerInboxSearchTool } from "./inbox-mcp-search";
+import { fail, guarded, ok, okComplete, PROJECT_PATH_DESCRIPTION, TEXT_COMPLETE_META, type ToolResult } from "./inbox-mcp-result";
+
+// The result helpers live in inbox-mcp-result.ts (no import cycle for the tool modules); re-exported for older importers.
+export { fail, guarded, ok, okComplete, PROJECT_PATH_DESCRIPTION, type ToolResult };
 import type { InboxSearchIndex } from "@plannotator/shared/inbox/search";
 import { isInsideFolder, type InboxProjectRoot } from "./inbox-project-root";
 
@@ -113,8 +117,6 @@ export const SEND_BODY_DESCRIPTION = [
   INBOX_STOP_EXAMPLE,
 ].join("\n");
 
-export const PROJECT_PATH_DESCRIPTION =
-  "Absolute path of the repository or folder you work in; the thread lands in that project's row. The `plannotator inbox mcp` shim fills it from its working folder.";
 const AGENT_SESSION_DESCRIPTION =
   "Your session id. The `plannotator inbox mcp` shim fills it. send_message joins your session's thread by it; read_thread's asked_by \"me\" and wait_for_reply without a thread match on it.";
 
@@ -172,15 +174,16 @@ export interface InboxMcpContext {
   presence?: { seen: (session: string) => void; hold: (session: string) => () => void };
   /** The ⌘K search index (packages/server/inbox-search.ts), for the agents' read-only search tool. */
   searchIndex?: InboxSearchIndex;
+  /**
+   * The projects a path names, WITHOUT making one (search writes nothing):
+   * the project at its root, plus the one an older Inbox kept for the very
+   * worktree it lies in. `unresolved` when git did not answer in time and no
+   * existing repository project holds the folder. Absent: search finds no
+   * project for a path.
+   */
+  findProjects?: (path: string) => Promise<{ projects: InboxProject[]; unresolved: boolean }>;
 }
 
-export type ToolResult = {
-  content: { type: "text"; text: string }[];
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-  /** INBOX_TEXT_COMPLETE_META_KEY when the text says everything the structured content holds. */
-  _meta?: Record<string, unknown>;
-};
 
 /**
  * Whether the caller's connection delivers the person's reply into its
@@ -197,27 +200,6 @@ export function callerWakes(ctx: unknown): boolean {
 export const INBOX_REPLY_ARRIVES_TEXT =
   "The person's reply arrives in this session by itself, as a new message once the session is idle: end your turn, or go on with other work; do not call wait_for_reply.";
 
-export function ok(line: string, structured: Record<string, unknown>): ToolResult {
-  return { content: [{ type: "text", text: line }], structuredContent: structured };
-}
-
-/** A result whose text is complete: a current connection hands the model the text alone (INBOX_TEXT_COMPLETE_META_KEY). */
-export function okComplete(text: string, structured: Record<string, unknown>): ToolResult {
-  return { content: [{ type: "text", text }], structuredContent: structured, _meta: { ...TEXT_COMPLETE_META } };
-}
-
-export function fail(code: string, message: string): ToolResult {
-  return { content: [{ type: "text", text: `${code}: ${message}` }], isError: true };
-}
-
-export async function guarded(run: () => Promise<ToolResult> | ToolResult): Promise<ToolResult> {
-  try {
-    return await run();
-  } catch (error) {
-    if (error instanceof InboxError) return fail(error.code, error.message);
-    return fail("internal_error", error instanceof Error ? error.message : String(error));
-  }
-}
 
 function threadUrl(base: string, threadId: string): string {
   return `${base}#thread=${threadId}`;
@@ -227,6 +209,13 @@ function threadOf(store: InboxStore, input: { thread_id?: string; message_id?: s
   if (input.thread_id) {
     const root = store.message(input.thread_id);
     if (!root || root.thread_id !== root.id) throw new InboxError("thread_not_found", `No thread ${input.thread_id}.`);
+    if (input.message_id) {
+      const message = store.message(input.message_id);
+      if (!message) throw new InboxError("message_not_found", `No message ${input.message_id}.`);
+      if (message.thread_id !== root.id) {
+        throw new InboxError("validation_error", `message_id: ${input.message_id} is in thread ${message.thread_id}, not ${root.id}; pass one of them.`);
+      }
+    }
     return root.id;
   }
   if (input.message_id) {
@@ -305,7 +294,7 @@ function replyResult(store: InboxStore, reply: InboxMessage, base: string, calle
     reply.reply_to ? `to ${reply.reply_to}` : null,
     shortTime(reply.created_at),
     questions.length > 0
-      ? `questions of ${reply.reply_to}: ${questions.map((q) => questionWords({ key: q.key, q: numbers.get(q.key) ?? 1, state: q.state, answer: agentAnswer(q.answer) }, 60)).join("; ")}`
+      ? `questions of ${reply.reply_to}: ${questions.map((q) => questionWords({ key: q.key, q: numbers.get(q.key) ?? 1, state: q.state }, false, false)).join("; ")}`
       : null,
     `cursor ${cursor}`,
     url,
@@ -783,7 +772,7 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
           project_path: z.string().optional().describe(PROJECT_PATH_DESCRIPTION),
           asked_by: z.enum(["me", "anyone"]).optional().describe("Default \"me\" when your session is known."),
           include_resolved: z.boolean().optional(),
-          limit: z.number().int().min(1).max(100).optional().describe(`How many: a thread's messages in full (default ${INBOX_THREAD_WINDOW}), listed threads (20), search results (10).`),
+          limit: z.number().int().min(1).max(100).optional().describe(`How many: a thread's messages in full (default ${INBOX_THREAD_WINDOW}), listed threads (20), search results (10, at most 50).`),
           expand: z.array(z.string()).optional().describe("Message ids of this thread to show in full."),
           before: z.union([z.string(), z.number().min(0)]).optional().describe("Only messages before this message id or cursor."),
           after: z.union([z.string(), z.number().min(0)]).optional().describe("Only messages after this message id or cursor (what is new)."),
@@ -812,7 +801,7 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
             );
           }
           // Built first, so a refused read (a bad expand, before or after) marks nothing read.
-          const { result, order, shown, readThrough } = windowedThread(store, threadId, input, url);
+          const { result, order, shown, readThrough } = windowedThread(store, threadId, { ...input, caller: input.agent_session?.trim() || null }, url);
           store.markAgentChecked(threadId, readThrough);
           store.markAcksSeen(threadId, Number.POSITIVE_INFINITY, undefined, shown);
           return okComplete(windowedThreadText(result, order, naming?.line ?? ""), { ...result, ...(naming?.structured ?? {}) });

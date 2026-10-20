@@ -13,7 +13,8 @@ import * as z from "zod";
 import { inboxSearchTerms, INBOX_SEARCH_LIMIT_MAX, INBOX_SEARCH_QUERY_MAX, type InboxSearchMessageRow } from "@plannotator/core/inbox-search";
 import { InboxError } from "@plannotator/shared/inbox/schema";
 import { clip, shortTime } from "./inbox-mcp-read";
-import { guarded, okComplete, PROJECT_PATH_DESCRIPTION, threadReadScope, type InboxMcpContext } from "./inbox-mcp";
+import { guarded, okComplete, PROJECT_PATH_DESCRIPTION } from "./inbox-mcp-result";
+import type { InboxMcpContext } from "./inbox-mcp";
 
 /** Results the search answers by default. */
 export const INBOX_AGENT_SEARCH_LIMIT = 10;
@@ -21,7 +22,7 @@ export const INBOX_AGENT_SEARCH_LIMIT = 10;
 export const INBOX_AGENT_SEARCH_BUILD_WAIT_MS = 10_000;
 
 export const SEARCH_DESCRIPTION =
-  "Search the Inbox's messages (yours, other agents' and the person's) by words, read-only: in this project unless all_projects. Every word must match (the last may be the start of a word), questions' prompts, choices and answers included. Each result is one line: the thread, the message, who wrote it, when, and the words around the match. read_thread with that thread_id and message_id shows the message in full.";
+  "Search the Inbox's messages (yours, other agents' and the person's) by words, read-only: in this project unless all_projects. Up to `limit` results (default 10, at most 50; a larger limit answers 50). Every word must match (the last may be the start of a word), questions' prompts, choices and answers included. Each result is one line: the thread, the message, who wrote it, when, and the words around the match. read_thread with that thread_id and message_id shows the message in full.";
 
 export interface InboxAgentSearchRow {
   thread_id: string;
@@ -69,7 +70,7 @@ export function registerInboxSearchTool(server: McpServer, context: InboxMcpCont
           query: z.string().min(1).describe("Words to find."),
           project_path: z.string().optional().describe(PROJECT_PATH_DESCRIPTION),
           all_projects: z.boolean().optional().describe("Search every project."),
-          limit: z.number().int().min(1).max(100).optional().describe(`Results (default ${INBOX_AGENT_SEARCH_LIMIT}).`),
+          limit: z.number().int().min(1).max(100).optional().describe(`Results (default ${INBOX_AGENT_SEARCH_LIMIT}, at most ${INBOX_SEARCH_LIMIT_MAX}).`),
         })
         .strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -82,11 +83,18 @@ export function registerInboxSearchTool(server: McpServer, context: InboxMcpCont
         if (inboxSearchTerms(q).length === 0) throw new InboxError("validation_error", "query: words to search for (letters or digits).");
         let projectIds: string[] | null = null;
         let scope = "every project";
+        let note = "";
         if (!input.all_projects) {
           if (!input.project_path) throw new InboxError("validation_error", "project_path: required unless all_projects (the connection fills it).");
-          const read = await threadReadScope(context, input.project_path);
-          projectIds = [...read.projectIds];
-          scope = read.project.name;
+          // Looked up, never made: a search writes nothing, and a folder the Inbox has never seen has no messages.
+          const found = context.findProjects ? await context.findProjects(input.project_path) : { projects: [], unresolved: false };
+          projectIds = found.projects.map((project) => project.id);
+          scope = found.projects[0]?.name ?? input.project_path;
+          if (found.unresolved) note = " Git did not answer in time, so the project of this folder is not known yet: nothing was searched. Try again, or pass all_projects.";
+          else if (projectIds.length === 0) note = " No Inbox thread has been written from this folder's project yet; pass all_projects to search every project.";
+        }
+        if (projectIds?.length === 0) {
+          return okComplete(`No message matches ${JSON.stringify(q)} in ${scope}.${note}`, { query: q, scope, total: 0, results: [], ...(note ? { note: note.trim() } : {}) });
         }
         if (!index.ready()) {
           await Promise.race([index.ensureBuilt(), new Promise((resolve) => setTimeout(resolve, INBOX_AGENT_SEARCH_BUILD_WAIT_MS))]);
