@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import type { MentionSource } from '@plannotator/ui/utils/mentions';
 import {
   formatInboxVideoTime,
   inboxAttachmentKindLabel,
@@ -129,6 +130,11 @@ export interface AttachmentPaneProps {
   attachments: readonly InboxAttachmentState[];
   /** The thread's annotations waiting for a Send. */
   records: readonly InboxAnnotationRecord[];
+  /**
+   * Tag agents with `@` in a comment (approval "inbox-tag-agents"): markdown, text and HTML files. The
+   * image, video, code and diagram comment boxes take none yet.
+   */
+  mentionSource?: MentionSource;
   agent: string;
   projectName: string;
   projectRoot: string;
@@ -1412,6 +1418,7 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
               onAddAnnotation={(annotation) => void save(annotation)}
               onSelectAnnotation={setSelectedId}
               selectedAnnotationId={selectedId}
+              mentionSource={props.mentionSource}
               mode="selection"
               inputMethod="pinpoint"
               annotateModeActive={armed}
@@ -1593,6 +1600,7 @@ export const AttachmentPane = forwardRef<AttachmentPaneHandle, AttachmentPanePro
                 markdown={view.text}
                 questionDecisionLines={false}
                 annotations={annotations}
+                mentionSource={props.mentionSource}
                 onAddAnnotation={(annotation) => void save(annotation)}
                 onSelectAnnotation={setSelectedId}
                 selectedAnnotationId={selectedId}
