@@ -87,7 +87,16 @@ export interface AgentQuestionRef {
   answer?: AgentAnswer;
   /** `<message id>/<key>` of the question that replaced it, or `<message id>` when nothing did. */
   superseded_by?: string;
+  /**
+   * On a one-line message and in `thread.questions`: the prompt, clipped, so
+   * an answer ("Yes") says what it answers (the reply's answers section,
+   * which named it, is left out of the person's earlier messages).
+   */
+  prompt?: string;
 }
+
+/** A question's prompt on a one-line message: enough to tell what an answer answers. */
+export const INBOX_LINE_PROMPT_CHARS = 120;
 
 export interface AgentQuestion extends AgentQuestionRef {
   kind: InboxQuestion["kind"];
@@ -256,8 +265,8 @@ export function agentQuestions(questions: readonly InboxQuestion[]): AgentQuesti
 }
 
 /** One question in words: `Q1 q-abc sent: "Yes"`, `Q2 q-def open`, `Q3 q-… superseded by msg_…/q-…`. */
-export function questionWords(q: AgentQuestionRef, max: number): string {
-  const head = `Q${q.q} ${q.key}`;
+export function questionWords(q: AgentQuestionRef, max: number, withPrompt = false): string {
+  const head = `Q${q.q} ${q.key}${withPrompt && q.prompt ? ` (${JSON.stringify(q.prompt)})` : ""}`;
   if (q.state === "superseded") return `${head} ${q.superseded_by?.includes("/") ? `replaced by ${q.superseded_by}` : "no longer applies"}`;
   const answer = answerWords(q.answer, max);
   if (q.state === "picked") return `${head} picked, not sent${answer ? `: ${answer}` : ""}`;
@@ -333,7 +342,7 @@ export function agentMessageLine(message: InboxMessageWire): AgentMessageLine {
     reply_to: message.reply_to,
     words: firstWords(message),
     bytes: byteLength(message.body),
-    ...(message.questions?.length ? { questions: message.questions.map((q) => questionRef(q, n.get(q.key) ?? 1)) } : {}),
+    ...(message.questions?.length ? { questions: message.questions.map((q) => ({ ...questionRef(q, n.get(q.key) ?? 1), prompt: clip(q.prompt, INBOX_LINE_PROMPT_CHARS) })) } : {}),
     ...(message.attachments?.length ? { attachments: message.attachments.map((a) => a.name) } : {}),
     ...(message.guide ? { guide: message.guide.title } : {}),
     ...(message.ack ? { ack: true as const } : {}),
@@ -354,7 +363,12 @@ function boundOf(store: InboxStore, ids: ReadonlySet<string>, value: string | nu
  * The windowed read of a thread (structured), from the thread as an agent
  * reads it, and the order its shown messages came in (oldest first).
  */
-export function windowedThread(store: InboxStore, threadId: string, input: ThreadReadInput, url: string): { result: ThreadWindowResult; order: string[] } {
+export function windowedThread(
+  store: InboxStore,
+  threadId: string,
+  input: ThreadReadInput,
+  url: string,
+): { result: ThreadWindowResult; order: string[]; shown: Set<string>; readThrough: number } {
   const thread = store.agentThread(threadId);
   if (!thread) throw new InboxError("thread_not_found", `No thread ${threadId}.`);
   const all = thread.messages;
@@ -397,7 +411,7 @@ export function windowedThread(store: InboxStore, threadId: string, input: Threa
   const leftOut = all.filter((m) => !shown.has(m.id));
   const elsewhere = leftOut.flatMap((m) => {
     const n = numbering(m.questions ?? []);
-    return (m.questions ?? []).map((q) => ({ message_id: m.id, ...questionRef(q, n.get(q.key) ?? 1) }));
+    return (m.questions ?? []).map((q) => ({ message_id: m.id, ...questionRef(q, n.get(q.key) ?? 1), prompt: clip(q.prompt, INBOX_LINE_PROMPT_CHARS) }));
   });
 
   const open_questions: AgentOpenQuestion[] = [];
@@ -451,7 +465,11 @@ export function windowedThread(store: InboxStore, threadId: string, input: Threa
     url,
   };
   const lineIds = new Set(earlier.map((line) => line.id));
-  return { result, order: all.filter((m) => full.has(m.id) || lineIds.has(m.id)).map((m) => m.id) };
+  const order = all.filter((m) => full.has(m.id) || lineIds.has(m.id)).map((m) => m.id);
+  // What the read may mark read: everything up to `before` (a newer reply it
+  // left out must still wake its session and stay unread), and the acks of
+  // the messages it showed (an ack on a message `after` left out is not seen).
+  return { result, order, shown: new Set(order), readThrough: before === null ? Number.POSITIVE_INFINITY : before - 1 };
 }
 
 /**
@@ -480,7 +498,7 @@ function whenAndWhat(item: { id: string; created_at: string; reply_to: string | 
 export function messageLineText(line: AgentMessageLine, context: TranscriptContext): string {
   const parts = [`- ${line.id}`, authorName(line.author), ...whenAndWhat(line, context)];
   parts.push(`"${line.words}" (${sizeText(line.bytes)})`);
-  if (line.questions?.length) parts.push(line.questions.map((q) => questionWords(q, INBOX_ANSWER_CHARS)).join("; "));
+  if (line.questions?.length) parts.push(line.questions.map((q) => questionWords(q, INBOX_ANSWER_CHARS, true)).join("; "));
   if (line.attachments?.length) parts.push(`files: ${line.attachments.join(", ")}`);
   if (line.guide) parts.push(`guided review: ${line.guide}`);
   if (line.ack) parts.push("👍");
@@ -527,7 +545,7 @@ export function windowedThreadText(result: ThreadWindowResult, order: readonly s
     }
   }
   if (thread.questions?.length) {
-    out.push(`Questions of messages not shown: ${thread.questions.map((q) => `${q.message_id}/${questionWords(q, INBOX_ANSWER_CHARS)}`).join("; ")}`);
+    out.push(`Questions of messages not shown: ${thread.questions.map((q) => `${q.message_id}/${questionWords(q, INBOX_ANSWER_CHARS, true)}`).join("; ")}`);
   }
   const range = window.after !== undefined || window.before !== undefined
     ? ` Range:${window.after !== undefined ? ` after ${window.after}` : ""}${window.before !== undefined ? ` before ${window.before}` : ""}; ${window.left_out} other message${window.left_out === 1 ? "" : "s"} left out.`

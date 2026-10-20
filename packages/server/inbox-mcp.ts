@@ -797,12 +797,12 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
       guarded(async () => {
         const threadId = threadOf(store, input);
         if (threadId) {
-          store.markAgentChecked(threadId);
-          // The person's 👍 (settled acks) are read now too: the window says the agent saw it.
-          store.markAcksSeen(threadId);
           const naming = namingHint(store, threadId, input.agent_session?.trim() || null);
           const url = threadUrl(context.baseUrl(), threadId);
           if (input.format === "full") {
+            store.markAgentChecked(threadId);
+            // The person's 👍 (settled acks) are read now too: the window says the agent saw it.
+            store.markAcksSeen(threadId);
             // The full records, as before the window (tests, scripts, a jq over the result).
             const thread = store.agentThread(threadId)!;
             const replies = thread.messages.filter((m) => m.author.kind === "person").length;
@@ -811,7 +811,10 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
               { thread, url, ...(naming?.structured ?? {}) },
             );
           }
-          const { result, order } = windowedThread(store, threadId, input, url);
+          // Built first, so a refused read (a bad expand, before or after) marks nothing read.
+          const { result, order, shown, readThrough } = windowedThread(store, threadId, input, url);
+          store.markAgentChecked(threadId, readThrough);
+          store.markAcksSeen(threadId, Number.POSITIVE_INFINITY, undefined, shown);
           return okComplete(windowedThreadText(result, order, naming?.line ?? ""), { ...result, ...(naming?.structured ?? {}) });
         }
         if (input.expand || input.before !== undefined || input.after !== undefined) {

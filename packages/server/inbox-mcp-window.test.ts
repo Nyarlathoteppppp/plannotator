@@ -152,7 +152,8 @@ describe("read_thread reads a window", () => {
       expect(next).toBeGreaterThan(at);
       at = next;
     }
-    expect(text).toContain(`Q1 ${line.questions[0].key} sent: "${LONG_THREAD_FIRST_CHOICE}"`);
+    // A one-line message's question names its prompt, so the answer says what it answers.
+    expect(text).toContain(`Q1 ${line.questions[0].key} ("Round 1: which backoff should the worker use?") sent: "${LONG_THREAD_FIRST_CHOICE}"`);
     expect(text).toContain(`Cursor ${read.structuredContent.cursor}: read_thread after: ${read.structuredContent.cursor}`);
   });
 
@@ -425,5 +426,62 @@ describe("search: the agents' read-only search over the Inbox's messages", () =>
     expect(existsSync(join(w.server.store.dir, INBOX_RECENT_SEARCHES_FILE))).toBe(false);
     const list = (await call(w.client, "read_thread", { project_path: w.project, agent_session: "ses_s" })).structuredContent;
     expect(list.threads[0].unread).toBe(true);
+  });
+});
+
+describe("a windowed read marks read only what it showed", () => {
+  /** An agent asks, the person replies, `count` times; the agent reads; then it asks once more and the person answers. */
+  async function rounds(w: Awaited<ReturnType<typeof world>>, count: number) {
+    const all: string[] = [];
+    let last = "";
+    let threadId = "";
+    for (let i = 1; i <= count; i++) {
+      const sent = (await call(w.client, "send_message", { project_path: w.project, body: `Step ${i}.`, agent_session: "ses_m", ...(last ? { reply_to: last } : {}) })).structuredContent;
+      threadId = sent.thread_id;
+      all.push(sent.message_id);
+      last = (await w.post(`/api/inbox/messages/${sent.message_id}/reply`, { idempotency_key: `m${i}`, words: `Reply ${i}.` })).reply.id;
+      all.push(last);
+    }
+    await call(w.client, "read_thread", { thread_id: threadId, agent_session: "ses_m" });
+    const ask = (await call(w.client, "send_message", { project_path: w.project, body: "Ship it?", agent_session: "ses_m", reply_to: last })).structuredContent;
+    const reply = (await w.post(`/api/inbox/messages/${ask.message_id}/reply`, { idempotency_key: "late", words: "No: the migration is unsafe." })).reply.id as string;
+    return { threadId, all, reply };
+  }
+  const pending = (w: Awaited<ReturnType<typeof world>>) => w.server.store.pendingReplies("ses_m").map((m) => m.id);
+
+  test("before: a newer reply the read left out still wakes its session and stays unread", async () => {
+    const w = await world();
+    const { threadId, all, reply } = await rounds(w, 4);
+    expect(pending(w)).toEqual([reply]);
+    const back = await call(w.client, "read_thread", { thread_id: threadId, before: all[2], agent_session: "ses_m" });
+    expect(back.content[0]!.text).not.toContain("migration is unsafe");
+    expect(pending(w)).toEqual([reply]);
+    const list = (await call(w.client, "read_thread", { project_path: w.project, agent_session: "ses_m" })).structuredContent;
+    expect(list.threads[0].unread).toBe(true);
+    // A read that shows it marks it read.
+    await call(w.client, "read_thread", { thread_id: threadId, agent_session: "ses_m" });
+    expect(pending(w)).toEqual([]);
+  });
+
+  test("a refused read (an expand id not in the thread) marks nothing read", async () => {
+    const w = await world();
+    const { threadId, reply } = await rounds(w, 1);
+    expect(await refused(w.client, "read_thread", { thread_id: threadId, expand: ["msg_01AAAAAAAAAAAAAAAAAAAAAAAA"], agent_session: "ses_m" })).toContain("validation_error");
+    expect(pending(w)).toEqual([reply]);
+  });
+
+  test("after: a 👍 on a message the read left out is not marked seen", async () => {
+    const w = await world({ setAsideDelayMs: 50 });
+    const sent = (await call(w.client, "send_message", { project_path: w.project, body: "Done with step 1.", agent_session: "ses_m" })).structuredContent;
+    const first = await call(w.client, "read_thread", { thread_id: sent.thread_id, agent_session: "ses_m" });
+    await w.post(`/api/inbox/messages/${sent.message_id}/ack`, {});
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(w.server.store.message(sent.message_id)!.ack?.settled_seq).toEqual(expect.any(Number));
+    const after = await call(w.client, "read_thread", { thread_id: sent.thread_id, after: first.structuredContent.cursor, agent_session: "ses_m" });
+    expect(after.content[0]!.text).not.toContain("👍");
+    expect(w.server.store.message(sent.message_id)!.ack?.seen_at ?? null).toBeNull();
+    // A read that shows it marks it seen.
+    expect((await call(w.client, "read_thread", { thread_id: sent.thread_id, agent_session: "ses_m" })).content[0]!.text).toContain("👍");
+    expect(w.server.store.message(sent.message_id)!.ack?.seen_at).toEqual(expect.any(String));
   });
 });
