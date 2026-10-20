@@ -260,7 +260,8 @@ for (const phone of [
   test(`a live app on a phone, ${phone.name}: a tap follows a link, a press-and-hold pins it and navigates nothing`, async () => {
     const app = await liveApp();
     const { url, close } = await annotate(() => `${app.origin}/`);
-    const browser = phone.browserName === 'webkit' ? await webkit.launch() : await chromium.launch();
+    // (WebKit launches without the config's Chromium flags, --use-mock-keychain and --password-store=basic, which Linux WebKit exits on.)
+    const browser = phone.browserName === 'webkit' ? await webkit.launch({ args: [] }) : await chromium.launch();
     try {
       const { context, page } = await newSession(browser, url, { ...phone.device });
       const frame = page.frameLocator('iframe:not([sandbox])');
@@ -290,7 +291,8 @@ for (const phone of [
 
   test(`a local HTML file on a phone, ${phone.name}: a tap follows a link, a press-and-hold pins it`, async () => {
     const { url, close } = await annotate(writeSite);
-    const browser = phone.browserName === 'webkit' ? await webkit.launch() : await chromium.launch();
+    // (WebKit launches without the config's Chromium flags, --use-mock-keychain and --password-store=basic, which Linux WebKit exits on.)
+    const browser = phone.browserName === 'webkit' ? await webkit.launch({ args: [] }) : await chromium.launch();
     try {
       const { context, page } = await newSession(browser, url, { ...phone.device });
       const frame = page.frameLocator('iframe[sandbox]');

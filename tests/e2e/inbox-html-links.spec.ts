@@ -400,7 +400,8 @@ for (const phone of [
 ]) {
   test(`on a phone, ${phone.name}: a tap on a link follows it, a press-and-hold opens a comment on it`, async () => {
     const { root, url, agent, thread, ids } = await world();
-    const browser: Browser = phone.browserName === 'webkit' ? await webkit.launch() : await chromium.launch();
+    // (WebKit launches without the config's Chromium flags, --use-mock-keychain and --password-store=basic, which Linux WebKit exits on.)
+    const browser: Browser = phone.browserName === 'webkit' ? await webkit.launch({ args: [] }) : await chromium.launch();
     try {
       const context = await browser.newContext({ ...phone.device });
       const page = await context.newPage();
