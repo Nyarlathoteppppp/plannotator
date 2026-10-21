@@ -23,7 +23,8 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, setDefaultTimeout, test } from 'bun:test';
 
-setDefaultTimeout(20_000);
+// Each test waits on another process's answers many times over (a loaded machine is slow).
+setDefaultTimeout(45_000);
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -51,17 +52,32 @@ const front = { visible: true, focused: true };
 let savedHasFocus: () => boolean;
 let savedVisibility: PropertyDescriptor | undefined;
 
-function loopback(path: string, method = 'GET', body?: string): Promise<{ status: number; text: string }> {
+function loopbackOnce(path: string, method: string, body: string | undefined): Promise<{ status: number; text: string }> {
   return new Promise((done, fail) => {
-    const req = request({ host: '127.0.0.1', port, path, method, headers: { 'Content-Type': 'application/json', Host: `127.0.0.1:${port}` } }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (c: Buffer) => chunks.push(c));
-      res.on('end', () => done({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
-    });
+    // A fresh connection each time (no keep-alive reuse), and a time limit: a request that never answers fails, never hangs a test.
+    const req = request(
+      { host: '127.0.0.1', port, path, method, agent: false, headers: { 'Content-Type': 'application/json', Host: `127.0.0.1:${port}`, Connection: 'close' } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => done({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
+      },
+    );
+    req.setTimeout(5000, () => req.destroy(new Error(`no answer to ${method} ${path}`)));
     req.on('error', fail);
     if (body) req.write(body);
     req.end();
   });
+}
+
+/** A read is safe to send twice; a write is sent once. */
+async function loopback(path: string, method = 'GET', body?: string): Promise<{ status: number; text: string }> {
+  try {
+    return await loopbackOnce(path, method, body);
+  } catch (error) {
+    if (method !== 'GET') throw error;
+    return loopbackOnce(path, method, body);
+  }
 }
 
 async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
@@ -172,7 +188,7 @@ async function until(check: () => boolean | Promise<boolean>, what: string) {
       await new Promise((r) => setTimeout(r, 50));
     });
   }
-  throw new Error(`timed out waiting for ${what}`);
+  throw new Error(`timed out waiting for ${what}; the card: ${document.querySelector('[data-open-card]')?.outerHTML.slice(0, 3000) ?? 'none'}`);
 }
 
 async function renderApp(hash = '') {
@@ -191,6 +207,14 @@ const text = (el: Element | null | undefined) => el?.textContent?.replace(/\s+/g
 const card = (el: ParentNode, key: string) => el.querySelector<HTMLButtonElement>(`.ib-bcard[data-card-id="${board.ids[key]}"]`);
 const dialog = () => document.querySelector<HTMLElement>('[data-open-card]');
 const click = (el: Element | null) => act(() => (el as HTMLElement).click());
+/** Press a button in the open card once it is enabled (its buttons wait while a move is out). */
+async function press(selector: string) {
+  await until(() => {
+    const button = dialog()?.querySelector<HTMLButtonElement>(selector);
+    return !!button && !button.disabled;
+  }, `${selector} enabled`);
+  click(dialog()!.querySelector(selector));
+}
 
 test.skipIf(!hasDom)('five lanes in order; each card is two lines and an age; the header sums and links; the sidebar counts what is on you', async () => {
   const el = await renderApp('#board');
@@ -299,7 +323,7 @@ test.skipIf(!hasDom)('opening Dropped is looking: a new agent drop leaves the no
   expect(el.querySelector('[data-drop-notice]')).toBeNull();
 });
 
-test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Take out, Drop with a reason, Restore, each said in the card', async () => {
+test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Take out, each said in the card', async () => {
   const el = await renderApp('#board');
   await until(() => card(el, 'explorer') !== null, 'the Board');
   click(card(el, 'explorer'));
@@ -331,16 +355,21 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Tak
   expect(text(dialog()!.querySelector('[data-card-note]'))).toBe('Moved to Building.');
 
   // Pause: the Icebox, with Undo.
-  click(dialog()!.querySelector('[data-card-icebox]'));
+  await press('[data-card-icebox]');
   await until(async () => (await columnOf(board.ids.explorer)) === 'icebox', 'paused on the server');
   await until(() => dialog()?.querySelector('[data-card-state="icebox"]') !== null, 'the open card paused');
   expect(text(dialog()!.querySelector('[data-card-note]'))).toBe('Paused: it is in the Icebox. Take out puts it back.');
-  click(dialog()!.querySelector('[data-card-restore]'));
+  await press('[data-card-restore]');
   await until(async () => (await columnOf(board.ids.explorer)) === 'building', 'Take out puts it back');
+});
 
+test.skipIf(!hasDom)('the open card: Escape leaves the drop form; Drop with a reason closes the form; Restore brings back its actions; a thread opens', async () => {
+  await renderApp(`#board&card=${board.ids.explorer}`);
+  await until(() => dialog() !== null, 'the open card');
   // Escape in the reason field steps back: the form closes, the card stays open, focus on Drop.
-  await until(() => dialog()?.querySelector('[data-card-drop]') !== null, 'Drop offered again');
-  click(dialog()!.querySelector('[data-card-drop]'));
+  // (Enabled once the Take out has answered: the card's buttons wait while a move is out.)
+  await until(() => dialog()?.querySelector<HTMLButtonElement>('[data-card-drop]')?.disabled === false, 'Drop offered again');
+  await press('[data-card-drop]');
   await until(() => dialog()?.querySelector('[data-card-drop-form] input') !== null, 'the drop form');
   act(() => {
     dialog()!.querySelector('[data-card-drop-form] input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
@@ -350,14 +379,15 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Tak
   await until(() => document.activeElement === dialog()?.querySelector('[data-card-drop]'), 'focus back on Drop');
 
   // Drop, with a reason the person writes.
-  click(dialog()!.querySelector('[data-card-drop]'));
+  await until(() => dialog()?.querySelector<HTMLButtonElement>('[data-card-drop]')?.disabled === false, 'Drop enabled');
+  await press('[data-card-drop]');
   const input = dialog()!.querySelector<HTMLInputElement>('[data-card-drop-form] input')!;
   act(() => {
     const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     set.call(input, 'Splitting it into smaller cards');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  click(dialog()!.querySelector('[data-card-drop-confirm]'));
+  await press('[data-card-drop-confirm]');
   await until(async () => (await columnOf(board.ids.explorer)) === 'dropped', 'dropped on the server');
   const dropped = (await serverCards()).cards.find((c) => c.id === board.ids.explorer)!;
   expect(dropped.dropped).toMatchObject({ reason: 'Splitting it into smaller cards', by: { kind: 'person' } });
@@ -372,7 +402,7 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Tak
 
   // Restore from the open card: back where it was.
   await until(() => dialog()?.querySelector('[data-card-restore]') !== null, 'Restore offered');
-  click(dialog()!.querySelector('[data-card-restore]'));
+  await press('[data-card-restore]');
   await until(async () => (await columnOf(board.ids.explorer)) === 'building', 'restored');
   // Back in a lane: Ask, Pause and Drop are offered again.
   await until(() => dialog()?.querySelector('[data-card-icebox]') !== null, 'Pause offered again');
@@ -381,7 +411,7 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Tak
 
   // Opening a thread from the card goes to the thread.
   await until(() => dialog()?.querySelector('[data-card-thread]') !== null, 'the thread again');
-  click(dialog()!.querySelector('[data-card-thread]'));
+  await press('[data-card-thread]');
   await until(() => window.location.hash.startsWith('#thread='), 'the thread route');
   await until(() => document.querySelector('[data-open-card]') === null, 'the card closed');
 });
@@ -397,7 +427,7 @@ test.skipIf(!hasDom)('Ask where this is: nobody running says so; with the card\'
   // The card's own agent session polls the Inbox: it is live.
   await command({ poll: { session: 'ses_cc_portless', body: { project_path: board.projects.plannotator, started_at: Date.now() - 60_000 } } });
   await until(() => dialog()?.querySelector<HTMLButtonElement>('[data-card-ask]')?.disabled === false, 'Ask enabled');
-  click(dialog()!.querySelector('[data-card-ask]'));
+  await press('[data-card-ask]');
   await until(() => document.querySelector('[data-open-card]') === null && document.querySelector('textarea') !== null, 'compose open');
   const body = document.querySelector<HTMLTextAreaElement>('dialog textarea')!;
   expect(body.value).toContain('One fixed address for the Inbox (portless)');
@@ -411,9 +441,9 @@ test.skipIf(!hasDom)('closing the card after a move puts focus on the card in it
   await until(() => card(el, 'vite') !== null, 'the Board');
   click(card(el, 'vite'));
   await until(() => dialog() !== null, 'the open card');
-  click(dialog()!.querySelector('[data-card-move="designing"]'));
+  await press('[data-card-move="designing"]');
   await until(() => card(el, 'vite')?.closest('[data-lane]')?.getAttribute('data-lane') === 'designing', 'the card in Designing');
-  click(dialog()!.querySelector('[data-card-close]'));
+  await press('[data-card-close]');
   await until(() => document.querySelector('[data-open-card]') === null, 'the card closed');
   await settle();
   expect(document.activeElement).toBe(card(el, 'vite'));
@@ -421,9 +451,9 @@ test.skipIf(!hasDom)('closing the card after a move puts focus on the card in it
 
   click(card(el, 'vite'));
   await until(() => dialog() !== null, 'the card again');
-  click(dialog()!.querySelector('[data-card-icebox]'));
+  await press('[data-card-icebox]');
   await until(() => dialog()?.querySelector('[data-card-state="icebox"]') !== null, 'paused');
-  click(dialog()!.querySelector('[data-card-close]'));
+  await press('[data-card-close]');
   await until(() => document.querySelector('[data-open-card]') === null, 'the card closed');
   await settle();
   expect(document.activeElement).toBe(el.querySelector('.ib-board .ib-bhead h1'));

@@ -725,9 +725,14 @@ function Inbox() {
   const [cards, setCards] = useState<CardsModel | null>(null);
   const [cardsError, setCardsError] = useState<string | null>(null);
   const [cardBusy, setCardBusy] = useState(false);
+  // Reads answer out of order (a read started before a move can land after it): only the newest read, started
+  // after the last move, is taken, so a stale answer never flips a card back (or closes a form the person opened).
+  const cardsSeq = useRef(0);
   const refreshCards = useCallback(async () => {
+    const mine = ++cardsSeq.current;
     try {
       const next = await inboxApi.cards();
+      if (mine !== cardsSeq.current) return null;
       setCards(next);
       setCardsError(null);
       return next;
@@ -1377,6 +1382,8 @@ function Inbox() {
     setCardBusy(true);
     try {
       const { card: next } = await inboxApi.moveCard(card.id, move);
+      // Any read still out started before this move: its answer is older than this card.
+      cardsSeq.current++;
       setCards((current) => (current ? { ...current, cards: current.cards.map((c) => (c.id === next.id ? next : c)) } : current));
       void refreshCards();
       return next;
