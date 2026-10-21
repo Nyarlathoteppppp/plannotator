@@ -434,7 +434,12 @@ export interface CardDialogProps {
 export function CardDialog({ card, model, now, canAsk, busy, note, askOther, onClose, onMove, onIcebox, onDrop, onRestore, onOpenThread, onAsk }: CardDialogProps) {
   const titleId = useId();
   const reasonId = useId();
-  const [dropping, setDropping] = useState(false);
+  // The drop form is open for the card as it stood when Drop was pressed (its last move, `moved_at`): any move
+  // since (the drop went through, a Restore, a move from elsewhere) closes it in the same render, with no effect
+  // to wait for, and a card that comes back to the same column does not reopen it.
+  const [dropFor, setDropFor] = useState<string | null>(null);
+  const dropping = dropFor === `${card.column}@${card.moved_at}`;
+  const setDropping = (open: boolean) => setDropFor(open ? `${card.column}@${card.moved_at}` : null);
   const [reason, setReason] = useState('');
   const reasonRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -447,12 +452,11 @@ export function CardDialog({ card, model, now, canAsk, busy, note, askOther, onC
   useEffect(() => {
     if (dropping) reasonRef.current?.focus();
   }, [dropping]);
-  // A drop that went through (or any other move: Restore, a move from the event stream) closes the drop form.
   const dropButtonRef = useRef<HTMLButtonElement>(null);
+  // The reason starts empty each time the form opens.
   useEffect(() => {
-    setDropping(false);
-    setReason('');
-  }, [card.column]);
+    if (!dropping) setReason('');
+  }, [dropping]);
   /** Escape in the reason field steps back to the card (the form closes, the card stays), focus on Drop. */
   const leaveDropForm = () => {
     setDropping(false);
@@ -507,7 +511,8 @@ export function CardDialog({ card, model, now, canAsk, busy, note, askOther, onC
         </div>
 
         {/* What the last move here did, or why it failed: said here, since a toast under the modal could not be reached. */}
-        <p className="ib-cd-done" role="status" data-card-note="" data-error={note?.error ? '' : undefined} hidden={!note}>
+        {/* Always rendered (empty until the first note), so a screen reader hears the first one too. */}
+        <p className="ib-cd-done" role="status" data-card-note="" data-error={note?.error ? '' : undefined} data-empty={note ? undefined : ''}>
           {note && <Icon name={note.error ? 'warn' : 'check'} size={15} />}
           {note?.text}
         </p>

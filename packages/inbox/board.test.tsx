@@ -346,6 +346,11 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Tak
     'https://github.com/backnotprop/plannotator/pull/1976',
   ]);
   expect(open.querySelector('[data-card-move="your_review"]')!.getAttribute('aria-pressed')).toBe('true');
+  // The status line is in the card from the start, empty and not hidden, so the first move's words are announced.
+  const status = open.querySelector<HTMLElement>('[data-card-note]')!;
+  expect(status.getAttribute('role')).toBe('status');
+  expect(status.hidden).toBe(false);
+  expect(status.textContent).toBe('');
 
   // Move to Building.
   click(open.querySelector('[data-card-move="building"]'));
@@ -353,6 +358,8 @@ test.skipIf(!hasDom)('the open card: its threads and PRs; Move to, Pause and Tak
   await until(() => dialog()?.querySelector('[data-card-move="building"]')?.getAttribute('aria-pressed') === 'true', 'the open card moved');
   // Said in the card itself (the modal covers the window's toast).
   expect(text(dialog()!.querySelector('[data-card-note]'))).toBe('Moved to Building.');
+  // The same element took the words (a new one would not be announced).
+  expect(dialog()!.querySelector('[data-card-note]')).toBe(status);
 
   // Pause: the Icebox, with Undo.
   await press('[data-card-icebox]');
@@ -395,8 +402,9 @@ test.skipIf(!hasDom)('the open card: Escape leaves the drop form; Drop with a re
   expect((await serverCards()).dropped_unseen).toBe(0);
   // The drop went through: the form is gone (no second Drop card to press), the card shows it dropped.
   await until(() => dialog()?.querySelector('[data-card-state="dropped"]') !== null, 'the open card dropped');
-  expect(dialog()!.querySelector('[data-card-drop-form]')).toBeNull();
-  expect(dialog()!.querySelector('[data-card-drop-confirm]')).toBeNull();
+  // (Compared as booleans: a failing match on an element would print the whole DOM.)
+  expect(dialog()!.querySelector('[data-card-drop-form]') === null).toBe(true);
+  expect(dialog()!.querySelector('[data-card-drop-confirm]') === null).toBe(true);
   expect(dialog()!.querySelector('[data-card-note]')!.getAttribute('role')).toBe('status');
   expect(text(dialog()!.querySelector('[data-card-note]'))).toBe('Dropped. Restore puts it back.');
 

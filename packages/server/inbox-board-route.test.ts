@@ -75,5 +75,7 @@ test("dropped/seen marks only the drops the window names: an agent's drop it nev
   // A malformed list is refused, and nothing is marked.
   expect((await post({ cards: ["not-a-card"] })).status).toBe(422);
   expect((await post({ cards: "crd_x" })).status).toBe(422);
+  // Required: no list is refused, never "every unseen drop".
+  expect((await post({})).status).toBe(422);
   expect(store.card(later.id)!.dropped!.seen_at).toBeNull();
 });
