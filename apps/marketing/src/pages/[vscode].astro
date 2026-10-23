@@ -18,7 +18,7 @@ export function getStaticPaths() {
 // review in the editor everyone already uses, with any agent that speaks ACP.
 const title = 'Guided Reviews for VS Code';
 const description =
-  'An agent turns a pull request into chapters, the core of the change first, and you read them in VS Code with everything the editor already does.';
+  'An agent turns a pull request or your local changes into chapters, the core of the change first, and you read them in VS Code with everything the editor already does.';
 const github = 'https://github.com/backnotprop/plannotator';
 const marketplace = 'https://marketplace.visualstudio.com/items?itemName=backnotprop.plannotator-webview';
 const openVsx = 'https://open-vsx.org/extension/backnotprop/plannotator-webview';
@@ -78,8 +78,8 @@ const copyIcon =
           <h1 class="font-display gv-heading">Guided Reviews for VS Code</h1>
 
           <p class="gv-overview">
-            An agent reads a pull request and splits it into chapters: the core of the change first, then what follows
-            from it, with wiring and config at the end. Each chapter says what changed and why. You read it in VS Code.
+            An agent reads a pull request or your local changes and splits them into chapters: the core of the change
+            first, then what follows from it, with wiring and config at the end. Each chapter says what changed and why. You read it in VS Code.
           </p>
 
           <div class="gv-hero-actions">
@@ -149,7 +149,7 @@ const copyIcon =
         <div class="gv-beat-head">
           <h3 class="font-display gv-title">The core of the change first</h3>
           <p class="gv-body">
-            A large pull request read file by file leaves you to work out what matters. The guide opens on the part that
+            A large change read file by file leaves you to work out what matters. The guide opens on the part that
             explains the rest. Call sites and tests come next. Renames, config and generated files are grouped at the
             end. Every changed file is placed somewhere.
           </p>
