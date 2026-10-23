@@ -6,9 +6,16 @@
 // and every image it names resolves.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { PassThrough } from 'node:stream';
 import { join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  guidesVscodeAssetsIntegration,
+  guidesVscodeDevMiddleware,
+  resolveGuidesVscodeAsset,
+} from './src/lib/guides-vscode-assets';
 
 const marketingRoot = fileURLToPath(new URL('.', import.meta.url));
 const switchFile = join(marketingRoot, 'src/lib/guides-vscode-launch.ts');
@@ -98,6 +105,71 @@ describe('Guided Reviews for VS Code launch switch', () => {
     expect(urls.size).toBeGreaterThan(12);
     for (const url of urls) {
       if (/\.(webp|png|jpe?g|svg)$/.test(url)) expect(existsSync(join(dist.on, url)), url).toBe(true);
+    }
+  });
+});
+
+describe('Guided Reviews for VS Code screens in astro dev', () => {
+  const assetsDir = join(marketingRoot, 'guides-vscode-assets');
+
+  test('off: dev adds no route; on: it adds one', () => {
+    const uses = { on: 0, off: 0 };
+    for (const name of ['on', 'off'] as const) {
+      const integration = guidesVscodeAssetsIntegration(name === 'on', assetsDir);
+      integration.hooks['astro:server:setup']({ server: { middlewares: { use: () => void uses[name]++ } } });
+    }
+    expect(uses).toEqual({ on: 1, off: 0 });
+  });
+
+  test('serves a screen with an image content type', async () => {
+    const file = await resolveGuidesVscodeAsset(assetsDir, '/assets/guides-vscode/chapter-diff@2x.webp?v=1');
+    expect(file?.type).toBe('image/webp');
+    expect((await resolveGuidesVscodeAsset(assetsDir, '/assets/guides-vscode/guides-vscode-og.jpg'))?.type).toBe('image/jpeg');
+
+    const body = new PassThrough();
+    const chunks: Buffer[] = [];
+    body.on('data', (c) => chunks.push(c));
+    const headers: Record<string, string> = {};
+    const res = Object.assign(body, {
+      statusCode: 0,
+      setHeader: (k: string, v: string) => void (headers[k.toLowerCase()] = v),
+    }) as unknown as ServerResponse;
+    await new Promise<void>((done, fail) => {
+      body.on('finish', done);
+      guidesVscodeDevMiddleware(assetsDir)(
+        { method: 'GET', url: '/assets/guides-vscode/generating.webp' } as IncomingMessage,
+        res,
+        () => fail(new Error('passed on')),
+      );
+    });
+    expect(headers['content-type']).toBe('image/webp');
+    expect(Buffer.concat(chunks).length).toBe(Number(headers['content-length']));
+    expect(Buffer.concat(chunks).length).toBeGreaterThan(1000);
+  });
+
+  test('nothing outside the folder, and nothing it does not know', async () => {
+    const outside = await mkdtemp(join(marketingRoot, '.guides-vscode-dev-'));
+    try {
+      const dir = join(outside, 'assets');
+      await mkdir(dir);
+      await writeFile(join(outside, 'secret.png'), 'secret');
+      await writeFile(join(dir, 'notes.txt'), 'text');
+      await symlink(join(outside, 'secret.png'), join(dir, 'link.png'));
+      for (const url of [
+        '/assets/guides-vscode/../secret.png',
+        '/assets/guides-vscode/%2e%2e/secret.png',
+        '/assets/guides-vscode/%2e%2e%2fsecret.png',
+        '/assets/guides-vscode/..%5csecret.png',
+        '/assets/guides-vscode/link.png',
+        '/assets/guides-vscode/notes.txt',
+        '/assets/guides-vscode/',
+        '/assets/guides-vscode/%E0%A4%A.png',
+        '/assets/other/secret.png',
+      ]) {
+        expect(await resolveGuidesVscodeAsset(dir, url), url).toBeNull();
+      }
+    } finally {
+      await rm(outside, { force: true, recursive: true });
     }
   });
 });

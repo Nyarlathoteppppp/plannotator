@@ -18,7 +18,7 @@ export function getStaticPaths() {
 // the extension's Guides view); no comments, other agents, stacks or share links.
 const title = 'Guided Reviews for VS Code';
 const description =
-  "Claude Code splits a change into chapters in the order to read them. You review each file in VS Code's diff editor, with hover, go to definition and find references.";
+  "Claude Code turns a pull request into a guide: the most important part first, each part explained. You review each file in VS Code's diff editor, with hover, go to definition and find references.";
 const github = 'https://github.com/backnotprop/plannotator';
 const extensionReadme = 'https://github.com/backnotprop/plannotator/tree/main/apps/vscode-extension';
 const marketplace = 'https://marketplace.visualstudio.com/items?itemName=backnotprop.plannotator-webview';
@@ -43,7 +43,10 @@ const primaryBtn =
   'inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-primary text-sm font-medium hover:bg-primary/90 transition-colors';
 const steps = [
   { title: 'Pick a change.', body: "This branch's pull request, another open pull request, or your local changes." },
-  { title: 'Claude Code writes the guide.', body: 'The chapters appear as it reads the change.' },
+  {
+    title: 'Claude Code writes the guide.',
+    body: 'It finds the core of the change and builds the chapters around it. You see them appear as it works.',
+  },
   {
     title: 'Read it chapter by chapter.',
     body: 'Each file opens in the diff editor. Mark it reviewed and go to the next file.',
@@ -76,9 +79,9 @@ const steps = [
           <h1 class="font-display gv-heading">Guided Reviews for VS Code</h1>
 
           <p class="gv-overview">
-            Pick a pull request or your local changes. Claude Code reads the change and writes a guide: the files split
-            into chapters, in the order to read them. You review each file in VS Code's own diff editor, with hover, go
-            to definition and find references.
+            Pick a pull request or your local changes. Claude Code reads the change and writes a guide: chapters that
+            start with the most important part of the change, each one saying what changed and why. You review each
+            file in VS Code's own diff editor, with hover, go to definition and find references.
           </p>
 
           <p class="gv-trust">Part of the Plannotator VS Code extension. Uses your own Claude Code. Open source.</p>
@@ -174,13 +177,14 @@ const steps = [
       <section class="gv-beat" id="order">
         <div class="gv-beat-head">
           <p class="gv-beat-n">01</p>
-          <h3 class="font-display gv-title">The change in order</h3>
+          <h3 class="font-display gv-title">The most important part first</h3>
           <p class="gv-body">
-            The agent splits the change into a few chapters, in the order to read them. Each chapter has a short
-            overview and lists its files, each with a one-line summary. Every changed file is either in a chapter or
-            listed as left out.
+            When you read a large pull request file by file, you have to work out for yourself what matters. A guide
+            does that for you. The first chapter is the core of the change, the part that explains the rest. Then come
+            the changes that follow from it, such as call sites and tests. Wiring, renames, config and generated files
+            are grouped in the last chapter, so they don't interrupt you. Every changed file is in a chapter or listed
+            as left out.
           </p>
-          <p class="gv-note">The guide starts with an overview of how the change fits together, with one diagram.</p>
         </div>
         <GuidesShot
           name="generating"
@@ -189,9 +193,21 @@ const steps = [
         <p class="gv-caption">Left: the agent's tool calls. Right: the guide as it is written.</p>
       </section>
 
-      <section class="gv-beat" id="focus">
+      <section class="gv-beat" id="why">
         <div class="gv-beat-head">
           <p class="gv-beat-n">02</p>
+          <h3 class="font-display gv-title">Why each part exists</h3>
+          <p class="gv-body">
+            Each chapter says what changed, why it was done that way, and what it affects, next to the files it covers.
+            You know the intent before you read the code. The guide opens with an overview of how the whole change fits
+            together, with one diagram.
+          </p>
+        </div>
+      </section>
+
+      <section class="gv-beat" id="focus">
+        <div class="gv-beat-head">
+          <p class="gv-beat-n">03</p>
           <h3 class="font-display gv-title">One file at a time</h3>
           <p class="gv-body">
             The top of the diff shows where you are, for example "Chapter 2 of 5", with Mark reviewed and Next file.
@@ -205,7 +221,7 @@ const steps = [
       </section>
 
       <section class="gv-payoff" id="intelligence">
-        <p class="gv-beat-n">03</p>
+        <p class="gv-beat-n">04</p>
         <h2 class="font-display gv-arc-title gv-payoff-title">Code intelligence</h2>
         <p class="gv-body gv-payoff-body">
           The diff is VS Code's own diff editor, so hover, go to definition and find references work as they do in any
@@ -221,7 +237,7 @@ const steps = [
 
       <section class="gv-beat" id="codebase">
         <div class="gv-beat-head">
-          <p class="gv-beat-n">04</p>
+          <p class="gv-beat-n">05</p>
           <h3 class="font-display gv-title">The rest of the repo</h3>
           <p class="gv-body">
             The new side of the diff is a real file: your working tree for local changes, or a separate worktree for a
@@ -697,12 +713,6 @@ const steps = [
     border-radius: 5px;
     background: color-mix(in oklab, var(--foreground) 8%, transparent);
     color: var(--foreground);
-  }
-
-  .gv-note {
-    font-size: 0.8125rem;
-    line-height: 1.6;
-    color: var(--gv-subtle);
   }
 
   main :global(.gv-after) {

@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { cp } from 'node:fs/promises';
 import { INBOX_LAUNCHED, INBOX_POST_ID } from './src/lib/inbox-launch.ts';
 import { GUIDES_VSCODE_LAUNCHED } from './src/lib/guides-vscode-launch.ts';
+import { guidesVscodeAssetsIntegration } from './src/lib/guides-vscode-assets.ts';
 
 const indexableBlogPages = new Set([
   'https://plannotator.ai/blog/',
@@ -24,16 +25,12 @@ const inboxAssets = {
   },
 };
 
-// The same for the Guided Reviews for VS Code page (src/lib/guides-vscode-launch.ts).
-const guidesVscodeAssets = {
-  name: 'guides-vscode-assets',
-  hooks: {
-    'astro:build:done': async ({ dir }) => {
-      if (!GUIDES_VSCODE_LAUNCHED) return;
-      await cp(new URL('./guides-vscode-assets/', import.meta.url), new URL('assets/guides-vscode/', dir), { recursive: true });
-    },
-  },
-};
+// The same for the Guided Reviews for VS Code page (src/lib/guides-vscode-launch.ts),
+// which `astro dev` also serves while the switch is on (src/lib/guides-vscode-assets.ts).
+const guidesVscodeAssets = guidesVscodeAssetsIntegration(
+  GUIDES_VSCODE_LAUNCHED,
+  new URL('./guides-vscode-assets/', import.meta.url),
+);
 
 export default defineConfig({
   site: 'https://plannotator.ai',
