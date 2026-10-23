@@ -90,6 +90,19 @@ const copyIcon =
             <a href={openVsx} target="_blank" rel="noopener noreferrer" class="gv-link">Open VSX</a>
             <a href="#install" class="gv-link">Setup steps</a>
           </div>
+          <div class="gv-acp">
+            <ul class="gv-agents" aria-label="Agents that connect over ACP">
+              {agents.map((agent) => (
+                <li class="gv-agent">
+                  <img src={agent.src} alt="" width="16" height="16" class={agent.cls} />
+                  <span>{agent.name}</span>
+                </li>
+              ))}
+            </ul>
+            <p class="gv-acp-line">
+              Works with your agent, over <a href={acpAgents} target="_blank" rel="noopener noreferrer">ACP</a>.
+            </p>
+          </div>
         </div>
 
         <!-- The film: never autoplays. The poster and one play button until it
@@ -125,19 +138,6 @@ const copyIcon =
           class="gv-hero-shot"
         />
 
-        <div class="gv-acp">
-          <ul class="gv-agents" aria-label="Agents that connect over ACP">
-            {agents.map((agent) => (
-              <li class="gv-agent">
-                <img src={agent.src} alt="" width="16" height="16" class={agent.cls} />
-                <span>{agent.name}</span>
-              </li>
-            ))}
-          </ul>
-          <p class="gv-acp-line">
-            Works with your agent, over <a href={acpAgents} target="_blank" rel="noopener noreferrer">ACP</a>.
-          </p>
-        </div>
       </header>
 
       <!-- ── 2. The guide ── -->
@@ -589,7 +589,10 @@ const copyIcon =
     display: flex;
     flex-direction: column;
     gap: 0.875rem;
-    margin-top: 1.75rem;
+    margin-top: 0.75rem;
+    /* Wider than the hero text column, so the eight marks fit one line on a desktop. */
+    width: max-content;
+    max-width: min(100vw - 3rem, 64rem);
   }
 
   .gv-agents {
