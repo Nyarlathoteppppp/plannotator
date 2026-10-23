@@ -7,7 +7,7 @@ import Footer from '../components/Footer.astro';
 import GuidesShot from '../components/guides-vscode/GuidesShot.astro';
 import { GUIDES_VSCODE_LAUNCHED, GUIDES_VSCODE_ROUTE } from '../lib/guides-vscode-launch';
 
-// /vscode/ is generated only once Guides in VS Code ships: until then the
+// /vscode/ is generated only once Guided Reviews for VS Code ships: until then the
 // deployed site has no such page (src/lib/guides-vscode-launch.ts).
 export function getStaticPaths() {
   return GUIDES_VSCODE_LAUNCHED ? [{ params: { vscode: GUIDES_VSCODE_ROUTE } }] : [];
@@ -16,9 +16,9 @@ export function getStaticPaths() {
 // Modeled on the Inbox page ([inbox].astro): same shapes, sizes and voice.
 // Claims are phase 1 of Guided Reviews in VS Code only (the approved spec and
 // the extension's Guides view); no comments, other agents, stacks or share links.
-const title = 'Plannotator Guides in VS Code';
+const title = 'Guided Reviews for VS Code';
 const description =
-  "Code review in the code itself. An agent splits a change into chapters in reading order, and you read each file in VS Code's own diff editor with full language intelligence.";
+  "Claude Code splits a change into chapters in the order to read them. You review each file in VS Code's diff editor, with hover, go to definition and find references.";
 const github = 'https://github.com/backnotprop/plannotator';
 const extensionReadme = 'https://github.com/backnotprop/plannotator/tree/main/apps/vscode-extension';
 const marketplace = 'https://marketplace.visualstudio.com/items?itemName=backnotprop.plannotator-webview';
@@ -42,11 +42,11 @@ const btn =
 const primaryBtn =
   'inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-primary text-sm font-medium hover:bg-primary/90 transition-colors';
 const steps = [
-  { title: 'Pick a change.', body: "This branch's pull request, another open PR, or your local changes." },
-  { title: 'Claude Code builds the guide.', body: 'You watch the chapters appear as it reads the change.' },
+  { title: 'Pick a change.', body: "This branch's pull request, another open pull request, or your local changes." },
+  { title: 'Claude Code writes the guide.', body: 'The chapters appear as it reads the change.' },
   {
-    title: 'You read it chapter by chapter.',
-    body: 'Each file opens in the diff editor. Mark it reviewed and go to the next.',
+    title: 'Read it chapter by chapter.',
+    body: 'Each file opens in the diff editor. Mark it reviewed and go to the next file.',
   },
 ];
 ---
@@ -73,16 +73,15 @@ const steps = [
             </a>
           </div>
 
-          <h1 class="font-display gv-heading">Review the code <em>in the code itself</em></h1>
+          <h1 class="font-display gv-heading">Guided Reviews for VS Code</h1>
 
           <p class="gv-overview">
-            Code review is not dead. The best place to review code is in the code itself. So we are taking it back to the
-            IDE, the most powerful open source IDE there is: VS Code. Pick a pull request or your local changes. Claude
-            Code builds a guide: the change in chapters, in reading order. You read each file in VS Code's own diff
-            editor, with go to definition and find references on the real code.
+            Pick a pull request or your local changes. Claude Code reads the change and writes a guide: the files split
+            into chapters, in the order to read them. You review each file in VS Code's own diff editor, with hover, go
+            to definition and find references.
           </p>
 
-          <p class="gv-trust">Inside the Plannotator VS Code extension. Claude Code with your own setup. Open source.</p>
+          <p class="gv-trust">Part of the Plannotator VS Code extension. Uses your own Claude Code. Open source.</p>
 
           <div class="gv-hero-actions">
             <a href={marketplace} target="_blank" rel="noopener noreferrer" class="gv-install-btn">
@@ -107,7 +106,7 @@ const steps = [
               poster={posterSrc}
               width="1920"
               height="1080"
-              aria-label="Plannotator Guides in VS Code film"
+              aria-label="Guided Reviews for VS Code film"
             >
               <source src={filmSrc} type="video/mp4" />
             </video>
@@ -130,13 +129,12 @@ const steps = [
 
       <!-- ── 2. Why ── -->
       <section class="gv-arc" id="why">
-        <h2 class="font-display gv-arc-title">Why review in the IDE</h2>
+        <h2 class="font-display gv-arc-title">Why review in VS Code</h2>
         <p class="gv-body">
-          A diff in a browser is a picture of the code. You can read it but you cannot follow it. In the IDE every file
-          is a real file: the language server knows its types, its definitions and who calls it. Your theme, your font
-          and your keys are already there.
+          A diff on a web page shows the changed lines. In VS Code the new side of each diff is a real file, so you can
+          hover a name to see its type, jump to its definition, list its references and open any other file in the
+          repo. Your theme, font and keybindings are the ones you already use.
         </p>
-        <p class="gv-body">A guide puts the change in an order you can read. VS Code gives you everything around it.</p>
       </section>
 
       <!-- ── 3. How it works ── -->
@@ -178,25 +176,26 @@ const steps = [
           <p class="gv-beat-n">01</p>
           <h3 class="font-display gv-title">The change in order</h3>
           <p class="gv-body">
-            The agent splits the change into a few chapters in reading order. Each chapter has a short overview and the
-            files it covers, each with a one-line summary. Every changed file is in a chapter, or listed as left out.
+            The agent splits the change into a few chapters, in the order to read them. Each chapter has a short
+            overview and lists its files, each with a one-line summary. Every changed file is either in a chapter or
+            listed as left out.
           </p>
-          <p class="gv-note">You watch it happen. Chapters appear and files land in them as the agent reads.</p>
+          <p class="gv-note">The guide starts with an overview of how the change fits together, with one diagram.</p>
         </div>
         <GuidesShot
           name="generating"
           alt="Claude Code building a guide with its tool calls on the left and the draft chapters on the right"
         />
-        <p class="gv-caption">The agent's tool calls on the left and the draft guide on the right</p>
+        <p class="gv-caption">Left: the agent's tool calls. Right: the guide as it is written.</p>
       </section>
 
       <section class="gv-beat" id="focus">
         <div class="gv-beat-head">
           <p class="gv-beat-n">02</p>
-          <h3 class="font-display gv-title">Focus</h3>
+          <h3 class="font-display gv-title">One file at a time</h3>
           <p class="gv-body">
-            One file at a time. The top of the diff says where you are, "Chapter 2 of 5", with Mark reviewed and Next
-            file. The chapter's overview sits beside it. Ticks show what you have read and what is left.
+            The top of the diff shows where you are, for example "Chapter 2 of 5", with Mark reviewed and Next file.
+            The chapter's overview stays beside the diff. Ticks show which files you have reviewed.
           </p>
         </div>
         <GuidesShot
@@ -205,19 +204,13 @@ const steps = [
         />
       </section>
 
-      <div class="gv-interlude">
-        <p class="font-display">
-          A big change is many small reads. <span>The guide tells you which one comes next.</span>
-        </p>
-      </div>
-
       <section class="gv-payoff" id="intelligence">
         <p class="gv-beat-n">03</p>
-        <h2 class="font-display gv-arc-title gv-payoff-title">All the code intelligence</h2>
+        <h2 class="font-display gv-arc-title gv-payoff-title">Code intelligence</h2>
         <p class="gv-body gv-payoff-body">
-          The diff is VS Code's own diff editor. Hover for types. Go to definition. Find references. In the overview the
-          diagram's boxes open the code, and its links show a hover card: the signature, where it is defined, how many
-          references, and which chapter changed it.
+          The diff is VS Code's own diff editor, so hover, go to definition and find references work as they do in any
+          file. In the overview, a box in the diagram opens its code, and a linked name shows a hover card with its
+          signature, where it is defined, how many references it has and which chapter changed it.
         </p>
         <GuidesShot
           name="overview-hover"
@@ -229,10 +222,11 @@ const steps = [
       <section class="gv-beat" id="codebase">
         <div class="gv-beat-head">
           <p class="gv-beat-n">04</p>
-          <h3 class="font-display gv-title">The whole codebase</h3>
+          <h3 class="font-display gv-title">The rest of the repo</h3>
           <p class="gv-body">
-            The head side is a real file: your working tree for local changes, a worktree for a pull request. Follow a
-            call out of the diff into any file in the repo with Cmd+P, tabs, breadcrumbs, back and forward.
+            The new side of the diff is a real file: your working tree for local changes, or a separate worktree for a
+            pull request. You can follow a call into any file in the repo with Cmd+P, tabs, breadcrumbs, back and
+            forward.
           </p>
         </div>
       </section>
@@ -242,11 +236,11 @@ const steps = [
         <h2 class="font-display gv-arc-title">Starting a guide</h2>
         <p class="gv-body">
           The Guides view lists this repo's local changes and open pull requests, your recent guides, and pull requests
-          waiting on you. Click Guide. Pick the model and effort. Sonnet at low effort is the default.
+          waiting on your review. Click Guide, then pick the model and effort. The default is Sonnet at low effort.
         </p>
         <p class="gv-body">
-          Claude Code runs with your own install, login, settings and permissions. When it asks for a permission you
-          answer in VS Code. A pull request opens in its own worktree, so your checkout is never touched.
+          Claude Code runs with your own install, login, settings and permissions, and asks for permissions in VS Code.
+          A pull request opens in its own worktree, so your checkout stays as it is.
         </p>
       </section>
       <GuidesShot name="new-model" alt="The model picker for a new guided review with Sonnet as the default" />
@@ -255,9 +249,8 @@ const steps = [
       <section class="gv-arc gv-arc-gap" id="shared">
         <h2 class="font-display gv-arc-title">Shared with Plannotator</h2>
         <ul class="gv-caps">
-          <li>Guides are saved where Plannotator's web app finds them. Open a guide from either side.</li>
-          <li>Download a guide as one portable HTML file.</li>
-          <li>Part of Plannotator. Open source.</li>
+          <li>Guides are saved where Plannotator's web app reads them, so you can open a guide in either.</li>
+          <li>You can download a guide as one HTML file.</li>
         </ul>
       </section>
 
@@ -273,8 +266,8 @@ const steps = [
               <h3>The extension</h3>
               <p>
                 From the <a href={marketplace} target="_blank" rel="noopener noreferrer">VS Code Marketplace</a>, or
-                <a href={openVsx} target="_blank" rel="noopener noreferrer">Open VSX</a> for Cursor and Windsurf and
-                VSCodium. Or from a terminal:
+                <a href={openVsx} target="_blank" rel="noopener noreferrer">Open VSX</a> for Cursor, Windsurf and
+                VSCodium.
               </p>
               <div class="hero-install gv-box">
                 <span class="gv-dollar" aria-hidden="true">$</span>
@@ -294,8 +287,7 @@ const steps = [
                 <button type="button" class="copy-btn" data-copy={adapterInstall} aria-label="Copy the command" set:html={copyIcon} />
               </div>
               <p>
-                The extension starts <code>claude-agent-acp</code> with your own Claude Code, so Claude Code must be
-                installed and signed in. Pull requests also need the GitHub CLI, <code>gh</code>.
+                Claude Code must be installed and signed in. Pull requests also need the GitHub CLI, <code>gh</code>.
               </p>
             </div>
           </div>
@@ -304,7 +296,7 @@ const steps = [
             <span class="gv-step-n" aria-hidden="true">03</span>
             <div>
               <h3>Open the Guides view</h3>
-              <p>It has its own icon in the activity bar. Pick a change and click Guide.</p>
+              <p>Its icon is in the activity bar.</p>
               <p class="gv-step-note">VS Code 1.90 or newer.</p>
             </div>
           </div>
@@ -508,11 +500,6 @@ const steps = [
     font-weight: 700;
     letter-spacing: -0.04em;
     text-wrap: balance;
-  }
-
-  .gv-heading em {
-    font-style: normal;
-    color: var(--primary);
   }
 
   .gv-overview {
@@ -796,24 +783,6 @@ const steps = [
     color: var(--primary);
     letter-spacing: 0.05em;
   }
-
-  .gv-interlude {
-    margin: 4.5rem 0 1rem;
-    padding: 2.5rem 0;
-    border-top: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
-    border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
-  }
-
-  .gv-interlude p {
-    font-size: clamp(1.5rem, 3.2vw, 2.25rem);
-    line-height: 1.2;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    max-width: 48rem;
-    text-wrap: balance;
-  }
-
-  .gv-interlude span { color: var(--gv-dim); }
 
   .gv-caption {
     margin-top: 0.75rem;

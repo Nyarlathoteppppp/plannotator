@@ -24,7 +24,7 @@ const inboxAssets = {
   },
 };
 
-// The same for the Guides in VS Code page (src/lib/guides-vscode-launch.ts).
+// The same for the Guided Reviews for VS Code page (src/lib/guides-vscode-launch.ts).
 const guidesVscodeAssets = {
   name: 'guides-vscode-assets',
   hooks: {

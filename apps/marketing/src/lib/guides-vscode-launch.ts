@@ -1,4 +1,4 @@
-// Plannotator Guides in VS Code (the Guides view of the VS Code extension) is
+// Guided Reviews for VS Code (the Guides view of the VS Code extension) is
 // hidden until it ships. While this is false the deployed site has none of it:
 // /vscode/ is not generated, the screens and the OG image (guides-vscode-assets/)
 // are not copied into dist, and the Footer carries no link.

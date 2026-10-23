@@ -1,4 +1,4 @@
-// The Guides in VS Code page and its images ship behind one switch,
+// The Guided Reviews for VS Code page and its images ship behind one switch,
 // GUIDES_VSCODE_LAUNCHED in src/lib/guides-vscode-launch.ts, committed off until
 // the extension release ships. This builds the site both ways: off, the deployed
 // site has no /vscode/, no screens and no Footer link; on (the env override used
@@ -55,7 +55,7 @@ afterAll(async () => {
   if (temporaryRoot) await rm(temporaryRoot, { force: true, recursive: true });
 });
 
-describe('Guides in VS Code launch switch', () => {
+describe('Guided Reviews for VS Code launch switch', () => {
   test('the switch is committed off', async () => {
     expect(await readFile(switchFile, 'utf8')).toContain(
       "export const GUIDES_VSCODE_LAUNCHED = false || process.env.GUIDES_VSCODE_LAUNCHED === 'true';",
@@ -71,7 +71,7 @@ describe('Guides in VS Code launch switch', () => {
 
   test('on: the page is built and linked from the Footer', async () => {
     const page = await read(dist.on, 'vscode/index.html');
-    expect(page).toContain('<title>Plannotator Guides in VS Code</title>');
+    expect(page).toContain('<title>Guided Reviews for VS Code</title>');
     expect(await read(dist.on, 'index.html')).toContain('href="/vscode/"');
   });
 
