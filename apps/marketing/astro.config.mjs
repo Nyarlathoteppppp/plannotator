@@ -4,6 +4,7 @@ import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 import { cp } from 'node:fs/promises';
 import { INBOX_LAUNCHED, INBOX_POST_ID } from './src/lib/inbox-launch.ts';
+import { GUIDES_VSCODE_LAUNCHED } from './src/lib/guides-vscode-launch.ts';
 
 const indexableBlogPages = new Set([
   'https://plannotator.ai/blog/',
@@ -23,6 +24,17 @@ const inboxAssets = {
   },
 };
 
+// The same for the Guides in VS Code page (src/lib/guides-vscode-launch.ts).
+const guidesVscodeAssets = {
+  name: 'guides-vscode-assets',
+  hooks: {
+    'astro:build:done': async ({ dir }) => {
+      if (!GUIDES_VSCODE_LAUNCHED) return;
+      await cp(new URL('./guides-vscode-assets/', import.meta.url), new URL('assets/guides-vscode/', dir), { recursive: true });
+    },
+  },
+};
+
 export default defineConfig({
   site: 'https://plannotator.ai',
   output: 'static',
@@ -32,6 +44,7 @@ export default defineConfig({
   compressHTML: true,
   integrations: [
     inboxAssets,
+    guidesVscodeAssets,
     react(),
     sitemap({
       filter: (page) =>
