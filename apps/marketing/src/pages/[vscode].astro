@@ -27,7 +27,8 @@ const extensionInstall = 'code --install-extension backnotprop.plannotator-webvi
 const adapterInstall = 'npm install -g @agentclientprotocol/claude-agent-acp';
 
 // Agents that speak ACP (listed on acpAgents) whose marks are already in the
-// repo: the site's own agent icons, and Cursor's from packages/ui's app icons.
+// repo: the site's own agent icons, Cursor's from packages/ui's app icons, and
+// Kilo Code's favicon from Kilo-Org/kilocode (packages/kilo-docs/public/favicon).
 const agents = [
   { name: 'Claude Code', src: '/assets/icon-claude.svg' },
   { name: 'Codex', src: '/assets/icon-codex.png', cls: 'gv-agent-round' },
@@ -36,7 +37,7 @@ const agents = [
   { name: 'OpenCode', src: '/assets/icon-opencode-dark.svg', cls: 'icon-opencode' },
   { name: 'Pi', src: '/assets/icon-pi.svg' },
   { name: 'Kiro', src: '/assets/icon-kiro.svg', cls: 'gv-agent-round' },
-  { name: 'Factory Droid', src: '/assets/icon-droid.png', cls: 'gv-agent-round' },
+  { name: 'Kilo Code', src: '/assets/icon-kilo.svg', cls: 'gv-agent-round' },
 ];
 
 // The film is made separately. It shows only when its file is in public/ at
