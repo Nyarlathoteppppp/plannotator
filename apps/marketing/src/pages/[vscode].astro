@@ -14,17 +14,30 @@ export function getStaticPaths() {
 }
 
 // Modeled on the Inbox page ([inbox].astro): same shapes, sizes and voice.
-// Claims are phase 1 of Guided Reviews in VS Code only (the approved spec and
-// the extension's Guides view); no comments, other agents, stacks or share links.
+// Copy is rev 4 (the landing copy of record, kept outside the repo): a guided
+// review in the editor everyone already uses, with any agent that speaks ACP.
 const title = 'Guided Reviews for VS Code';
 const description =
-  "Claude Code turns a pull request into a guide: the most important part first, each part explained. You review each file in VS Code's diff editor, with hover, go to definition and find references.";
+  'An agent turns a pull request into chapters, the core of the change first, and you read them in VS Code with everything the editor already does.';
 const github = 'https://github.com/backnotprop/plannotator';
-const extensionReadme = 'https://github.com/backnotprop/plannotator/tree/main/apps/vscode-extension';
 const marketplace = 'https://marketplace.visualstudio.com/items?itemName=backnotprop.plannotator-webview';
 const openVsx = 'https://open-vsx.org/extension/backnotprop/plannotator-webview';
+const acpAgents = 'https://agentclientprotocol.com/get-started/agents';
 const extensionInstall = 'code --install-extension backnotprop.plannotator-webview';
 const adapterInstall = 'npm install -g @agentclientprotocol/claude-agent-acp';
+
+// Agents that speak ACP (listed on acpAgents) whose marks are already in the
+// repo: the site's own agent icons, and Cursor's from packages/ui's app icons.
+const agents = [
+  { name: 'Claude Code', src: '/assets/icon-claude.svg' },
+  { name: 'Codex', src: '/assets/icon-codex.png', cls: 'gv-agent-round' },
+  { name: 'Cursor', src: '/assets/icon-cursor.svg' },
+  { name: 'GitHub Copilot', src: '/assets/icon-copilot.svg', cls: 'icon-copilot' },
+  { name: 'OpenCode', src: '/assets/icon-opencode-dark.svg', cls: 'icon-opencode' },
+  { name: 'Pi', src: '/assets/icon-pi.svg' },
+  { name: 'Kiro', src: '/assets/icon-kiro.svg', cls: 'gv-agent-round' },
+  { name: 'Factory Droid', src: '/assets/icon-droid.png', cls: 'gv-agent-round' },
+];
 
 // The film is made separately. It shows only when its file is in public/ at
 // build time (the build runs in apps/marketing); until then the screenshot
@@ -37,21 +50,6 @@ const posterSrc = existsSync(join(process.cwd(), 'public/assets/guides-vscode-po
 
 const copyIcon =
   '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-const btn =
-  'inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm text-foreground font-medium hover:bg-muted/50 transition-colors';
-const primaryBtn =
-  'inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground border border-primary text-sm font-medium hover:bg-primary/90 transition-colors';
-const steps = [
-  { title: 'Pick a change.', body: "This branch's pull request, another open pull request, or your local changes." },
-  {
-    title: 'Claude Code writes the guide.',
-    body: 'It finds the core of the change and builds the chapters around it. You see them appear as it works.',
-  },
-  {
-    title: 'Read it chapter by chapter.',
-    body: 'Each file opens in the diff editor. Mark it reviewed and go to the next file.',
-  },
-];
 ---
 
 <Base
@@ -79,12 +77,9 @@ const steps = [
           <h1 class="font-display gv-heading">Guided Reviews for VS Code</h1>
 
           <p class="gv-overview">
-            Pick a pull request or your local changes. Claude Code reads the change and writes a guide: chapters that
-            start with the most important part of the change, each one saying what changed and why. You review each
-            file in VS Code's own diff editor, with hover, go to definition and find references.
+            An agent reads a pull request and splits it into chapters: the core of the change first, then what follows
+            from it, with wiring and config at the end. Each chapter says what changed and why. You read it in VS Code.
           </p>
-
-          <p class="gv-trust">Part of the Plannotator VS Code extension. Uses your own Claude Code. Open source.</p>
 
           <div class="gv-hero-actions">
             <a href={marketplace} target="_blank" rel="noopener noreferrer" class="gv-install-btn">
@@ -128,152 +123,80 @@ const steps = [
           eager
           class="gv-hero-shot"
         />
-      </header>
 
-      <!-- ── 2. Why ── -->
-      <section class="gv-arc" id="why">
-        <h2 class="font-display gv-arc-title">Why review in VS Code</h2>
-        <p class="gv-body">
-          A diff on a web page shows the changed lines. In VS Code the new side of each diff is a real file, so you can
-          hover a name to see its type, jump to its definition, list its references and open any other file in the
-          repo. Your theme, font and keybindings are the ones you already use.
-        </p>
-      </section>
-
-      <!-- ── 3. How it works ── -->
-      <section class="gv-arc" id="how">
-        <h2 class="font-display gv-arc-title">How it works</h2>
-      </section>
-      <div>
-        <div class="gv-loop">
-          {steps.map((step, i) => (
-            <Fragment>
-              {i > 0 && (
-                <span class="gv-loop-arrow" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M13 6l6 6-6 6" /></svg>
-                </span>
-              )}
-              <div class="gv-loop-node">
-                <span class="gv-loop-step">{String(i + 1).padStart(2, '0')}</span>
-                <h3 class="gv-loop-title">{step.title}</h3>
-                <p class="gv-loop-body">{step.body}</p>
-              </div>
-            </Fragment>
-          ))}
-        </div>
-        <GuidesShot
-          name="dashboard"
-          alt="The Guides view with this repo's local changes and pull requests and the pull requests waiting on you"
-          large
-          class="gv-after"
-        />
-      </div>
-
-      <!-- ── 4. What a guide gives you ── -->
-      <section class="gv-arc gv-arc-gap" id="guide">
-        <h2 class="font-display gv-arc-title">What a guide gives you</h2>
-      </section>
-
-      <section class="gv-beat" id="order">
-        <div class="gv-beat-head">
-          <p class="gv-beat-n">01</p>
-          <h3 class="font-display gv-title">The most important part first</h3>
-          <p class="gv-body">
-            When you read a large pull request file by file, you have to work out for yourself what matters. A guide
-            does that for you. The first chapter is the core of the change, the part that explains the rest. Then come
-            the changes that follow from it, such as call sites and tests. Wiring, renames, config and generated files
-            are grouped in the last chapter, so they don't interrupt you. Every changed file is in a chapter or listed
-            as left out.
+        <div class="gv-acp">
+          <ul class="gv-agents" aria-label="Agents that connect over ACP">
+            {agents.map((agent) => (
+              <li class="gv-agent">
+                <img src={agent.src} alt="" width="16" height="16" class={agent.cls} />
+                <span>{agent.name}</span>
+              </li>
+            ))}
+          </ul>
+          <p class="gv-acp-line">
+            Works with your agent, over <a href={acpAgents} target="_blank" rel="noopener noreferrer">ACP</a>.
           </p>
         </div>
-        <GuidesShot
-          name="generating"
-          alt="Claude Code building a guide with its tool calls on the left and the draft chapters on the right"
-        />
-        <p class="gv-caption">Left: the agent's tool calls. Right: the guide as it is written.</p>
+      </header>
+
+      <!-- ── 2. The guide ── -->
+      <section class="gv-arc" id="guide">
+        <h2 class="font-display gv-arc-title">The guide</h2>
+      </section>
+
+      <section class="gv-beat" id="core">
+        <div class="gv-beat-head">
+          <h3 class="font-display gv-title">The core of the change first</h3>
+          <p class="gv-body">
+            A large pull request read file by file leaves you to work out what matters. The guide opens on the part that
+            explains the rest. Call sites and tests come next. Renames, config and generated files are grouped at the
+            end. Every changed file is placed somewhere.
+          </p>
+        </div>
       </section>
 
       <section class="gv-beat" id="why">
         <div class="gv-beat-head">
-          <p class="gv-beat-n">02</p>
-          <h3 class="font-display gv-title">Why each part exists</h3>
+          <h3 class="font-display gv-title">Why next to the code</h3>
           <p class="gv-body">
-            Each chapter says what changed, why it was done that way, and what it affects, next to the files it covers.
-            You know the intent before you read the code. The guide opens with an overview of how the whole change fits
-            together, with one diagram.
+            Each chapter says what changed, why it was done that way, and what it touches. An overview with one diagram
+            shows how the whole change fits together; click a box and its code opens.
           </p>
         </div>
       </section>
 
-      <section class="gv-beat" id="focus">
-        <div class="gv-beat-head">
-          <p class="gv-beat-n">03</p>
-          <h3 class="font-display gv-title">One file at a time</h3>
-          <p class="gv-body">
-            The top of the diff shows where you are, for example "Chapter 2 of 5", with Mark reviewed and Next file.
-            The chapter's overview stays beside the diff. Ticks show which files you have reviewed.
-          </p>
-        </div>
-        <GuidesShot
-          name="chapter-diff"
-          alt="A file from chapter two in VS Code's diff editor with the chapter overview beside it"
-        />
-      </section>
-
-      <section class="gv-payoff" id="intelligence">
-        <p class="gv-beat-n">04</p>
-        <h2 class="font-display gv-arc-title gv-payoff-title">Code intelligence</h2>
-        <p class="gv-body gv-payoff-body">
-          The diff is VS Code's own diff editor, so hover, go to definition and find references work as they do in any
-          file. In the overview, a box in the diagram opens its code, and a linked name shows a hover card with its
-          signature, where it is defined, how many references it has and which chapter changed it.
-        </p>
-        <GuidesShot
-          name="overview-hover"
-          alt="A hover card on deliverWebhook in the guide's diagram with its signature and the chapter that changed it"
-          class="gv-after"
-        />
-      </section>
-
-      <section class="gv-beat" id="codebase">
-        <div class="gv-beat-head">
-          <p class="gv-beat-n">05</p>
-          <h3 class="font-display gv-title">The rest of the repo</h3>
-          <p class="gv-body">
-            The new side of the diff is a real file: your working tree for local changes, or a separate worktree for a
-            pull request. You can follow a call into any file in the repo with Cmd+P, tabs, breadcrumbs, back and
-            forward.
-          </p>
-        </div>
-      </section>
-
-      <!-- ── 5. Starting a guide ── -->
-      <section class="gv-arc gv-arc-gap-lg" id="start">
-        <h2 class="font-display gv-arc-title">Starting a guide</h2>
+      <!-- ── 3. In the editor ── -->
+      <section class="gv-arc gv-arc-gap" id="editor">
+        <h2 class="font-display gv-arc-title">In the editor</h2>
         <p class="gv-body">
-          The Guides view lists this repo's local changes and open pull requests, your recent guides, and pull requests
-          waiting on your review. Click Guide, then pick the model and effort. The default is Sonnet at low effort.
+          The guide is a VS Code view, and each file opens in the diff editor you already review in. Hover a name in the
+          overview and you get its signature, where it's defined and which chapter changed it. Follow a call out of the
+          diff into the rest of the repo, then pick the guide back up where you left it.
         </p>
+      </section>
+      <GuidesShot
+        name="overview-hover"
+        alt="A hover card on deliverWebhook in the guide's diagram with its signature and the chapter that changed it"
+      />
+      <GuidesShot
+        name="chapter-diff"
+        alt="A file from chapter two in VS Code's diff editor with Chapter 2 of 5 at the top and the chapter overview beside it"
+        class="gv-after"
+      />
+
+      <!-- ── 4. Your setup ── -->
+      <section class="gv-arc gv-arc-gap" id="setup">
+        <h2 class="font-display gv-arc-title">Your setup</h2>
         <p class="gv-body">
-          Claude Code runs with your own install, login, settings and permissions, and asks for permissions in VS Code.
-          A pull request opens in its own worktree, so your checkout stays as it is.
+          The agent runs with your own install, login and settings. It can read the code but never change it, and a pull
+          request is checked out separately, so your working copy stays as it is. Guides are saved where Plannotator's
+          web app reads them, and any guide downloads as one HTML file.
         </p>
       </section>
-      <GuidesShot name="new-model" alt="The model picker for a new guided review with Sonnet as the default" />
 
-      <!-- ── 6. Shared with Plannotator ── -->
-      <section class="gv-arc gv-arc-gap" id="shared">
-        <h2 class="font-display gv-arc-title">Shared with Plannotator</h2>
-        <ul class="gv-caps">
-          <li>Guides are saved where Plannotator's web app reads them, so you can open a guide in either.</li>
-          <li>You can download a guide as one HTML file.</li>
-        </ul>
-      </section>
-
-      <!-- ── 7. Install ── -->
+      <!-- ── 5. Install ── -->
       <section class="gv-cta" id="install">
         <h2 class="font-display gv-title">Install</h2>
-        <p class="gv-body">Install the Plannotator extension, then Claude Code's ACP adapter.</p>
 
         <div class="gv-steps">
           <div class="gv-step">
@@ -281,7 +204,7 @@ const steps = [
             <div>
               <h3>The extension</h3>
               <p>
-                From the <a href={marketplace} target="_blank" rel="noopener noreferrer">VS Code Marketplace</a>, or
+                <a href={marketplace} target="_blank" rel="noopener noreferrer">VS Code Marketplace</a>, or
                 <a href={openVsx} target="_blank" rel="noopener noreferrer">Open VSX</a> for Cursor, Windsurf and
                 VSCodium.
               </p>
@@ -296,14 +219,16 @@ const steps = [
           <div class="gv-step">
             <span class="gv-step-n" aria-hidden="true">02</span>
             <div>
-              <h3>Claude Code's ACP adapter</h3>
+              <h3>Your agent's ACP adapter</h3>
+              <p>For example:</p>
               <div class="hero-install gv-box">
                 <span class="gv-dollar" aria-hidden="true">$</span>
                 <code>{adapterInstall}</code>
                 <button type="button" class="copy-btn" data-copy={adapterInstall} aria-label="Copy the command" set:html={copyIcon} />
               </div>
               <p>
-                Claude Code must be installed and signed in. Pull requests also need the GitHub CLI, <code>gh</code>.
+                The Guides view lists the agents it finds and how to add the others. Pull requests also need
+                <code>gh</code>.
               </p>
             </div>
           </div>
@@ -318,14 +243,9 @@ const steps = [
           </div>
         </div>
 
-        <div class="flex flex-wrap gap-3">
-          <a href={marketplace} target="_blank" rel="noopener noreferrer" class={primaryBtn}>
-            Marketplace
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
-          </a>
-          <a href={openVsx} target="_blank" rel="noopener noreferrer" class={btn}>Open VSX</a>
-          <a href={extensionReadme} target="_blank" rel="noopener noreferrer" class={btn}>GitHub</a>
-        </div>
+        <p class="gv-acp-line">
+          All agents connect through <a href={acpAgents} target="_blank" rel="noopener noreferrer">ACP</a>.
+        </p>
       </section>
     </main>
 
@@ -525,12 +445,6 @@ const steps = [
     max-width: 42rem;
   }
 
-  .gv-trust {
-    font-size: 11px;
-    letter-spacing: 0.025em;
-    color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
-  }
-
   .gv-hero-actions {
     display: flex;
     flex-wrap: wrap;
@@ -669,6 +583,56 @@ const steps = [
     .gv-film-play-dot svg { width: 26px; height: 26px; margin-left: 3px; }
   }
 
+  /* ── Agents over ACP ── */
+  .gv-acp {
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+    margin-top: 1.75rem;
+  }
+
+  .gv-agents {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+  }
+
+  .gv-agent {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    font-size: 0.8125rem;
+    color: var(--gv-dim);
+  }
+
+  .gv-agent img {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+  }
+
+  .gv-agent img.gv-agent-round { border-radius: 3px; }
+
+  .gv-acp-line {
+    font-size: 0.875rem;
+    color: var(--gv-dim);
+  }
+
+  .gv-acp-line a {
+    color: var(--foreground);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklab, var(--foreground) 30%, transparent);
+    text-underline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  .gv-acp-line a:hover { text-decoration-color: var(--primary); }
+
+  .gv-acp-line a:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+  }
+
   /* ── Chapter markers ── */
   .gv-arc {
     display: flex;
@@ -679,7 +643,6 @@ const steps = [
   }
 
   .gv-arc-gap { margin-top: 4rem; }
-  .gv-arc-gap-lg { margin-top: 5rem; }
 
   .gv-arc-title {
     font-size: clamp(1.75rem, 3.5vw, 2.375rem);
@@ -706,8 +669,7 @@ const steps = [
     color: var(--gv-dim);
   }
 
-  .gv-body code,
-  .gv-caps code {
+  .gv-body code {
     font-size: 0.85em;
     padding: 0.05em 0.35em;
     border-radius: 5px;
@@ -719,59 +681,7 @@ const steps = [
     margin-top: 2rem;
   }
 
-  /* ── Three steps ── */
-  .gv-loop {
-    display: flex;
-    align-items: stretch;
-    gap: 0.5rem;
-  }
-
-  .gv-loop-node {
-    flex: 1 1 0;
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    background: var(--card);
-    padding: 1.5rem 1.5rem 1.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-  }
-
-  .gv-loop-step {
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--primary);
-    letter-spacing: 0.05em;
-  }
-
-  .gv-loop-title {
-    font-size: 1.35rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-
-  .gv-loop-body {
-    font-size: 0.95rem;
-    line-height: 1.55;
-    color: color-mix(in oklab, var(--foreground) 66%, transparent);
-  }
-
-  .gv-loop-arrow {
-    display: flex;
-    align-items: center;
-    flex: 0 0 auto;
-    color: color-mix(in oklab, var(--primary) 70%, var(--foreground));
-  }
-
-  .gv-loop-arrow svg { width: 26px; height: 26px; }
-
-  @media (max-width: 800px) {
-    .gv-loop { flex-direction: column; }
-    .gv-loop-arrow { justify-content: center; transform: rotate(90deg); padding: 0.25rem 0; }
-  }
-
-  /* ── What a guide gives you ── */
+  /* ── The guide ── */
   .gv-beat {
     padding: 3.5rem 0 0;
     scroll-margin-top: 4rem;
@@ -786,54 +696,6 @@ const steps = [
     max-width: 46rem;
   }
 
-  .gv-beat-n {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--primary);
-    letter-spacing: 0.05em;
-  }
-
-  .gv-caption {
-    margin-top: 0.75rem;
-    font-size: 0.8125rem;
-    color: var(--gv-subtle);
-  }
-
-  .gv-payoff {
-    margin-top: 5rem;
-    padding-top: 4.5rem;
-    border-top: 2px solid var(--border);
-    scroll-margin-top: 4rem;
-  }
-
-  .gv-payoff-title {
-    margin-top: 0.625rem;
-    font-size: clamp(2rem, 4.4vw, 3rem);
-  }
-
-  .gv-payoff-body {
-    max-width: 44rem;
-    margin-top: 0.875rem;
-  }
-
-  /* ── Shared (the Inbox page's caps) ── */
-  .gv-caps {
-    display: flex;
-    flex-direction: column;
-    gap: 0.875rem;
-    margin-top: 1rem;
-    padding: 1.125rem 0 1.125rem 1.125rem;
-    border-left: 2px solid color-mix(in oklab, var(--primary) 50%, transparent);
-    max-width: 44rem;
-  }
-
-  .gv-caps li {
-    font-size: 0.9375rem;
-    line-height: 1.6;
-    color: var(--gv-dim);
-  }
-
   /* ── Install ── */
   .gv-cta {
     margin-top: 4rem;
@@ -845,8 +707,6 @@ const steps = [
     gap: 1rem;
     scroll-margin-top: 3rem;
   }
-
-  .gv-cta .gv-body { max-width: 40rem; }
 
   /* The Inbox page's manual steps, always open. */
   .gv-steps {
