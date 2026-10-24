@@ -258,7 +258,7 @@ async function getTotals(req: Request, env: Env, url: URL, now: number): Promise
 }
 
 const HOME_TEXT =
-  "Plannotator usage counts: daily totals of how often experimental features are used, sent by people who keep usage counts on. No IP addresses, no ids, no content. https://plannotator.ai/docs/privacy\n";
+  "Plannotator usage counts: daily totals of how often experimental features are used, sent by people who keep usage counts on. No IP addresses, no ids, no content. https://plannotator.ai/privacy#usage-counts\n";
 
 export async function handleRequest(req: Request, env: Env, now: number = Date.now()): Promise<Response> {
   const url = new URL(req.url);

@@ -3348,7 +3348,7 @@ Approval record: `.product/approved/experimental-telemetry/`. Its `approval.md` 
   - `apps/hook/server/telemetry-command.test.ts`: the CLI as processes, with zero requests while off or without the notice.
   - `packages/server/uninstall.test.ts`.
   - `apps/telemetry/test` (`wrangler dev`).
-- **The privacy-policy draft**: `apps/marketing/drafts/privacy-usage-counts.md`. It is not published; the live `privacy.astro` lines 17 and 71 change at launch.
+- **The privacy policy**: `apps/marketing/src/pages/privacy.astro`, section 5 (`#usage-counts`), goes live with the release that turns counting on. Keep it true to the registry and the Worker: a new counted feature, event, end date or retention rule changes that section too. The Worker's `GET /` text links to it.
 
 ## Plan Diff
 

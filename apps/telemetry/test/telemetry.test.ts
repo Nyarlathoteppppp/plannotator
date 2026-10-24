@@ -244,6 +244,18 @@ describe("GET /v1/totals", () => {
   });
 });
 
+describe("GET /", () => {
+  test("one sentence that links to the privacy policy's usage-counts section", async () => {
+    const res = await fetch(`${url}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    const text = await res.text();
+    // The page that exists (plannotator.ai/docs/privacy answers 403).
+    expect(text).toContain("https://plannotator.ai/privacy#usage-counts");
+    expect(text).not.toContain("/docs/privacy");
+  });
+});
+
 describe("retention", () => {
   test("the daily cron deletes days past 400 days and features no longer listed, and keeps the rest", async () => {
     const before = rows();

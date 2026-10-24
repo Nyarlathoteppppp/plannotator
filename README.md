@@ -167,7 +167,7 @@ plannotator archive                    # Browse saved plan decisions read-only
 
 ## Privacy and network behavior
 
-Plannotator does not collect usage telemetry or analytics. Plans, diffs, annotations, drafts, history, and configuration stay local by default.
+Plannotator sends no usage data except optional daily counts for experimental features you turn on: whole numbers per feature and day, with no content and no identifier, which you can turn off with `plannotator telemetry --off`, `PLANNOTATOR_TELEMETRY=0` or `DO_NOT_TRACK=1` ([privacy policy](https://plannotator.ai/privacy#usage-counts)). Plans, diffs, annotations, drafts, history, and configuration stay local by default.
 
 Each plan review, annotate, archive, share-portal, and code-review app surface checks GitHub for the latest Plannotator release when it loads. This sends no plan or review content and gives the Plannotator project owner no usage analytics, although GitHub receives an ordinary request. There is currently no opt-out setting for the release check. Local Git code review can also query the configured `origin` with `git ls-remote` to detect the default branch and a stale baseline; it does not send the local diff. That remote query runs when the review opens, when the page loads its diff, when you switch the diff type or base (including the "Diff out of date &middot; Refresh" button), and when you press Fetch &mdash; never on a timer, so an idle review page makes no network calls. Turn it off entirely with `plannotator review --no-git-remote-check`, `PLANNOTATOR_GIT_REMOTE_CHECK=0`, or `{ "gitRemoteCheck": false }` in `~/.plannotator/config.json`; the compare target then comes from local refs only and the "behind GitHub" banner never appears.
 
